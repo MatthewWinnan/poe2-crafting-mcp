@@ -1,0 +1,131 @@
+{
+  description = "PoE2 Crafting MCP Server";
+
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs = {
+        pyproject-nix.follows = "pyproject-nix";
+        nixpkgs.follows = "nixpkgs";
+      };
+    };
+
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs = {
+        pyproject-nix.follows = "pyproject-nix";
+        uv2nix.follows = "uv2nix";
+        nixpkgs.follows = "nixpkgs";
+      };
+    };
+  };
+
+  outputs = {
+    self,
+    nixpkgs,
+    ...
+  } @ inputs: let
+    supportedSystems = ["x86_64-linux" "x86_64-darwin"];
+
+    forAllSystems = function:
+      nixpkgs.lib.genAttrs supportedSystems (system: function system);
+  in {
+    devShells = forAllSystems (system: let
+      pkgs = nixpkgs.legacyPackages.${system};
+      inherit (nixpkgs) lib;
+
+      # uv2nix workspace
+      workspace = inputs.uv2nix.lib.workspace.loadWorkspace {workspaceRoot = ./.;};
+
+      overlay = workspace.mkPyprojectOverlay {
+        sourcePreference = "wheel";
+      };
+
+      # Base Python set
+      pythonSet = let
+        baseSet = pkgs.callPackage inputs.pyproject-nix.build.packages {
+          python = pkgs.python312;
+        };
+      in
+        baseSet.overrideScope (
+          lib.composeManyExtensions [
+            inputs.pyproject-build-systems.overlays.default
+            overlay
+          ]
+        );
+
+      # Editable overlay for development
+      editableOverlay = workspace.mkEditablePyprojectOverlay {
+        root = "$REPO_ROOT";
+      };
+
+      editablePythonSet = pythonSet.overrideScope (
+        lib.composeManyExtensions [
+          editableOverlay
+          (final: prev: {
+            poe2-crafting-mcp = prev.poe2-crafting-mcp.overrideAttrs (old: {
+              nativeBuildInputs =
+                old.nativeBuildInputs
+                ++ final.resolveBuildSystem {editables = [];};
+            });
+          })
+          # Fileset override to avoid copying the entire repo into the store
+          (_final: prev: {
+            poe2-crafting-mcp = prev.poe2-crafting-mcp.overrideAttrs (old: {
+              src = lib.fileset.toSource {
+                root = old.src;
+                fileset = lib.fileset.unions [
+                  (old.src + "/pyproject.toml")
+                ];
+              };
+            });
+          })
+        ]
+      );
+
+      venv = editablePythonSet.mkVirtualEnv "poe2-craft-mcp-env" workspace.deps.all;
+    in {
+      default = pkgs.mkShell {
+        packages = [
+          venv
+          pkgs.uv
+          pkgs.git
+          pkgs.luajit
+          pkgs.lua51Packages.luasocket
+          pkgs.sqlite
+          pkgs.jq
+        ];
+
+        env = {
+          UV_NO_SYNC = "1";
+          UV_PYTHON = "${venv}/bin/python";
+          UV_PYTHON_DOWNLOADS = "never";
+        };
+
+        shellHook = ''
+          unset PYTHONPATH
+
+          export REPO_ROOT=$(${pkgs.git}/bin/git rev-parse --show-toplevel)
+          export POB_PATH="$REPO_ROOT/vendor/PathOfBuilding-PoE2"
+          export POE2_CRAFT_DB="$REPO_ROOT/data/poe2_craft.db"
+
+          echo ""
+          echo "  PoE2 Crafting MCP - Dev Environment"
+          echo "  ────────────────────────────────────"
+          echo "  Python:  $(python --version 2>&1)"
+          echo "  LuaJIT:  $(${pkgs.luajit}/bin/luajit -v 2>&1 | head -1)"
+          echo "  PoB:     $POB_PATH"
+          echo "  DB:      $POE2_CRAFT_DB"
+          echo ""
+        '';
+      };
+    });
+  };
+}
