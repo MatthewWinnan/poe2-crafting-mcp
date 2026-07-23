@@ -103,6 +103,7 @@
           pkgs.git
           pkgs.luajit
           pkgs.lua51Packages.luasocket
+          pkgs.lua51Packages.luautf8
           pkgs.sqlite
           pkgs.jq
         ];
