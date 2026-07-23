@@ -48,6 +48,9 @@
         sourcePreference = "wheel";
       };
 
+      # Package overrides (for packages with missing build system declarations)
+      pypackageOverrides = import ./nix/overrides.nix {inherit pkgs;};
+
       # Base Python set
       pythonSet = let
         baseSet = pkgs.callPackage inputs.pyproject-nix.build.packages {
@@ -58,6 +61,7 @@
           lib.composeManyExtensions [
             inputs.pyproject-build-systems.overlays.default
             overlay
+            pypackageOverrides
           ]
         );
 
