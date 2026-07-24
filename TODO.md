@@ -1,54 +1,71 @@
-# TODO: Next Steps (Resume When on Clean Network)
+# TODO: Next Steps
 
-## Immediate (Day 2 continuation)
+## ✅ COMPLETED
 
-1. **Generate lockfile:**
-   ```bash
-   cd /home/matthew/DEV/poe2-crafting-mcp
-   uv lock
-   ```
+- [x] Generate uv.lock
+- [x] Enter nix shell (nix develop works)
+- [x] lupa + LuaJIT working
+- [x] PoB headless boots via lupa
+- [x] Load real build (960K DPS Whirling Trinity Martial Artist)
+- [x] PoBEngine class with full Python API
+- [x] Item swap + DPS delta comparison working
 
-2. **Enter nix shell:**
-   ```bash
-   nix develop
-   ```
+---
 
-3. **Fix build failures (expected: lupa needs LuaJIT headers):**
-   - Edit `nix/overrides.nix` — see `docs/uv2nix-overrides.md` for patterns
-   - Retry `nix develop` until clean
+## Next Session: Local Setup & Real Build
 
-4. **Verify Python + lupa:**
-   ```bash
-   python -c "import lupa; print('lupa OK')"
-   ```
+### 1. Get your actual PoE2 build into the system
 
-5. **Boot PoB headless via lupa (Day 3-4 milestone — critical proof of concept):**
-   ```bash
-   python -c "
-   import lupa.luajit21 as lupa
-   import os
+- Install **PoB-PoE2** on your NixOS machine (add to nix_repo)
+- Import your character in PoB-PoE2 (account name → select character)
+- Export share code → save to `data/builds/my_build.txt`
+- Test: `engine.load_build_from_file("data/builds/my_build.txt")`
 
-   lua = lupa.LuaRuntime(unpack_returned_tuples=True)
-   os.chdir('vendor/PathOfBuilding-PoE2/src')
-   lua.execute('dofile(\"HeadlessWrapper.lua\")')
-   g = lua.globals()
-   print(f'PoB booted: {g.mainObject is not None}')
-   print(f'Build object: {g.build is not None}')
-   "
-   ```
-   If this works, the entire architecture is validated.
+### 2. Install community tools on NixOS (nix_repo additions)
 
-6. **Commit lockfile + any override fixes, push.**
+- **Path of Building PoE2** — desktop app for build planning
+- **Craft of Exile** — browser tool (no install needed, just bookmark)
+- **Exiled Exchange 2** — in-game price check overlay
 
-## After PoB Boots (Day 4-8)
+### 3. Fix PoE2 Linux client
 
-- Load a real build from PoB share code (decode base64+zlib → XML → loadBuildFromXML)
-- Read stats back (TotalDPS, Life, Resistances)
-- Implement `compare_item()` (equip item, read delta)
-- Write tests against real build fixtures
+- Currently opens in controller mode only (no keyboard/mouse support)
+- Investigate: might be a Steam Input issue or Proton config
+- Check: `~/.local/share/Steam/steamapps/common/Path of Exile 2/` for config files
+- Common fix: disable Steam Input for the game, or set `SDL_GAMECONTROLLERCONFIG`
+
+### 4. Write pytest tests for PoBEngine
+
+```bash
+cd ~/DEV/poe2-crafting-mcp
+nix develop
+PYTHONPATH=src pytest tests/
+```
+
+Tests to write:
+- `test_engine_boots` — PoBEngine initializes without error
+- `test_load_build` — loads fixture, stats are non-zero
+- `test_equip_item` — swapping gloves changes DPS
+- `test_get_build_info` — returns correct class/ascendancy
+- `test_get_keystones` — returns Chaos Inoculation for fixture build
+
+---
+
+## Sprint 2 Remaining
+
+- [ ] Pytest test suite for PoBEngine
+- [ ] SQLite schema + database module
+
+## Sprint 3: Pricing
+
+- [ ] poe.show client (currency prices)
+- [ ] poe.ninja client (base/unique prices)
+- [ ] Economy cache in SQLite
+- [ ] League auto-detection
 
 ## Reference
 
 - Planning docs: ~/MATTHEW/obsidian_vault/PoE2 Crafting MCP Server/
 - MVP plan: doc 10 - MVP Implementation Plan.md
+- PoB engine docs: ./docs/pob-engine-boot.md
 - Override docs: ./docs/uv2nix-overrides.md
