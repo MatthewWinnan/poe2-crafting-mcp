@@ -167,6 +167,24 @@ def _fmt_node(n: dict) -> None:
         print(f"    {_DIM}… +{len(stats)-6} more{_RESET}")
 
 
+def _fmt_concept(c: dict) -> None:
+    cat = f"  {_DIM}[{c.get('category','')}]{_RESET}"
+    print(f"  {_BOLD}{c['name']}{_RESET}{cat}")
+    print(f"    {c.get('summary','')}")
+    mechanics = c.get("mechanics", "").strip()
+    if mechanics:
+        for line in mechanics.split(". "):
+            line = line.strip()
+            if line:
+                print(f"    {_DIM}{line.rstrip('.')}.{_RESET}")
+    formula = c.get("formula", "").strip()
+    if formula:
+        print(f"    {_CYAN}Formula:{_RESET} {formula}")
+    see_also = c.get("see_also") or []
+    if see_also:
+        print(f"    {_DIM}See also:{_RESET} {', '.join(see_also[:8])}")
+
+
 def _fmt_currency(c: dict) -> None:
     cat = f"  {_DIM}[{c.get('category','')}]{_RESET}"
     sub = f"  {_DIM}{c.get('subcategory','')}{_RESET}" if c.get("subcategory") else ""
@@ -177,7 +195,7 @@ def _fmt_currency(c: dict) -> None:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-_ALL_TYPES = ("bases", "mods", "gems", "uniques", "nodes", "currencies")
+_ALL_TYPES = ("bases", "mods", "gems", "uniques", "nodes", "currencies", "concepts")
 
 _TYPE_ALIASES: dict[str, str] = {
     "base": "bases", "item": "bases", "items": "bases",
@@ -186,6 +204,8 @@ _TYPE_ALIASES: dict[str, str] = {
     "unique": "uniques",
     "node": "nodes", "passive": "nodes", "passives": "nodes", "tree": "nodes",
     "currency": "currencies", "orb": "currencies", "essence": "currencies",
+    "concept": "concepts", "keyword": "concepts", "keywords": "concepts",
+    "mechanic": "concepts", "mechanics": "concepts", "definition": "concepts",
 }
 
 
@@ -306,6 +326,16 @@ def main() -> None:
             print(_h("Currencies"))
             for c in results:
                 _fmt_currency(c)
+                print()
+
+    if "concepts" in types_to_search:
+        from poe2_crafting_mcp.data.concepts import search_concepts
+        results = search_concepts(keyword=query, limit=args.limit)
+        if results:
+            found_any = True
+            print(_h("Concepts / Keywords"))
+            for c in results:
+                _fmt_concept(c)
                 print()
 
     if not found_any:

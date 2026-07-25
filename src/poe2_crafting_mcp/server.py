@@ -550,6 +550,64 @@ def get_db_summary() -> str:
     return _to_json(_get_db().get_summary())
 
 
+@mcp.tool()
+def search_concepts(keyword: str = "", category: str = "", limit: int = 10) -> str:
+    """
+    Look up PoE2 keyword and mechanic definitions.
+
+    Covers ~180 core concepts including: damage types, ailments (Shock/Chill/Freeze/
+    Ignite/Bleed/Poison/Electrocute and lesser ailments), attributes (Strength/
+    Dexterity/Intelligence), defence mechanics (Armour formula, Evasion, Energy Shield,
+    Ward, Block, Suppress, Deflect, Resistances), offence mechanics (Critical Hits,
+    Accuracy, Leech, Penetration, Conversion, Culling Strike), charges (Power/Frenzy/
+    Endurance), resources (Life/Mana/Spirit/Rage), buffs (Onslaught/Elusive/Tailwind),
+    debuffs (Exposure/Blind/Crushed/Maim/Curses/Withered), mechanics (Recently/Lucky/
+    Stun/Recoup/Reserve/Low Life), skill keywords (Attack/Spell/Melee/Projectile/
+    Channelling/Totem/Minion/Warcry), keystones (Chaos Inoculation/Iron Reflexes/
+    Eldritch Battery/Blood Magic/Avatar of Fire/Resolute Technique etc.), and more.
+
+    Each concept includes:
+    - summary: plain English one-liner
+    - mechanics: detailed explanation with PoE2-accurate rules
+    - formula: numeric formula where applicable (e.g. Armour reduction, Freeze buildup)
+    - see_also: related concepts AND PoB config var names for cross-referencing
+
+    Args:
+        keyword:  Search term — e.g. "shock", "armour", "critical", "leech", "rage".
+                  Searched across name, summary, mechanics, and see_also fields.
+        category: Narrow by category — one of: damage_type, ailment, attribute,
+                  defence, offence, charge, resource, buff, debuff, mechanic,
+                  keyword, keystone, projectile, ground.
+        limit:    Max results (default 10).
+
+    Returns:
+        JSON array of matching concept dicts.
+    """
+    from poe2_crafting_mcp.data.concepts import search_concepts as _search
+    return _to_json(_search(keyword=keyword, category=category, limit=limit))
+
+
+@mcp.tool()
+def get_concept(name: str) -> str:
+    """
+    Fetch the exact definition for a single PoE2 keyword by name.
+
+    Use search_concepts() first if you're not sure of the exact name.
+
+    Args:
+        name: Concept name — e.g. "Shock", "Armour", "Power Charge", "Iron Reflexes".
+
+    Returns:
+        JSON with name, category, summary, mechanics, formula, see_also.
+        Returns {"error": "..."} if not found.
+    """
+    from poe2_crafting_mcp.data.concepts import get_concept as _get
+    result = _get(name)
+    if not result:
+        return _to_json({"error": f"Concept '{name}' not found"})
+    return _to_json(result)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
