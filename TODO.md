@@ -34,6 +34,36 @@ Goal: let the agent answer "what does this upgrade cost?" and plan efficient upg
 
 ---
 
+## Trade Search: Planned Extensions
+
+These are known gaps to address in a future sprint (fits naturally into Sprint 5):
+
+- [ ] **Multi-stat filters** — search for items with 2+ mods simultaneously
+  (e.g. ES + cold res gloves). `search_trade()` already accepts a list of
+  `stat_filters` — just need CLI `--stat2` / MCP `stat_filters: list` param.
+
+- [ ] **Stat type selection** — CLI/MCP currently defaults to `explicit`.
+  Need easy access to other types:
+  - `fractured` — fractured mods (locked prefix/suffix, great base for crafting)
+  - `desecrated` — corrupted implicit mods (different pool from base implicits)
+  - `implicit` — natural item implicits (rings, amulets, belts)
+  - `crafted` — bench-crafted mods (useful for filtering out already-crafted items)
+  - `enchant` — helm/boot/glove enchants
+
+- [ ] **Corrupted items / extra sockets** — corruption implicits include
+  "+1 to Level of Socketed Gems", "+2 sockets", etc. These use `desecrated`
+  stat type. Need `--stat-type desecrated` flag and desecrated stat ID cache.
+  Example: `poe2-price trade "socketed gems" --slot gloves --stat-type desecrated`
+
+- [ ] **Fractured base search** — find fractured items (one mod locked) as
+  crafting bases: `poe2-price trade "energy shield" --slot gloves --stat-type fractured`
+  This is often cheaper than trying to hit T1 from scratch.
+
+- [ ] **Pseudo stats** — `pseudo.pseudo_total_resistance`, `pseudo_total_life` etc.
+  Useful for finding well-rounded rares without enumerating each res mod.
+
+---
+
 ## Sprint 5: Crafting Advisor
 
 Goal: given a base item, tell the agent what mods can roll on it, what
