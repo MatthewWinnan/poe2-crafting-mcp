@@ -342,7 +342,7 @@ def export_build_code() -> str:
 # ── Game Data (ETL-backed) ────────────────────────────────────────────────────
 
 @mcp.tool()
-def search_bases(slot: str = "", sub_type: str = "",
+def search_bases(slot: str = "", sub_type: str = "", keyword: str = "",
                  min_level: int = 0, max_level: int = 100,
                  limit: int = 50) -> str:
     """
@@ -363,7 +363,7 @@ def search_bases(slot: str = "", sub_type: str = "",
         JSON array of bases with name, slot, sub_type, req_level, req_str/dex/int,
         socket_limit, tags, armour, evasion, energy_shield, ward.
     """
-    return _to_json(_get_db().search_bases(slot, sub_type, min_level, max_level, limit))
+    return _to_json(_get_db().search_bases(slot, sub_type, keyword, min_level, max_level, limit))
 
 
 @mcp.tool()

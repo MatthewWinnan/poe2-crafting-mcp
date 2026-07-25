@@ -241,9 +241,8 @@ def main() -> None:
     found_any = False
 
     if "bases" in types_to_search:
-        results = db.search_bases(slot=args.slot, min_level=0, max_level=100, limit=args.limit)
-        # FTS not on bases — filter by name substring
-        results = [b for b in results if query.lower() in b["name"].lower()]
+        results = db.search_bases(slot=args.slot, keyword=query,
+                                  min_level=0, max_level=100, limit=args.limit)
         if results:
             found_any = True
             print(_h("Item Bases"))

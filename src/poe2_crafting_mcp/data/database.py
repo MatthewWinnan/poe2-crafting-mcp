@@ -38,24 +38,21 @@ class PoBDatabase:
         self,
         slot: str = "",
         sub_type: str = "",
+        keyword: str = "",
         min_level: int = 0,
         max_level: int = 100,
         limit: int = 50,
     ) -> list[dict]:
         """
-        Find item bases by slot, sub-type, and level range.
+        Find item bases by slot, sub-type, name keyword, and level range.
 
         Args:
             slot:      e.g. "Gloves", "Ring", "Body Armour", "Weapon"
-            sub_type:  e.g. "Armour", "Evasion", "ES", "Hybrid"
+            sub_type:  e.g. "Armour", "Evasion", "Energy Shield"
+            keyword:   substring search on base name (e.g. "Sleek", "Jacket")
             min_level: minimum required level (inclusive)
             max_level: maximum required level (inclusive)
             limit:     max rows returned
-
-        Returns:
-            List of dicts with keys: name, slot, sub_type, req_level,
-            req_str, req_dex, req_int, socket_limit, tags,
-            armour, evasion, energy_shield, ward.
         """
         q = "SELECT * FROM item_bases WHERE req_level BETWEEN ? AND ?"
         params: list = [min_level, max_level]
@@ -65,6 +62,9 @@ class PoBDatabase:
         if sub_type:
             q += " AND sub_type LIKE ?"
             params.append(f"%{sub_type}%")
+        if keyword:
+            q += " AND name LIKE ?"
+            params.append(f"%{keyword}%")
         q += " ORDER BY req_level, name LIMIT ?"
         params.append(limit)
         return [_row_to_dict(r) for r in self._conn.execute(q, params)]
