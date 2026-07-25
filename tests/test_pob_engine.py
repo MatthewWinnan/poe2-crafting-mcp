@@ -322,6 +322,42 @@ class TestPoBEngine:
             assert isinstance(info["sources"], list)
             assert isinstance(info["auto_applicable"], bool)
 
+    # ── setup_realistic_scenario ──────────────────────────────────
+
+    def test_setup_realistic_scenario_returns_structure(self, loaded_engine):
+        """setup_realistic_scenario returns the expected dict structure."""
+        result = loaded_engine.setup_realistic_scenario()
+        assert "applied" in result
+        assert "dps_before" in result
+        assert "dps_after" in result
+        assert "dps_change_percent" in result
+        assert isinstance(result["applied"], list)
+        assert isinstance(result["dps_before"], (int, float))
+        assert isinstance(result["dps_after"], (int, float))
+        assert isinstance(result["dps_change_percent"], float)
+
+    def test_setup_realistic_scenario_applied_entries(self, loaded_engine):
+        """Each applied entry has var, value, and reason."""
+        result = loaded_engine.setup_realistic_scenario()
+        for entry in result["applied"]:
+            assert "var" in entry, f"entry missing 'var': {entry}"
+            assert "value" in entry, f"entry missing 'value': {entry}"
+            assert "reason" in entry, f"entry missing 'reason': {entry}"
+            assert isinstance(entry["var"], str)
+            assert isinstance(entry["reason"], str)
+
+    def test_setup_realistic_scenario_increases_dps(self, loaded_engine):
+        """Applying a realistic scenario should raise DPS for the Monk fixture."""
+        # Reset to defaults first
+        loaded_engine.set_config_option("usePowerCharges", False)
+        loaded_engine.set_config_option("useFrenzyCharges", False)
+        loaded_engine.set_config_option("multiplierRage", 0)
+        dps_before = loaded_engine.get_stats().total_dps
+        result = loaded_engine.setup_realistic_scenario()
+        assert result["dps_after"] > dps_before, (
+            f"DPS should increase: before={dps_before}, after={result['dps_after']}"
+        )
+
     # ── Error Handling ────────────────────────────────────────────
 
     def test_get_stats_without_build_raises(self):

@@ -1342,6 +1342,164 @@ class PoBEngine:
             return True  # generally true in mapping
         return False
 
+    # ─── Realistic Scenario Setup ─────────────────────────────────
+
+    def setup_realistic_scenario(
+        self,
+        boss: str = "None",
+        enemy_level: int = 80,
+    ) -> dict:
+        """
+        Auto-configure the most realistic in-combat scenario for any build.
+
+        Generic algorithm — works for any character class / skill combination:
+
+        1. Enable options with ``defaultState = true`` in ConfigOptions.lua
+           that are present in this build's relevant_config.
+        2. Enable enemy ailment conditions for each ailment the build can apply
+           (chance > 0 from get_combat_profile).
+        3. Enable charge use and set multipliers to max for each charge type
+           the build has access to.
+        4. Set rage to maximum if the build can generate rage.
+        5. Set Trinity resonance to 200 if it appears in relevant_config.
+        6. Set enemy type and level.
+
+        Args:
+            boss:        "None" (map monster), "Rare", "Unique" (pinnacle boss).
+            enemy_level: Enemy level for resistance/stat calculations (default 80).
+
+        Returns:
+            Dict with:
+            - ``applied``: list of ``{var, value, reason}`` for each change made
+            - ``dps_before``: DPS before any changes
+            - ``dps_after``:  DPS after all changes
+            - ``dps_change_percent``: % change in DPS
+        """
+        self._ensure_build_loaded()
+
+        dps_before = self.get_stats().total_dps
+
+        # ── Read defaultState options from ConfigOptions.lua ──────────────────
+        default_state_vars: set[str] = set()
+        raw_defaults = self._lua.execute('''
+            local varList = LoadModule("Modules/ConfigOptions")
+            local result = {}
+            local i = 1
+            for _, opt in ipairs(varList) do
+                if opt.var and opt.defaultState then
+                    result[i] = opt.var
+                    i = i + 1
+                end
+            end
+            return result
+        ''')
+        if raw_defaults:
+            for idx in range(1, len(raw_defaults) + 1):
+                v = raw_defaults[idx]
+                if v:
+                    default_state_vars.add(str(v))
+
+        # ── Combat profile: charges, rage, ailments, relevant vars ────────────
+        profile = self.get_combat_profile()
+
+        all_relevant_vars: set[str] = set()
+        for opts in profile.relevant_config.values():
+            for opt in opts:
+                all_relevant_vars.add(opt.var)
+
+        applied: list[dict] = []
+
+        def _apply(var: str, value: bool | int | float | str, reason: str) -> None:
+            self.set_config_option(var, value)
+            applied.append({"var": var, "value": value, "reason": reason})
+
+        # ── 1. defaultState = true options ────────────────────────────────────
+        for var in sorted(default_state_vars):
+            if var in all_relevant_vars:
+                current = self.get_config_option(var)
+                if not current:
+                    _apply(var, True, "defaultState=true in ConfigOptions.lua")
+
+        # ── 2. Enemy ailment conditions ───────────────────────────────────────
+        _AILMENT_TO_COND: dict[str, str] = {
+            "Shock":   "conditionEnemyShocked",
+            "Ignite":  "conditionEnemyIgnited",
+            "Chill":   "conditionEnemyChilled",
+            "Freeze":  "conditionEnemyFrozen",
+            "Poison":  "conditionEnemyPoisoned",
+            "Bleed":   "conditionEnemyBleeding",
+            "Scorch":  "conditionEnemyScorched",
+            "Brittle": "conditionEnemyBrittle",
+            "Sap":     "conditionEnemySapped",
+        }
+        for ailment_info in profile.ailments_on_enemy:
+            cond_var = _AILMENT_TO_COND.get(ailment_info.ailment)
+            if cond_var and cond_var in all_relevant_vars and ailment_info.chance_percent > 0:
+                current = self.get_config_option(cond_var)
+                if not current:
+                    _apply(cond_var, True,
+                           f"build applies {ailment_info.ailment} "
+                           f"({ailment_info.chance_percent:.1f}% chance)")
+
+        # ── 3. Charges ────────────────────────────────────────────────────────
+        _CHARGE_VARS: dict[str, tuple[str, str | None]] = {
+            "Power":      ("usePowerCharges",      "multiplierPowerCharge"),
+            "Frenzy":     ("useFrenzyCharges",     "multiplierFrenzyCharge"),
+            "Endurance":  ("useEnduranceCharges",  "multiplierEnduranceCharge"),
+            "Blitz":      ("useBlitzCharges",      None),
+            "Challenger": ("useChallengerCharges", None),
+            "Siphoning":  ("useSiphoningCharges",  None),
+        }
+        for charge_name, charge_info in profile.charges.items():
+            if charge_info.maximum <= 0 or charge_name not in _CHARGE_VARS:
+                continue
+            use_var, mult_var = _CHARGE_VARS[charge_name]
+            if use_var in all_relevant_vars and not charge_info.configured:
+                _apply(use_var, True,
+                       f"build has {charge_info.maximum} max {charge_name} charges")
+            if mult_var and mult_var in all_relevant_vars:
+                current_mult = self.get_config_option(mult_var) or 0
+                if int(current_mult) != charge_info.maximum:
+                    _apply(mult_var, charge_info.maximum,
+                           f"set {charge_name} charges to max ({charge_info.maximum})")
+
+        # ── 4. Rage ───────────────────────────────────────────────────────────
+        if profile.rage_available:
+            rage_var = "multiplierRage"
+            if rage_var in all_relevant_vars:
+                current_rage = int(self.get_config_option(rage_var) or 0)
+                if current_rage != profile.rage_max:
+                    _apply(rage_var, profile.rage_max,
+                           f"build can generate rage, setting to max ({profile.rage_max})")
+
+        # ── 5. Trinity resonance ──────────────────────────────────────────────
+        resonance_var = "configResonanceCount"
+        if resonance_var in all_relevant_vars:
+            current_res = int(self.get_config_option(resonance_var) or 0)
+            if current_res < 200:
+                _apply(resonance_var, 200, "Trinity resonance capped at 200")
+
+        # ── 6. Enemy type and level ───────────────────────────────────────────
+        current_boss = str(self.get_config_option("enemyIsBoss") or "None")
+        if current_boss != boss:
+            _apply("enemyIsBoss", boss, f"set enemy type to {boss}")
+
+        current_level = int(self.get_config_option("enemyLevel") or 0)
+        if current_level != enemy_level:
+            _apply("enemyLevel", enemy_level, f"set enemy level to {enemy_level}")
+
+        dps_after = self.get_stats().total_dps
+        dps_change_pct = 0.0
+        if dps_before > 0:
+            dps_change_pct = round((dps_after - dps_before) / dps_before * 100, 1)
+
+        return {
+            "applied": applied,
+            "dps_before": round(dps_before),
+            "dps_after": round(dps_after),
+            "dps_change_percent": dps_change_pct,
+        }
+
     # ─── Build Reset ──────────────────────────────────────────────
 
     def new_build(self) -> None:

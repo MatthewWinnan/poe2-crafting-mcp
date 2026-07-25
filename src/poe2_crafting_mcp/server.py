@@ -326,6 +326,40 @@ def get_condition_sources() -> str:
     return _to_json(_get_engine().get_condition_sources())
 
 
+@mcp.tool()
+def setup_realistic_scenario(boss: str = "None", enemy_level: int = 80) -> str:
+    """
+    Auto-configure the most realistic in-combat scenario for the loaded build.
+
+    Applies a generic set of heuristics that work for any build:
+    - Enables config options that have defaultState=true in PoB (e.g. targetBrandedEnemy,
+      inDemonForm) if they are relevant to this build.
+    - Enables enemy ailment conditions (conditionEnemyShocked etc.) for each ailment
+      the build can apply (based on ailment chance > 0%).
+    - Enables charge use (usePowerCharges, useFrenzyCharges, useEnduranceCharges, etc.)
+      and sets multipliers to the build's maximum for each charge type available.
+    - Sets rage to the build's maximum if the build can generate rage.
+    - Sets Trinity resonance to 200 if the build uses Trinity.
+    - Sets enemy type and level.
+
+    Call get_combat_profile() first to see the starting state.
+    Call get_combat_profile() again after to inspect the updated scenario details.
+
+    Args:
+        boss:        Enemy type — "None" (map monster), "Rare", "Unique" (pinnacle boss).
+                     Default "None" for typical mapping scenarios.
+        enemy_level: Enemy level for resistance penalty calculations (default 80).
+
+    Returns:
+        JSON with:
+        - applied: list of {var, value, reason} describing each change made
+        - dps_before: DPS before any changes
+        - dps_after:  DPS after all changes applied
+        - dps_change_percent: % change in DPS
+    """
+    return _to_json(_get_engine().setup_realistic_scenario(boss=boss, enemy_level=enemy_level))
+
+
 # ── Export ────────────────────────────────────────────────────────────────────
 
 @mcp.tool()
