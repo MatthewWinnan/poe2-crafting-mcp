@@ -29,6 +29,8 @@ local-llm = [
 
 [project.scripts]
 poe2-craft = "poe2_crafting_mcp.server:main"
+pob-inspect = "poe2_crafting_mcp.engine.cli:main"
+poe2-lookup = "poe2_crafting_mcp.data.lookup_cli:main"
 
 [build-system]
 requires = ["hatchling", "editables"]

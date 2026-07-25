@@ -9,63 +9,62 @@
 - [x] Load real build (960K DPS Whirling Trinity Martial Artist)
 - [x] PoBEngine class with full Python API
 - [x] Item swap + DPS delta comparison working
+- [x] Pytest test suite for PoBEngine — 38 tests, all passing
+- [x] get_combat_profile() — charges, rage, ailments, defence, damage type %, dynamic config
+- [x] get_condition_sources() — decodes why each condition matters (passive names, gem names)
+- [x] Full MCP server (21 tools via FastMCP)
 
 ---
 
-## Next Session: Local Setup & Real Build
+## Sprint 2: ETL Pipeline (Current)
 
-### 1. Get your actual PoE2 build into the system
+Goal: populate SQLite with all PoE2 game data so the agent can reason about
+crafting options, skill selection, and passive tree planning without PoB.
 
-- Install **PoB-PoE2** on your NixOS machine (add to nix_repo)
-- Import your character in PoB-PoE2 (account name → select character)
-- Export share code → save to `data/builds/my_build.txt`
-- Test: `engine.load_build_from_file("data/builds/my_build.txt")`
+### Data sources (all from PoB vendor data)
 
-### 2. Install community tools on NixOS (nix_repo additions)
+| Table           | Source                                 | Count  |
+|-----------------|----------------------------------------|--------|
+| item_bases      | data/Bases/*.lua                       | ~1,755 |
+| item_mods       | data/ModItem.lua + 8 other categories  | ~9,363 |
+| gems            | data/Gems.lua                          | ~966   |
+| uniques         | data/Uniques/*.lua                     | ~443   |
+| passive_nodes   | build.spec.tree.nodes                  | ~4,912 |
+| currencies      | static (PoE2 knowledge)                | ~80    |
 
-- **Path of Building PoE2** — desktop app for build planning
-- **Craft of Exile** — browser tool (no install needed, just bookmark)
-- **Exiled Exchange 2** — in-game price check overlay
+### Tasks
 
-### 3. Fix PoE2 Linux client
-
-- Currently opens in controller mode only (no keyboard/mouse support)
-- Investigate: might be a Steam Input issue or Proton config
-- Check: `~/.local/share/Steam/steamapps/common/Path of Exile 2/` for config files
-- Common fix: disable Steam Input for the game, or set `SDL_GAMECONTROLLERCONFIG`
-
-### 4. Write pytest tests for PoBEngine
-
-```bash
-cd ~/DEV/poe2-crafting-mcp
-nix develop
-PYTHONPATH=src pytest tests/
-```
-
-Tests to write:
-- `test_engine_boots` — PoBEngine initializes without error
-- `test_load_build` — loads fixture, stats are non-zero
-- `test_equip_item` — swapping gloves changes DPS
-- `test_get_build_info` — returns correct class/ascendancy
-- `test_get_keystones` — returns Chaos Inoculation for fixture build
+- [ ] `src/poe2_crafting_mcp/data/schema.sql` — SQLite DDL
+- [ ] `src/poe2_crafting_mcp/data/currencies.py` — static PoE2 currency list
+- [ ] `src/poe2_crafting_mcp/data/etl.py` — populate DB from PoB
+- [ ] `src/poe2_crafting_mcp/data/database.py` — read-only query interface
+- [ ] MCP tools: search_bases, search_mods, get_gem_info, search_uniques,
+      search_passive_nodes, search_currencies
+- [ ] Run ETL, verify row counts, commit DB
 
 ---
 
-## Sprint 2 Remaining
+## Sprint 3: MCP Prompts & Resources
 
-- [x] Pytest test suite for PoBEngine — 32 tests, all passing
-- [ ] SQLite schema + database module
+- [ ] `@mcp.prompt()` — standard build optimisation workflow for agent
+- [ ] `@mcp.resource("poe2://scenario-rules")` — rules for realistic scenario setup
+  (e.g. "set conditionCritRecently if crit_chance > 15%")
+- [ ] `@mcp.resource("poe2://crafting-guide")` — currency usage guide
 
-## Sprint 3: Pricing
+---
 
-- [ ] poe.show client (currency prices)
-- [ ] poe.ninja client (base/unique prices)
-- [ ] Economy cache in SQLite
-- [ ] League auto-detection
+## Sprint 4: Pricing
+
+- [ ] poe.ninja client (base/unique/gem prices)
+- [ ] poe.show client (currency exchange rates)
+- [ ] Economy cache in SQLite (prices table)
+- [ ] League auto-detection from poe.ninja API
+
+---
 
 ## Reference
 
-- Planning docs: ~/MATTHEW/obsidian_vault/PoE2 Crafting MCP Server/
+- Planning docs: ~/OBSIDIAN_VAULT/PoE2 Crafting MCP Server/
 - MVP plan: doc 10 - MVP Implementation Plan.md
 - PoB engine docs: ./docs/pob-engine-boot.md
 - Override docs: ./docs/uv2nix-overrides.md

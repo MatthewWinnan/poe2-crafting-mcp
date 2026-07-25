@@ -9,6 +9,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from poe2_crafting_mcp.engine.pob_engine import PoBEngine
+from poe2_crafting_mcp.data.database import PoBDatabase
 
 # ── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -18,6 +19,7 @@ mcp: FastMCP = FastMCP("poe2-crafting")
 
 # Single engine instance — PoB boots once per server lifetime.
 _engine: PoBEngine | None = None
+_db: PoBDatabase | None = None
 
 
 def _get_engine() -> PoBEngine:
@@ -25,6 +27,13 @@ def _get_engine() -> PoBEngine:
     if _engine is None:
         _engine = PoBEngine(POB_PATH)
     return _engine
+
+
+def _get_db() -> PoBDatabase:
+    global _db
+    if _db is None:
+        _db = PoBDatabase()
+    return _db
 
 
 def _to_json(obj: Any) -> str:
@@ -328,6 +337,183 @@ def export_build_code() -> str:
     The code can be imported into PoB or saved to a file.
     """
     return _to_json({"code": _get_engine().export_build_code()})
+
+
+# ── Game Data (ETL-backed) ────────────────────────────────────────────────────
+
+@mcp.tool()
+def search_bases(slot: str = "", sub_type: str = "",
+                 min_level: int = 0, max_level: int = 100,
+                 limit: int = 50) -> str:
+    """
+    Find craftable item bases for a slot and defence type.
+
+    Args:
+        slot:      Item slot — "Gloves", "Helmet", "Body Armour", "Boots",
+                   "Ring", "Amulet", "Belt", "Weapon", "Shield", "Quiver".
+                   Leave blank to search all slots.
+        sub_type:  Defence subtype — "Armour", "Evasion", "Energy Shield",
+                   "Armour/Evasion", "Evasion/Energy Shield", etc.
+                   Leave blank for all subtypes.
+        min_level: Minimum required character level.
+        max_level: Maximum required character level.
+        limit:     Max results (default 50).
+
+    Returns:
+        JSON array of bases with name, slot, sub_type, req_level, req_str/dex/int,
+        socket_limit, tags, armour, evasion, energy_shield, ward.
+    """
+    return _to_json(_get_db().search_bases(slot, sub_type, min_level, max_level, limit))
+
+
+@mcp.tool()
+def search_mods(keyword: str = "", item_tag: str = "",
+                category: str = "Item", mod_type: str = "",
+                min_level: int = 0, max_level: int = 100,
+                limit: int = 30) -> str:
+    """
+    Search explicit item mods for crafting.
+
+    Use this to find what mods can roll on an item base, or to identify the
+    best mod for a given stat improvement.
+
+    Args:
+        keyword:   Stat keyword — e.g. "lightning damage", "critical strike",
+                   "maximum life", "attack speed". Searches stat text and affix name.
+        item_tag:  Filter to mods that can roll on this item type tag —
+                   e.g. "gloves", "ring", "staff", "str_armour", "dex_armour",
+                   "bow", "wand". Matches against the mod's weight_keys.
+        category:  Mod pool — "Item" (default, regular crafted mods),
+                   "Jewel", "Runes", "Corruption", "Desecrated", "Flask", "Charm".
+        mod_type:  "Prefix" or "Suffix". Leave blank for both.
+        min_level: Minimum ilvl required (req_level).
+        max_level: Maximum ilvl.
+        limit:     Max results (default 30).
+
+    Returns:
+        JSON array of mods with id, category, mod_type, affix, stat_text,
+        stat_min, stat_max, req_level, group_name, mod_tags, weight_keys.
+    """
+    return _to_json(_get_db().search_mods(keyword, item_tag, category, mod_type,
+                                          min_level, max_level, limit))
+
+
+@mcp.tool()
+def get_gem_info(name: str) -> str:
+    """
+    Get details for a specific gem by exact name.
+
+    Returns gem_type, is_support, tier, attribute requirements, tags,
+    tag_string, weapon_requirements, and natural_max_level.
+
+    Use search_gems() if you don't know the exact name.
+    """
+    gem = _get_db().get_gem(name)
+    if not gem:
+        return _to_json({"error": f"Gem '{name}' not found"})
+    return _to_json(gem)
+
+
+@mcp.tool()
+def search_gems(keyword: str = "", gem_type: str = "",
+                is_support: bool | None = None,
+                tag: str = "", limit: int = 30) -> str:
+    """
+    Search active and support gems.
+
+    Args:
+        keyword:    Name/tag keyword — e.g. "lightning", "strike", "aoe", "channelling".
+        gem_type:   "Attack", "Spell", or "" for all.
+        is_support: true = support gems only, false = active gems only, null = all.
+        tag:        Tag filter — e.g. "cold", "projectile", "melee", "duration".
+        limit:      Max results.
+
+    Returns:
+        JSON array of gems with name, gem_type, is_support, tier, requirements,
+        tags, tag_string, weapon_requirements.
+    """
+    return _to_json(_get_db().search_gems(keyword, gem_type, is_support, tag, limit))
+
+
+@mcp.tool()
+def search_uniques(slot: str = "", keyword: str = "",
+                   base_type: str = "", limit: int = 20) -> str:
+    """
+    Search unique items.
+
+    Args:
+        slot:      PoB slot key — "gloves", "ring", "helmet", "body", "boots",
+                   "amulet", "belt", "weapon1", "weapon2", "shield".
+        keyword:   Search term in unique name or mod text — e.g. "rage",
+                   "lightning", "power charge", "life leech".
+        base_type: Filter by base type name — e.g. "Moulded Mitts".
+        limit:     Max results.
+
+    Returns:
+        JSON array of uniques with name, slot, base_type, source, variants,
+        and raw_text (full item text for use with equip_item()).
+    """
+    return _to_json(_get_db().search_uniques(slot, keyword, base_type, limit))
+
+
+@mcp.tool()
+def search_passive_nodes(keyword: str = "", node_type: str = "",
+                         ascendancy: str = "", limit: int = 50) -> str:
+    """
+    Search passive tree nodes by stat or name keyword.
+
+    Use this to discover what passives enhance a particular build goal —
+    e.g. find all keystones, all Invoker ascendancy notables, or all nodes
+    that provide lightning damage.
+
+    Note: Jewel sockets can be filled from ANY class starting area if you path
+    near them (see Timeless Jewels) — the agent should not assume jewel slots
+    are class-locked.
+
+    Args:
+        keyword:    Stat or name keyword — e.g. "critical", "lightning damage",
+                    "power charge", "energy shield", "evasion".
+        node_type:  "Notable", "Keystone", "Normal", "JewelSocket", "ClassStart".
+                    Leave blank for all types.
+        ascendancy: Ascendancy name filter — e.g. "Invoker", "Warbringer",
+                    "Stormweaver", "Infernalist". Leave blank for base tree.
+        limit:      Max results (default 50).
+
+    Returns:
+        JSON array of nodes with node_id, name, node_type, ascendancy,
+        is_jewel_socket, stats (array of stat strings), x, y, group_id.
+    """
+    return _to_json(_get_db().search_passive_nodes(keyword, node_type, ascendancy, limit=limit))
+
+
+@mcp.tool()
+def search_currencies(category: str = "", keyword: str = "") -> str:
+    """
+    List PoE2 currencies with their effects.
+
+    Args:
+        category: Filter by category — "Orb", "Quality", "Essence", "Rune",
+                  "SoulCore", "Distilled", "Fragment", "Catalyst", "Other".
+                  Leave blank to list all.
+        keyword:  Substring search in name or effect description.
+
+    Returns:
+        JSON array of currencies with name, category, subcategory, effect,
+        and trade_id (for price lookups).
+    """
+    return _to_json(_get_db().search_currencies(category, keyword))
+
+
+@mcp.tool()
+def get_db_summary() -> str:
+    """
+    Return row counts for all game data tables.
+
+    Use this to verify the ETL has been run and data is available.
+    Returns counts for: item_bases, item_mods, gems, uniques,
+    passive_nodes, currencies.
+    """
+    return _to_json(_get_db().get_summary())
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
