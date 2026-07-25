@@ -34,6 +34,37 @@ Goal: let the agent answer "what does this upgrade cost?" and plan efficient upg
 
 ---
 
+## 🎯 NEXT SESSION WORK
+
+### 1. CLI Validation — compare poe2-price against poe.ninja + Exile Exchange
+
+Manual spot-check to confirm prices and listings are accurate:
+
+- [ ] Run `poe2-price stats --refresh` — verify ~8000+ stat IDs cached
+- [ ] Run `poe2-price league` — confirm league = "Runes of Aldur"
+- [ ] Run `poe2-price refresh` — cache currency prices
+- [ ] Run `poe2-price rate "Divine Orb"` — compare chaos value against poe.ninja browser
+- [ ] Run `poe2-price rate "Orb of Alteration"` — spot-check alt price
+- [ ] Run `poe2-price trade "energy shield" --slot gloves --rarity magic --min 40`
+  - Open the returned trade URL in browser and verify listings match
+  - Cross-check cheapest listing price against Exile Exchange (exiletools.net or similar)
+- [ ] Run `poe2-price trade "maximum life" --slot ring --rarity rare --min 70`
+  - Verify stat matched is global life (not local), compare with trade site
+- [ ] Run `poe2-price trade "cold resistance" --slot gloves --rarity magic`
+  - Verify implicit vs explicit stat ID is right
+- [ ] Test `--stat-type` override manually: find a known fractured item on trade,
+  confirm `--stat-type fractured` returns it
+
+### 2. Trade Search Extensions (see section below for full details)
+
+- [ ] Multi-stat filter support (--stat2, --stat3 in CLI / stat_filters list in MCP)
+- [ ] `--stat-type` flag for fractured, desecrated, implicit, crafted, pseudo
+- [ ] Corrupted implicit search (extra sockets, +gem levels) via `desecrated` type
+- [ ] Fractured base search (locked T1 mod crafting bases) via `fractured` type
+- [ ] Pseudo stat support (total res, total life without listing each mod)
+
+---
+
 ## Trade Search: Planned Extensions
 
 These are known gaps to address in a future sprint (fits naturally into Sprint 5):
