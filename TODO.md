@@ -53,7 +53,7 @@ Tests to write:
 
 ## Sprint 2 Remaining
 
-- [ ] Pytest test suite for PoBEngine
+- [x] Pytest test suite for PoBEngine — 32 tests, all passing
 - [ ] SQLite schema + database module
 
 ## Sprint 3: Pricing
