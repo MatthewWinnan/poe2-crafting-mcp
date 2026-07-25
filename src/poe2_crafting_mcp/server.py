@@ -10,6 +10,8 @@ from mcp.server.fastmcp import FastMCP
 
 from poe2_crafting_mcp.engine.pob_engine import PoBEngine
 from poe2_crafting_mcp.data.database import PoBDatabase
+from poe2_crafting_mcp.data.economy import NinjaClient, EconomyError
+from poe2_crafting_mcp.data.price_db import PriceDatabase
 
 # ── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -20,6 +22,7 @@ mcp: FastMCP = FastMCP("poe2-crafting")
 # Single engine instance — PoB boots once per server lifetime.
 _engine: PoBEngine | None = None
 _db: PoBDatabase | None = None
+_price_db: PriceDatabase | None = None
 
 
 def _get_engine() -> PoBEngine:
@@ -34,6 +37,13 @@ def _get_db() -> PoBDatabase:
     if _db is None:
         _db = PoBDatabase()
     return _db
+
+
+def _get_price_db() -> PriceDatabase:
+    global _price_db
+    if _price_db is None:
+        _price_db = PriceDatabase()
+    return _price_db
 
 
 def _to_json(obj: Any) -> str:
@@ -605,6 +615,471 @@ def get_concept(name: str) -> str:
     result = _get(name)
     if not result:
         return _to_json({"error": f"Concept '{name}' not found"})
+    return _to_json(result)
+
+
+# ── Economy & Pricing ────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def get_data_status() -> str:
+    """
+    Return the freshness status of all data sources.
+
+    Call this at the start of any session to understand what needs updating
+    before running build analysis or price lookups.
+
+    Returns a JSON object with:
+    - active_league: the league currently configured (or null if not set)
+    - prices: {league, age_minutes, status} where status is one of:
+        "fresh" | "stale_ttl" | "stale_league" | "missing"
+    - etl: {league, age_days, status} where status is one of:
+        "fresh" | "stale_age" | "stale_league" | "never_run"
+
+    If prices.status != "fresh", call refresh_prices().
+    If etl.status != "fresh", warn the user and offer to call refresh_etl().
+    """
+    pdb = _get_price_db()
+    active_league = pdb.get_active_league()
+    if not active_league:
+        # Auto-detect so we can compute staleness accurately
+        try:
+            active_league = NinjaClient().get_current_league()
+            pdb.set_active_league(active_league)
+        except EconomyError:
+            active_league = None
+
+    result: dict = {"active_league": active_league}
+    if active_league:
+        result["prices"] = pdb.price_cache_status(active_league)
+        result["etl"] = pdb.etl_status(active_league)
+    else:
+        result["prices"] = {"status": "unknown", "note": "Could not reach poe.ninja to detect league"}
+        result["etl"] = {"status": "unknown"}
+    return _to_json(result)
+
+
+@mcp.tool()
+def set_active_league(league: str = "") -> str:
+    """
+    Set the league for price lookups and freshness tracking.
+
+    Args:
+        league: League name (e.g. "Dawn of the Hunt"). Leave blank to
+                auto-detect the current challenge league from poe.ninja.
+
+    Returns:
+        JSON with {active_league, prices_status, etl_status}.
+    """
+    pdb = _get_price_db()
+    client = NinjaClient()
+
+    if not league:
+        try:
+            league = client.get_current_league()
+        except EconomyError as e:
+            return _to_json({"error": str(e)})
+
+    pdb.set_active_league(league)
+    return _to_json({
+        "active_league": league,
+        "prices": pdb.price_cache_status(league),
+        "etl": pdb.etl_status(league),
+    })
+
+
+@mcp.tool()
+def refresh_prices(league: str = "") -> str:
+    """
+    Fetch fresh prices from poe.ninja and update the local cache.
+
+    Fetches: currencies, fragments, unique items (all slots), base items,
+    and skill gems. Takes 5-10 seconds (one HTTP call per category).
+
+    Args:
+        league: League name. Leave blank to use the active league (or
+                auto-detect from poe.ninja if not yet set).
+
+    Returns:
+        JSON with {league, categories_fetched, total_prices, duration_seconds}.
+    """
+    import time
+    pdb = _get_price_db()
+    client = NinjaClient()
+
+    if not league:
+        league = pdb.get_active_league() or ""
+    if not league:
+        try:
+            league = client.get_current_league()
+        except EconomyError as e:
+            return _to_json({"error": str(e)})
+
+    pdb.set_active_league(league)
+
+    from poe2_crafting_mcp.data.currencies import CURRENCIES
+    trade_ids = [c[4] for c in CURRENCIES if c[4]]
+
+    t0 = time.monotonic()
+    try:
+        rows = client.fetch_currency_rates(league, trade_ids)
+    except EconomyError as e:
+        return _to_json({"error": str(e)})
+
+    pdb.upsert_prices(rows, league)
+    duration = round(time.monotonic() - t0, 2)
+
+    # Find divine rate for display
+    divine_row = next((r for r in rows if r.get("trade_id") == "divine-orb"), None)
+    divine_chaos = divine_row["chaos_value"] if divine_row else None
+
+    return _to_json({
+        "league": league,
+        "categories_fetched": ["currency"],
+        "total_prices": len(rows),
+        "duration_seconds": duration,
+        "divine_chaos_rate": divine_chaos,
+        "note": "Item prices (uniques/bases/gems) not available via poe.ninja PoE2 API.",
+    })
+
+
+@mcp.tool()
+def refresh_etl() -> str:
+    """
+    Re-run the full ETL pipeline to rebuild game data from the PoB submodule.
+
+    This takes 1-3 minutes and requires the PoB engine. It rebuilds item bases,
+    mods, gems, uniques, passive nodes, and currencies from the PoB vendor data.
+
+    Use this when:
+    - get_data_status() shows etl.status = "stale_league" or "stale_age"
+    - The PoB submodule has been updated (git submodule update)
+    - New game content is missing from search results
+
+    Returns:
+        JSON with {ran_at, row_counts, duration_seconds}.
+    """
+    import time
+    from poe2_crafting_mcp.data.etl import run as etl_run
+
+    pdb = _get_price_db()
+    active_league = pdb.get_active_league()
+
+    t0 = time.monotonic()
+    try:
+        counts = etl_run()
+    except Exception as e:
+        return _to_json({"error": f"ETL failed: {e}"})
+
+    duration = round(time.monotonic() - t0, 2)
+    ran_at = pdb._now_iso()
+
+    # Record ETL completion in economy_meta
+    pdb.set_meta("etl_ran_at", ran_at)
+    if active_league:
+        pdb.set_meta("etl_league", active_league)
+
+    return _to_json({
+        "ran_at": ran_at,
+        "league": active_league,
+        "row_counts": counts,
+        "duration_seconds": duration,
+    })
+
+
+@mcp.tool()
+def get_item_price(name: str, category: str = "", league: str = "") -> str:
+    """
+    Look up the current market price for an item.
+
+    Searches the local price cache (refreshed by refresh_prices()).
+    If no exact match, falls back to substring search.
+
+    Args:
+        name:     Item name — e.g. "Kaom's Heart", "Titan Greaves",
+                  "Divine Orb", "Ice Nova".
+        category: Optional filter — "unique", "base", "gem", "currency",
+                  "fragment". Leave blank to search all categories.
+        league:   League name. Defaults to the active league.
+
+    Returns:
+        JSON with name, category, chaos_value, divine_value, listing_count,
+        league, fetched_at. Returns a list if multiple matches found.
+        Returns {"error": "..."} if nothing found — call refresh_prices() first.
+    """
+    pdb = _get_price_db()
+
+    if not league:
+        league = pdb.get_active_league() or ""
+    if not league:
+        return _to_json({"error": "No active league set. Call set_active_league() or refresh_prices() first."})
+
+    # Exact match first
+    hit = pdb.get_price(name, league, category)
+    if hit:
+        return _to_json(hit)
+
+    # Substring search
+    results = pdb.search_prices(name, league, category, limit=10)
+    if not results:
+        return _to_json({
+            "error": f"No prices found for '{name}' in league '{league}'.",
+            "hint": "Call refresh_prices() to populate the cache, or check the item name spelling.",
+        })
+    if len(results) == 1:
+        return _to_json(results[0])
+    return _to_json(results)
+
+
+@mcp.tool()
+def get_currency_rate(name: str, league: str = "") -> str:
+    """
+    Get the chaos and divine value of a currency or fragment.
+
+    Useful for estimating craft costs: multiply the currency quantity
+    needed by its chaos value to get total chaos cost.
+
+    Args:
+        name:   Currency name — e.g. "Divine Orb", "Orb of Alteration",
+                "Lesser Essence of Electricity", "Chaos Orb".
+        league: League name. Defaults to the active league.
+
+    Returns:
+        JSON with name, category, chaos_value, divine_value, listing_count,
+        league, fetched_at.
+        Returns {"error": "..."} if not found — call refresh_prices() first.
+    """
+    pdb = _get_price_db()
+
+    if not league:
+        league = pdb.get_active_league() or ""
+    if not league:
+        return _to_json({"error": "No active league set. Call set_active_league() or refresh_prices() first."})
+
+    # Try currency first, then fragment
+    for cat in ("currency", "fragment", ""):
+        hit = pdb.get_price(name, league, cat)
+        if hit:
+            return _to_json(hit)
+
+    # Substring fallback
+    results = pdb.search_prices(name, league, limit=5)
+    if not results:
+        return _to_json({
+            "error": f"Currency '{name}' not found in league '{league}'.",
+            "hint": "Call refresh_prices() to populate the cache.",
+        })
+    return _to_json(results[0] if len(results) == 1 else results)
+
+
+@mcp.tool()
+def get_bulk_prices(category: str, league: str = "") -> str:
+    """
+    Return all cached prices for a category.
+
+    Use this to survey all items in a category at once — e.g. all currencies
+    to compare craft material costs, or all gems to find upgrade opportunities.
+
+    Args:
+        category: Required — one of: "currency", "fragment", "unique",
+                  "base", "gem".
+        league:   League name. Defaults to the active league.
+
+    Returns:
+        JSON array of price objects sorted by listing_count descending.
+        Returns {"error": "..."} if cache is empty — call refresh_prices() first.
+    """
+    valid = {"currency", "fragment", "unique", "base", "gem"}
+    if category not in valid:
+        return _to_json({"error": f"category must be one of: {sorted(valid)}"})
+
+    pdb = _get_price_db()
+
+    if not league:
+        league = pdb.get_active_league() or ""
+    if not league:
+        return _to_json({"error": "No active league set. Call set_active_league() or refresh_prices() first."})
+
+    results = pdb.get_bulk_prices(category, league)
+    if not results:
+        return _to_json({
+            "error": f"No '{category}' prices cached for league '{league}'.",
+            "hint": "Call refresh_prices() to populate the cache.",
+        })
+    return _to_json(results)
+
+
+@mcp.tool()
+def refresh_trade_stats() -> str:
+    """
+    Fetch and cache the full trade stat ID list from the GGG trade2 API.
+
+    Call this once per session (or when the cache is empty) before using
+    search_trade_listings(). The cache persists across sessions in poe2_craft.db.
+
+    Fetches ~6000 stat entries covering explicit, implicit, pseudo, enchant,
+    and other stat types. Takes ~1-2 seconds.
+
+    Returns:
+        JSON with {total_stats, by_type: {explicit: N, ...}, cached_at}.
+    """
+    from poe2_crafting_mcp.data.trade_client import TradeClient, TradeError
+
+    try:
+        stats = TradeClient().fetch_stats()
+    except TradeError as e:
+        return _to_json({"error": str(e)})
+
+    pdb = _get_price_db()
+    n = pdb.upsert_trade_stats(stats)
+
+    by_type: dict[str, int] = {}
+    for s in stats:
+        by_type[s["stat_type"]] = by_type.get(s["stat_type"], 0) + 1
+
+    return _to_json({
+        "total_stats": n,
+        "by_type": by_type,
+        "cached_at": pdb.trade_stats_fetched_at(),
+    })
+
+
+@mcp.tool()
+def search_trade_listings(
+    stat_name: str,
+    slot: str = "",
+    rarity: str = "magic",
+    min_value: float | None = None,
+    max_value: float | None = None,
+    tier: int | None = None,
+    ilvl_min: int = 80,
+    stat_type: str = "explicit",
+    league: str = "",
+) -> str:
+    """
+    Search the GGG trade site for items with a specific mod/stat.
+
+    This is the primary tool for finding items to buy based on desired stats.
+    Example use cases:
+    - "Find the cheapest magic gloves with T1 energy shield"
+    - "Find rare rings with at least 80 max life"
+    - "Find magic boots with movement speed T1"
+
+    Prerequisite: call refresh_trade_stats() at least once per session if
+    the cache is empty (check via get_data_status()).
+
+    Workflow:
+        1. refresh_trade_stats()            # once per session
+        2. search_mods("energy shield")     # optional: check tier values in game DB
+        3. search_trade_listings(           # live trade search
+               stat_name="energy shield",
+               slot="gloves",
+               rarity="magic",
+               tier=1                      # auto-looks up T1 min from game DB
+           )
+
+    Args:
+        stat_name:  Stat to search for — e.g. "energy shield", "maximum life",
+                    "cold resistance", "movement speed", "attack speed".
+                    Matched against the trade stat ID cache via FTS.
+        slot:       Item slot to restrict to — e.g. "gloves", "boots", "helmet",
+                    "ring", "amulet", "belt", "body armour", "shield".
+                    Leave blank to search all item types.
+        rarity:     "magic" (default) | "rare" | "normal" | "any".
+                    Magic bases with one strong mod are prime crafting candidates.
+        min_value:  Minimum stat value (e.g. 50 for 50+ energy shield).
+                    If both min_value and tier are given, min_value takes precedence.
+        max_value:  Maximum stat value (optional upper bound).
+        tier:       Mod tier number — 1 = best. Auto-looks up the tier's minimum
+                    value from the game DB (item_mods table). If the DB lookup
+                    fails, the search runs without a value floor.
+        ilvl_min:   Minimum item level (default 80).
+        stat_type:  "explicit" (default) | "implicit" | "pseudo".
+        league:     League name. Defaults to the active league.
+
+    Returns:
+        JSON with:
+        - found: bool
+        - total_listings: int (how many exist on trade)
+        - min_price: {amount, currency}
+        - median_price: {amount, currency}
+        - trade_url: direct link to open in browser
+        - listings: [{name, base_type, rarity, ilvl, price_amount, price_currency, account}]
+        - matched_stat: {stat_id, stat_text} — the stat we searched for
+        - tier_min_used: float | null — the min value used (from tier lookup or min_value)
+    """
+    from poe2_crafting_mcp.data.trade_client import TradeClient, TradeError, SLOT_TO_CATEGORY
+    from poe2_crafting_mcp.data.price_cli import _lookup_tier_min, _slot_to_pob_tag
+
+    pdb = _get_price_db()
+
+    if not league:
+        league = pdb.get_active_league() or ""
+    if not league:
+        return _to_json({"error": "No active league. Call set_active_league() first."})
+
+    if pdb.trade_stats_count() == 0:
+        return _to_json({
+            "error": "Trade stat cache is empty. Call refresh_trade_stats() first.",
+        })
+
+    # ── Resolve stat ID ───────────────────────────────────────────────────────
+    # Armour/weapon slots use local mods — prefer (Local) stat variants
+    _armour_slots = {"gloves", "boots", "helmet", "helm", "body armour", "body", "chest",
+                     "shield", "focus", "buckler", "weapon", "sword", "axe", "mace",
+                     "bow", "staff", "crossbow", "wand", "sceptre", "dagger", "claw", "spear"}
+    prefer_local = slot_lower in _armour_slots
+    matches = pdb.search_trade_stats(stat_name, stat_type=stat_type, limit=5, prefer_local=prefer_local)
+    if not matches:
+        matches = pdb.search_trade_stats(stat_name, limit=5, prefer_local=prefer_local)
+    if not matches:
+        return _to_json({
+            "error": f"No stat IDs found for '{stat_name}'.",
+            "hint": "Try a different keyword, or call refresh_trade_stats() to refresh the cache.",
+        })
+    chosen = matches[0]
+
+    # ── Resolve slot → category ───────────────────────────────────────────────
+    category: str | None = None
+    slot_lower = slot.lower()
+    if slot_lower:
+        category = SLOT_TO_CATEGORY.get(slot_lower)
+        if not category:
+            for k, v in SLOT_TO_CATEGORY.items():
+                if k.startswith(slot_lower) or slot_lower.startswith(k):
+                    category = v
+                    break
+
+    # ── Resolve tier → min value ──────────────────────────────────────────────
+    tier_min_used: float | None = min_value
+    if tier is not None and min_value is None:
+        tier_min_used = _lookup_tier_min(stat_name, tier, slot_lower)
+
+    # ── Build stat filter ─────────────────────────────────────────────────────
+    stat_filter: dict = {"id": chosen["stat_id"]}
+    if tier_min_used is not None:
+        stat_filter["min"] = tier_min_used
+    if max_value is not None:
+        stat_filter["max"] = max_value
+
+    # ── Search ────────────────────────────────────────────────────────────────
+    try:
+        result = TradeClient().estimate_trade_price(
+            league,
+            stat_filters=[stat_filter],
+            category=category,
+            rarity=rarity,
+            ilvl_min=ilvl_min,
+        )
+    except TradeError as e:
+        return _to_json({"error": str(e)})
+
+    result["matched_stat"] = {"stat_id": chosen["stat_id"], "stat_text": chosen["stat_text"]}
+    result["tier_min_used"] = tier_min_used
+    result["other_stat_matches"] = [
+        {"stat_id": m["stat_id"], "stat_text": m["stat_text"]}
+        for m in matches[1:3]
+    ]
     return _to_json(result)
 
 

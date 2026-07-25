@@ -145,6 +145,53 @@ CREATE TABLE IF NOT EXISTS currencies (
 
 CREATE INDEX IF NOT EXISTS idx_currencies_category ON currencies(category);
 
+-- ── Prices (poe.ninja cache) ──────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS prices (
+    name          TEXT NOT NULL,
+    category      TEXT NOT NULL,   -- "currency","fragment","unique","base","gem"
+    league        TEXT NOT NULL,
+    chaos_value   REAL,
+    divine_value  REAL,
+    listing_count INTEGER,
+    fetched_at    TEXT NOT NULL,   -- ISO datetime (UTC)
+    PRIMARY KEY (name, category, league)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prices_league   ON prices(league);
+CREATE INDEX IF NOT EXISTS idx_prices_category ON prices(category);
+
+-- ── Economy Meta (key/value store) ────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS economy_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+-- Keys used:
+--   active_league     — league we're targeting (user-set or auto-detected)
+--   prices_fetched_at — ISO datetime of last price refresh
+--   etl_league        — league active when ETL last ran
+--   etl_ran_at        — ISO datetime of last ETL run
+
+-- ── Trade API Stat Index ──────────────────────────────────────────────────────
+-- Populated by fetching GET /api/trade2/data/stats from the GGG trade site.
+-- Enables stat-ID lookup for stat-filtered trade searches (e.g. T1 energy shield).
+
+CREATE TABLE IF NOT EXISTS trade_stats (
+    stat_id    TEXT PRIMARY KEY,
+    stat_text  TEXT NOT NULL,
+    stat_type  TEXT NOT NULL,   -- "explicit", "implicit", "pseudo", "enchant", etc.
+    fetched_at TEXT NOT NULL    -- ISO datetime (UTC)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_stats_type ON trade_stats(stat_type);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS trade_stats_fts USING fts5(
+    stat_id, stat_text,
+    content='trade_stats',
+    tokenize='unicode61'
+);
+
 -- ── ETL Metadata ─────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS etl_runs (

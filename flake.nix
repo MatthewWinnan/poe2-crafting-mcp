@@ -118,6 +118,7 @@
           unset PYTHONPATH
 
           export REPO_ROOT=$(${pkgs.git}/bin/git rev-parse --show-toplevel)
+          export PYTHONPATH="$REPO_ROOT/src"
           export POB_PATH="$REPO_ROOT/vendor/PathOfBuilding-PoE2"
           export POE2_CRAFT_DB="$REPO_ROOT/data/poe2_craft.db"
 

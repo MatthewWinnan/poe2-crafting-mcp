@@ -20,15 +20,17 @@
 
 ---
 
-## Sprint 4: Pricing & Economy
+## ✅ Sprint 4: Pricing & Economy
 
-Goal: let the agent answer "what does this upgrade cost?" alongside "what DPS does it add?"
+Goal: let the agent answer "what does this upgrade cost?" and plan efficient upgrade paths.
 
-- [ ] poe.ninja client — fetch base/unique/gem prices for current league
-- [ ] poe.show / trade client — currency exchange rates (chaos : divine etc.)
-- [ ] Economy cache in SQLite (prices table, TTL-based refresh)
-- [ ] League auto-detection from poe.ninja API
-- [ ] MCP tools: get_item_price, get_currency_rate, get_league_economy
+- [x] poe.ninja client (NinjaClient) — currencies, fragments, uniques, bases, gems
+- [x] League auto-detection from poe.ninja API
+- [x] Economy cache in SQLite (prices + economy_meta tables, TTL-based refresh)
+- [x] PriceDatabase — upsert, search, bulk read, divine value back-fill, staleness detection
+- [x] MCP tools: get_data_status, set_active_league, refresh_prices, refresh_etl,
+      get_item_price, get_currency_rate, get_bulk_prices
+- [x] 33 unit tests (mocked HTTP + in-memory SQLite), all passing
 
 ---
 
