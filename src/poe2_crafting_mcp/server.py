@@ -781,7 +781,9 @@ def refresh_prices(league: str = "") -> str:
     pdb.set_active_league(league)
 
     from poe2_crafting_mcp.data.currencies import CURRENCIES
-    trade_ids = [c[4] for c in CURRENCIES if c[4]]
+    from poe2_crafting_mcp.data.economy import GENERAL_ITEM_TYPES
+    _CURRENCY_EXCHANGE_CATS = {"Orb", "Quality", "Other"}
+    trade_ids = [c[4] for c in CURRENCIES if c[4] and c[1] in _CURRENCY_EXCHANGE_CATS]
 
     t0 = time.monotonic()
     try:
@@ -790,19 +792,35 @@ def refresh_prices(league: str = "") -> str:
         return _to_json({"error": str(e)})
 
     pdb.upsert_prices(rows, league)
-    duration = round(time.monotonic() - t0, 2)
 
-    # Find divine rate for display
+    # Find divine rate for chaos conversion
     divine_row = next((r for r in rows if r.get("trade_id") == "divine-orb"), None)
     divine_chaos = divine_row["chaos_value"] if divine_row else None
 
+    # ── General exchange categories (one overview call each) ─────────────────
+    categories_fetched = ["currency"]
+    total_general = 0
+    for item_type, label in GENERAL_ITEM_TYPES:
+        try:
+            gen_rows = client.fetch_exchange_category(league, item_type)
+        except EconomyError:
+            gen_rows = []
+        if gen_rows:
+            pdb.upsert_prices(gen_rows, league)
+            total_general += len(gen_rows)
+            categories_fetched.append(f"{label} ({len(gen_rows)})")
+
+    if total_general:
+        pdb.fill_chaos_from_divine(league)
+
+    duration = round(time.monotonic() - t0, 2)
     return _to_json({
         "league": league,
-        "categories_fetched": ["currency"],
-        "total_prices": len(rows),
+        "categories_fetched": categories_fetched,
+        "total_prices": len(rows) + total_general,
         "duration_seconds": duration,
         "divine_chaos_rate": divine_chaos,
-        "note": "Item prices (uniques/bases/gems) not available via poe.ninja PoE2 API.",
+        "note": "Unique item prices not available via poe.ninja PoE2 API.",
     })
 
 

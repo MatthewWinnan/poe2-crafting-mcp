@@ -257,6 +257,64 @@ class NinjaClient:
 
         return results
 
+    def fetch_exchange_category(
+        self,
+        league: str,
+        item_type: str,
+        category: str | None = None,
+    ) -> list[dict]:
+        """
+        Fetch all items + prices for an exchange category in a single API call.
+
+        Uses the /overview endpoint which returns the full item list and current
+        divine-value prices in one response — no per-item calls needed.
+
+        item_type: poe.ninja type (e.g. "Runes", "Essences", "SoulCores").
+        category: internal category name. If None, derived from item_type.
+
+        Returns list ready for PriceDatabase.upsert_prices().
+        chaos_value will be None — call fill_chaos_from_divine() after upsert.
+        """
+        try:
+            data = self._get("economy/exchange/current/overview", {
+                "league": league,
+                "type":   item_type,
+            })
+        except EconomyError:
+            return []
+
+        if not data or not isinstance(data, dict):
+            return []
+
+        cat = category or _item_type_to_category(item_type)
+
+        # Build id → price lookup from lines
+        price_by_id: dict[str, dict] = {
+            line["id"]: line
+            for line in data.get("lines", [])
+            if "id" in line
+        }
+
+        results: list[dict] = []
+        for item in data.get("items", []):
+            item_id = item.get("id") or item.get("detailsId")
+            name    = item.get("name", "")
+            if not item_id or not name:
+                continue
+            line          = price_by_id.get(item_id, {})
+            divine_value  = line.get("primaryValue")
+            listing_count = int(line.get("volumePrimaryValue", 0) or 0)
+            results.append({
+                "name":          name,
+                "category":      cat,
+                "trade_id":      item_id,
+                "divine_value":  divine_value,
+                "chaos_value":   None,
+                "listing_count": listing_count,
+            })
+
+        return results
+
     def fetch_exchange_items(
         self,
         league: str,
@@ -266,7 +324,10 @@ class NinjaClient:
         progress_cb: Any = None,
     ) -> list[dict]:
         """
-        Fetch prices for a list of (name, slug) pairs for any exchange category.
+        Fetch prices for a specific list of (name, slug) pairs.
+
+        Prefer fetch_exchange_category() for full-category fetches — it uses a
+        single overview call instead of one HTTP request per item.
 
         item_type: poe.ninja type (e.g. "Runes", "Essences", "SoulCores", "Breach").
         slugs: list of (display_name, trade_slug) pairs.
@@ -275,8 +336,7 @@ class NinjaClient:
         Returns list ready for PriceDatabase.upsert_prices().
         chaos_value will be None — call fill_chaos_from_divine() after upsert.
         """
-        from poe2_crafting_mcp.data.general_items import EXCHANGE_CATEGORIES
-        cat = category or EXCHANGE_CATEGORIES.get(item_type, item_type.lower())
+        cat = category or _item_type_to_category(item_type)
 
         results: list[dict] = []
         total = len(slugs)
@@ -295,7 +355,7 @@ class NinjaClient:
                 "category":      cat,
                 "trade_id":      slug,
                 "divine_value":  rate_data["divine_value"],
-                "chaos_value":   None,   # filled by PriceDatabase.fill_chaos_from_divine()
+                "chaos_value":   None,
                 "listing_count": rate_data["volume"],
             })
             time.sleep(_INTER_REQUEST_DELAY)

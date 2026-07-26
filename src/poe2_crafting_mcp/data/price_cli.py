@@ -360,16 +360,14 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     duration = time.monotonic() - t0
     print(f"\n{_GREEN}✓ {len(rows)} currency prices cached in {duration:.1f}s{_RESET}")
 
-    # ── General exchange categories (per-item exchange endpoint) ─────────────
-    from poe2_crafting_mcp.data.general_items import EXCHANGE_SLUGS
+    # ── General exchange categories (single overview call per category) ───────
+    from poe2_crafting_mcp.data.economy import GENERAL_ITEM_TYPES
     total_general = 0
     print()
-    for item_type, slugs in EXCHANGE_SLUGS.items():
-        if not slugs:
-            continue
-        print(f"  Fetching {item_type}…", end=" ", flush=True)
+    for item_type, label in GENERAL_ITEM_TYPES:
+        print(f"  Fetching {label}…", end=" ", flush=True)
         t1 = time.monotonic()
-        gen_rows = client.fetch_exchange_items(league, item_type, slugs)
+        gen_rows = client.fetch_exchange_category(league, item_type)
         if gen_rows:
             pdb.upsert_prices(gen_rows, league)
             total_general += len(gen_rows)
