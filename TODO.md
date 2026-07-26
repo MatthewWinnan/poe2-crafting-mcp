@@ -136,6 +136,39 @@ Closes the loop between "what's on trade" and "how much does this actually help 
   - Estimates expected currency cost for alteration spam, essence, regal+augment paths
 - [ ] Currency cost formulas encoded as structured data (not prose)
 
+### 5f. Desecrated Mods Data Pipeline (Abyss Jewel mechanic)
+
+All 9 PoE2 mod sources catalogued in memory/crafting_mod_sources.md.
+Desecrated mods are NOT in PoB — separate scraping pipeline needed.
+
+**Data source:** poe2db.tw HTML (no JSON API)
+**URL pattern:** `poe2db.tw/us/{JewelName}` — sections per item class
+**Known jewels (Breach league versions):**
+- `Altered_Collarbone` → Amulet (4 mods) + Ring (16) + Belt (16) ✅ confirmed
+- `Altered_Cranium` → Helmets (unconfirmed URL)
+- `Altered_Vertebra` → Body Armour (unconfirmed URL)
+- `Altered_Jawbone` → Weapons/Quivers (404 on Abyssal_ prefix, try Altered_)
+- `Altered_Rib` → Armour (gloves/boots) (404 on Abyssal_ prefix, try Altered_)
+
+**Implementation:**
+- [ ] `Poe2DbScraper` in `poe2db_client.py` — HTML fetch + table parse per section anchor
+- [ ] `desecrated_mods` table in schema.sql:
+  `(jewel_name, item_class, mod_name, affix_type, stat_text, stat_min, stat_max, source_url, updated_at)`
+- [ ] `price_db.py`: `upsert_desecrated_mods()`, `get_desecrated_mods(jewel_name, item_class)`
+- [ ] `poe2-lookup item-desc-seed` extended to also seed desecrated mods from poe2db
+- [ ] MCP: `get_desecrated_mods(jewel_type, item_slot)` tool
+- [ ] CLI: `poe2-lookup desecrated --jewel "Altered Collarbone" --slot amulet`
+
+**Also blocked on: verify URL patterns for non-Collarbone jewel types**
+
+### 5g. Essence Mod Data Pipeline
+
+Essences guarantee one specific mod per item class — this is NOT the standard explicit pool.
+- [ ] `essence_mods` table: `(essence_name, item_class, mod_text, stat_min, stat_max)`
+- [ ] Seed from wiki description text parsing (Essence of X pages have mod text inline)
+- [ ] MCP: `get_essence_mods(essence_name, item_class)` tool
+- [ ] `estimate_craft_cost` needs essence path: cost = essence_price + (N tries until rest fills in)
+
 ### 5d. Item Descriptions + Crafting Knowledge Base ✅ DONE
 
 **Item Descriptions pipeline** (same pattern as concepts — static seed → SQLite → updatable at runtime):
