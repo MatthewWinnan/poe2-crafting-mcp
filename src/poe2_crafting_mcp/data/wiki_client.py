@@ -49,6 +49,9 @@ def _strip_wiki(text: str) -> str:
     # [[File:...]] and [[Image:...]] — remove entirely (can't render images)
     text = re.sub(r'\[\[(?:File|Image):[^\[\]]*(?:\[\[[^\[\]]*\]\][^\[\]]*)*\]\]',
                   '', text, flags=re.IGNORECASE)
+    # [https://... display text] or [https://...] — strip entirely.
+    # Display text is often a raw poe2db item transcription, not useful prose.
+    text = re.sub(r'\[https?://[^\]]*\]', '', text, flags=re.DOTALL)
     # [[page_title|display_text]] → display_text  (MediaWiki piped link)
     text = re.sub(r'\[\[([^\|\]]+)\|([^\]]+)\]\]', r'\2', text)
     # [[page]] → page
@@ -62,6 +65,28 @@ def _strip_wiki(text: str) -> str:
     # Strip thumb/image orphans left from multi-pipe File links
     text = re.sub(r'\bthumb\|[\d]+px\|', '', text)
     return text.strip()
+
+
+def _first_prose(wikitext: str) -> str:
+    """Extract first meaningful prose paragraph from item page wikitext.
+
+    Used as a fallback description when the {{Item}} template has no
+    description or augment_stat_text field.
+    """
+    # Skip past the {{Item}} block
+    pos = wikitext.find('}}')
+    body = wikitext[pos + 2:] if pos != -1 else wikitext
+    for raw in body.split('\n'):
+        line = raw.strip()
+        if not line:
+            continue
+        # Skip headings, templates, categories, files
+        if line.startswith(('=', '{', '[', '|', '*', '#', '!')):
+            continue
+        cleaned = _strip_wiki(line)
+        if cleaned and len(cleaned) > 20:
+            return cleaned
+    return ''
 
 
 class Poe2WikiClient:
@@ -230,7 +255,10 @@ class Poe2WikiClient:
                     if not fields:
                         log.debug('no {{Item}} on %s', page.get('title'))
                         continue
-                    results.append(self._to_item_desc(page.get('title', ''), fields))
+                    item = self._to_item_desc(page.get('title', ''), fields)
+                    if not item['description']:
+                        item['description'] = _first_prose(wikitext)
+                    results.append(item)
             except Exception as exc:
                 log.warning('wiki fetch error (batch starting %s): %s', batch[0], exc)
         return results
