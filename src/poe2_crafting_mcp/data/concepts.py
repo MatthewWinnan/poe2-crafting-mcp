@@ -2123,6 +2123,166 @@ CONCEPTS: list[dict] = [
         "formula": "One Unrevealed Desecrated mod per item. Replaces a random mod if item is full.",
         "see_also": ["Desecrated Mod", "Abyss Jewel", "Bone Socket", "Well of Souls", "Desecrated Ground"],
     },
+
+    # ── League / Endgame Encounter Mechanics ──────────────────────────────────
+    # Stubs — filled in from poe2wiki.net via `poe2-lookup concept-seed`
+
+    {
+        "name": "Breach",
+        "category": "mechanic",
+        "summary": "A map encounter where tears in reality summon Hiveborn monsters. Drops Breach Splinters and Wombgifts.",
+        "mechanics": "",
+        "formula": "",
+        "see_also": ["Genesis Tree", "Wombgift", "Breachstone", "Hive Fortress", "Abyss Jewel"],
+        "source": "manual",
+    },
+    {
+        "name": "Genesis Tree",
+        "category": "mechanic",
+        "summary": "A crafting station in the Monastery of the Keepers. Uses Hiveblood and Wombgifts from Breach encounters to birth items.",
+        "mechanics": (
+            "Hiveblood is gained automatically by killing Breach monsters. "
+            "Wombgifts drop from Breach encounters or Hive Fortress chests. "
+            "Each womb on the tree has passive skills that modify the birth outcome. "
+            "Revelatory Wombgift → Breachstones. Lavish Wombgift → Breach Splinters or items. "
+            "Signet Wombgift → Breach Rings (requires specific passive: Otherworldly Clutch)."
+        ),
+        "formula": "",
+        "see_also": ["Breach", "Wombgift", "Hiveblood", "Breach Ring", "Breachstone"],
+        "source": "manual",
+    },
+    {
+        "name": "Hive Fortress",
+        "category": "mechanic",
+        "summary": "A large Breach zone in the endgame Atlas containing Breach Hive encounters and a Breach Fortress near the center.",
+        "mechanics": "",
+        "formula": "",
+        "see_also": ["Breach", "Genesis Tree", "Breachstone"],
+        "source": "manual",
+    },
+    {
+        "name": "Breachstone",
+        "category": "mechanic",
+        "summary": "A map item created from 300 Breach Splinters. Opens a Breach Domain and rewards Breach-specific loot.",
+        "mechanics": "",
+        "formula": "300 Breach Splinters → 1 Revelatory Wombgift → Breachstone via Genesis Tree.",
+        "see_also": ["Breach Splinter", "Breach", "Genesis Tree"],
+        "source": "manual",
+    },
+    {
+        "name": "Abyss",
+        "category": "mechanic",
+        "summary": "A map encounter where Abyssal fissures spawn monsters. Drops Abyss Jewels and leads to the Well of Souls for revealing Desecrated mods.",
+        "mechanics": "",
+        "formula": "",
+        "see_also": ["Well of Souls", "Abyss Jewel", "Desecrated Mod", "Bone Socket"],
+        "source": "manual",
+    },
+    {
+        "name": "Delirium",
+        "category": "mechanic",
+        "summary": "A map encounter triggered by a Delirium mirror. Monsters are empowered; rewards scale with distance from the mirror. Drops Delirium Orbs, Simulacrum Splinters, and Cluster Jewels.",
+        "mechanics": "",
+        "formula": "",
+        "see_also": ["Simulacrum", "Cluster Jewel", "Delirium Orb"],
+        "source": "manual",
+    },
+    {
+        "name": "Simulacrum",
+        "category": "mechanic",
+        "summary": "A Delirium endgame map created from 300 Simulacrum Splinters. Contains 30 waves of Delirium enemies with powerful rewards.",
+        "mechanics": "",
+        "formula": "300 Simulacrum Splinters → 1 Simulacrum map.",
+        "see_also": ["Delirium", "Simulacrum Splinter", "Cluster Jewel"],
+        "source": "manual",
+    },
+    {
+        "name": "Expedition",
+        "category": "mechanic",
+        "summary": "A map encounter where explosives are placed over Kalguuran burial sites to unearth artifacts and monsters. Four NPC traders offer different services including Rog crafting.",
+        "mechanics": (
+            "Four Expedition NPCs: Rog (crafting — adds/removes mods), "
+            "Tujen (haggling for currency/items), Gwennen (gambling for unique items), "
+            "Dannig (logbooks, rerolls). "
+            "Rog crafting can add specific affixes or remove specific affixes for a cost — "
+            "most powerful for targeted crafting. "
+            "Expedition Logbooks open Expedition encounters in endgame zones."
+        ),
+        "formula": "",
+        "see_also": ["Rog", "Expedition Logbook", "Tujen", "Gwennen", "Dannig"],
+        "source": "manual",
+    },
+    {
+        "name": "Ritual",
+        "category": "mechanic",
+        "summary": "A map encounter with sacrificial altars. Killing monsters around altars fills a tribute pool which can be spent on specific items from the Ritual trader.",
+        "mechanics": (
+            "Zones have 3–4 Ritual altars; completing each contributes tribute. "
+            "The Ritual trader offers a rotating selection of items purchasable with tribute. "
+            "Items can be deferred (costs more later) or rerolled (random new selection). "
+            "Ritual is a key source of Omens."
+        ),
+        "formula": "",
+        "see_also": ["Omen", "Tribute", "Ritual Altar"],
+        "source": "manual",
+    },
+    {
+        "name": "Ultimatum",
+        "category": "mechanic",
+        "summary": "The Trials of Chaos — an Ascension Trial in Act 3. Also appears as an endgame encounter with escalating challenges for increasing rewards.",
+        "mechanics": "",
+        "formula": "",
+        "see_also": ["Inscribed Ultimatum", "Ascendancy", "Trials of Chaos"],
+        "source": "manual",
+    },
+    {
+        "name": "Cluster Jewel",
+        "category": "mechanic",
+        "summary": "Special jewels from Delirium that expand the Passive Skill Tree with new sockets and allocatable notables. Socketed in large/medium/small cluster sockets at the tree edge.",
+        "mechanics": (
+            "Three sizes: Large (8–12 passives, 2 large jewel sockets), "
+            "Medium (4–6 passives, 1 large socket), Small (2–4 passives). "
+            "Enchanted with specific notable names; rolling the jewel changes which notables appear. "
+            "Key crafting: Alt-spam for 2 desired notables on a Small/Medium cluster."
+        ),
+        "formula": "",
+        "see_also": ["Delirium", "Passive Tree", "Notable", "Jewel Socket"],
+        "source": "manual",
+    },
+    {
+        "name": "Atlas passive tree",
+        "category": "mechanic",
+        "summary": "Passive skills that affect the Atlas endgame — improves item drops, encounter frequency, and adds new rewards. Points gained from completing Precursor Fortress maps and defeating bosses.",
+        "mechanics": (
+            "Main tree: points from Precursor Fortress map bosses. "
+            "Side trees: points from completing specific encounter mechanics (Breach, Abyss, etc.). "
+            "Pinnacle boss kills grant 6 side-tree points each. "
+            "No respec — allocation is permanent (per character). "
+            "Keystone passives offer a choice of two bonuses, freely changeable. "
+            "Can fully allocate every passive with enough completions."
+        ),
+        "formula": "",
+        "see_also": ["Atlas", "Precursor Fortress", "Breach", "Abyss", "Delirium", "Ritual"],
+        "source": "manual",
+    },
+    {
+        "name": "Atlas",
+        "category": "mechanic",
+        "summary": "The endgame map system. A network of maps organized in Precursor Fortresses, accessible after completing the campaign. Completing maps progresses the Atlas and unlocks encounters.",
+        "mechanics": "",
+        "formula": "",
+        "see_also": ["Waystone", "Atlas passive tree", "Precursor Fortress", "Breach", "Abyss"],
+        "source": "manual",
+    },
+    {
+        "name": "Precursor Fortress",
+        "category": "mechanic",
+        "summary": "The endgame hub structure containing maps. Completing maps in a Precursor Fortress earns Atlas passive points. Activating a section (after killing the Arbiter 5 times) auto-completes contained maps.",
+        "mechanics": "",
+        "formula": "",
+        "see_also": ["Atlas", "Atlas passive tree", "Arbiter of Divinity", "Waystone"],
+        "source": "manual",
+    },
 ]
 
 _NAME_INDEX: dict[str, dict] | None = None

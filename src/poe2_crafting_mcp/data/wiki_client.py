@@ -46,9 +46,12 @@ _CLASS_TO_CAT: dict[str, str] = {
 
 def _strip_wiki(text: str) -> str:
     """Strip MediaWiki markup from text."""
+    # [[File:...]] and [[Image:...]] — remove entirely (can't render images)
+    text = re.sub(r'\[\[(?:File|Image):[^\[\]]*(?:\[\[[^\[\]]*\]\][^\[\]]*)*\]\]',
+                  '', text, flags=re.IGNORECASE)
     # [[page_title|display_text]] → display_text  (MediaWiki piped link)
     text = re.sub(r'\[\[([^\|\]]+)\|([^\]]+)\]\]', r'\2', text)
-    # [[page_title]] → page_title
+    # [[page]] → page
     text = re.sub(r'\[\[([^\]]+)\]\]', r'\1', text)
     # <br> → newline
     text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
@@ -56,6 +59,8 @@ def _strip_wiki(text: str) -> str:
     text = re.sub(r'\{\{c\|[^\|]+\|([^}]+)\}\}', r'\1', text)
     # '''bold''' / ''italic''
     text = re.sub(r"'{2,3}([^']+)'{2,3}", r'\1', text)
+    # Strip thumb/image orphans left from multi-pipe File links
+    text = re.sub(r'\bthumb\|[\d]+px\|', '', text)
     return text.strip()
 
 
@@ -312,8 +317,16 @@ class Poe2WikiClient:
         clean = _strip_wiki(clean)
         # Split into paragraphs
         paras = [p.strip() for p in re.split(r'\n{2,}', clean) if p.strip()]
-        # Filter out very short fragments and reference-like lines
-        return [p for p in paras if len(p) > 20]
+        # Filter out very short fragments, image/thumb captions, and nav-box lines
+        def _is_content(p: str) -> bool:
+            if len(p) < 25:
+                return False
+            low = p.lower()
+            if low.startswith(('thumb|', 'frame|', 'file:', 'image:', '{{navbox',
+                                '{{version', '{{sister', '{{stub')):
+                return False
+            return True
+        return [p for p in paras if _is_content(p)]
 
     def fetch_concept(self, name: str) -> dict | None:
         """Fetch a wiki keyword/mechanic/ailment page as a concept dict.
