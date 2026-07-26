@@ -1568,54 +1568,72 @@ CONCEPTS: list[dict] = [
     {
         "name": "Desecrated Mod",
         "category": "item_mod",
-        "summary": "A mod added to an item by socketing an Abyss Jewel into its Bone Socket.",
+        "summary": "An Unrevealed modifier added to an item via the Desecration mechanic; revealed at the Well of Souls.",
         "mechanics": (
-            "Desecrated mods are a unique mod type introduced via Abyss mechanics in PoE2. "
-            "Bone Sockets appear on some items (similar to rune sockets). Socketing an Abyss Jewel "
-            "into a Bone Socket grants the item a desecrated mod — a bonus drawn from the Abyss "
-            "jewel's mod pool rather than the item's own explicit mod pool. "
+            "Desecrating an item adds an Unrevealed Desecrated modifier. "
+            "If the item's modifier slots are full, a random existing modifier is also removed to make room. "
+            "Once desecrated, the modifier remains hidden until revealed at the Well of Souls (found in Abyss encounters). "
+            "Items with a Desecrated Modifier cannot be Desecrated again. "
+            "The primary way to Desecrate an item is by socketing an Abyss Jewel (Rib, Jawbone, Collarbone, etc.) "
+            "into a Bone Socket on the item — the jewel is consumed and determines the mod pool. "
             "Desecrated mods are separate from explicit, implicit, fractured, and crafted mods. "
-            "On the trade site they use the stat type prefix 'desecrated.' "
-            "(e.g. desecrated.stat_XXXX). "
+            "On the trade site they use the stat type prefix 'desecrated.' (e.g. desecrated.stat_XXXX). "
             "They appear in the item's mod list tagged as (desecrated). "
             "To search for items with desecrated mods, use stat_type='desecrated' in trade searches."
         ),
-        "formula": "Desecrated mod value is determined by the socketed Abyss Jewel's mod.",
-        "see_also": ["Abyss Jewel", "Bone Socket", "Rune", "Corruption"],
+        "formula": "Desecrated mod value is determined by the Abyss Jewel's mod pool at time of socketing.",
+        "see_also": ["Abyss Jewel", "Bone Socket", "Well of Souls", "Rune", "Corruption"],
     },
     {
         "name": "Abyss Jewel",
         "category": "item_mod",
-        "summary": "A special jewel that sockets into Bone Sockets to add Desecrated mods.",
+        "summary": "A jewel socketed into a Bone Socket to Desecrate an item; consumed on use.",
         "mechanics": (
-            "Abyss Jewels are a category of jewel that socket into Bone Sockets on items "
-            "(not into the passive tree). When socketed they grant the item a Desecrated mod. "
-            "They can also be socketed into the passive tree like normal jewels if a passive "
-            "node supports it. "
-            "The mods available on Abyss Jewels include life/mana on kill, added damage, "
-            "resistances, and other bonuses not available in the standard item mod pool. "
-            "This makes items with Bone Sockets valuable as crafting bases. "
-            "To find items with specific desecrated mods on trade, search with stat_type='desecrated'."
+            "Abyss Jewels are obtained from Abyss encounters in maps. "
+            "When socketed into a Bone Socket on an item, the Abyss Jewel is consumed and the item "
+            "gains an Unrevealed Desecrated modifier drawn from the jewel's mod pool. "
+            "The modifier must then be revealed at the Well of Souls. "
+            "Bone type determines which item slots it can target: "
+            "Ribs → armour, Jawbones → weapons/quivers, Collarbones → accessories (amulet/ring/belt), "
+            "Craniums → helmets, Vertebrae → body armours. "
+            "Abyss Jewels can also be placed in passive tree jewel sockets like normal jewels. "
+            "Desecrated mod stats include life/mana on kill, added damage, resistances, "
+            "and bonuses not available in the standard explicit mod pool. "
+            "To find items with specific desecrated mods on trade, use stat_type='desecrated'."
         ),
         "formula": "",
-        "see_also": ["Desecrated Mod", "Bone Socket", "Jewel"],
+        "see_also": ["Desecrated Mod", "Bone Socket", "Well of Souls", "Jewel"],
     },
     {
         "name": "Bone Socket",
         "category": "item_mod",
-        "summary": "A special socket on items that accepts Abyss Jewels, granting Desecrated mods.",
+        "summary": "A special socket on items that accepts Abyss Jewels to Desecrate the item.",
         "mechanics": (
-            "Bone Sockets are a socket type on certain item bases in PoE2. Unlike Rune Sockets "
-            "(which accept Runes for flat bonuses), Bone Sockets accept Abyss Jewels. "
-            "Socketing an Abyss Jewel into a Bone Socket grants the item a Desecrated mod "
-            "drawn from the jewel's stat pool. "
-            "Items with Bone Sockets are valuable crafting targets since desecrated mods "
-            "add stats outside the normal mod pool — effectively giving an item extra affixes. "
-            "On the trade site, search for 'rune sockets' filters to find items with bone sockets "
-            "(they share the same socket count filter)."
+            "Bone Sockets are a socket type found on certain item bases in PoE2. "
+            "Unlike Rune Sockets (which accept Runes for flat stat bonuses), Bone Sockets accept Abyss Jewels. "
+            "When an Abyss Jewel is socketed, it is consumed and the item gains an Unrevealed Desecrated modifier. "
+            "Once an item has a Desecrated Modifier it cannot be Desecrated again. "
+            "Items with Bone Sockets are valuable crafting targets because desecrated mods "
+            "add stats outside the normal explicit mod pool, effectively giving an extra affix. "
+            "On the trade site, Bone Sockets use the same 'rune sockets' count filter as Rune Sockets."
         ),
         "formula": "",
-        "see_also": ["Abyss Jewel", "Desecrated Mod", "Rune Socket"],
+        "see_also": ["Abyss Jewel", "Desecrated Mod", "Well of Souls", "Rune Socket"],
+    },
+    {
+        "name": "Well of Souls",
+        "category": "item_mod",
+        "summary": "An Abyss mechanic station that reveals Unrevealed Desecrated modifiers on items.",
+        "mechanics": (
+            "After an item is Desecrated (via an Abyss Jewel socketed into a Bone Socket), "
+            "it shows an 'Unrevealed Desecrated Modifier' in its mod list. "
+            "The Well of Souls is an interactive object found within Abyss encounters in maps. "
+            "Interacting with the Well of Souls reveals the hidden desecrated modifier, "
+            "showing its actual stat and value. "
+            "The Well of Souls cannot be used on items that already have a revealed Desecrated Modifier."
+        ),
+        "formula": "",
+        "see_also": ["Desecrated Mod", "Abyss Jewel", "Bone Socket"],
     },
     {
         "name": "Fractured Mod",

@@ -89,6 +89,12 @@ CURRENCIES: list[tuple[str, str, str, str, str]] = [
     ("Chaos Rune",             "Rune", "Resistance",   "Grants chaos resistance",                           "chaos-rune"),
     ("Inspiration Rune",       "Rune", "Attribute",    "Grants attributes to the socketed item",            "inspiration-rune"),
     ("Breach Rune",            "Rune", "League",       "League-specific rune from Breach",                  "breach-rune"),
+    # Perfect rune variants (max-quality, confirmed on poe.ninja)
+    ("Perfect Iron Rune",      "Rune", "Armour",       "Perfect quality: grants significantly more armour than Iron Rune",       "perfect-iron-rune"),
+    ("Perfect Mind Rune",      "Rune", "Energy Shield","Perfect quality: grants significantly more energy shield than Mind Rune", "perfect-mind-rune"),
+    ("Perfect Body Rune",      "Rune", "Life",         "Perfect quality: grants significantly more maximum life than Body Rune",  "perfect-body-rune"),
+    ("Perfect Storm Rune",     "Rune", "Resistance",   "Perfect quality: grants significantly more lightning resistance",         "perfect-storm-rune"),
+    ("Perfect Inspiration Rune","Rune","Attribute",    "Perfect quality: grants significantly more attributes",                   "perfect-inspiration-rune"),
 
     # ── Soul Cores ────────────────────────────────────────────────────────────
     ("Soul Core of Zalatl",    "SoulCore", "Damage",  "Adds fire damage to attacks and spells",            "soul-core-of-zalatl"),
