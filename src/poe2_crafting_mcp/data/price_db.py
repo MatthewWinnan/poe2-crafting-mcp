@@ -68,6 +68,44 @@ class PriceDatabase:
                 content='trade_stats',
                 tokenize='unicode61'
             );
+            CREATE TABLE IF NOT EXISTS concepts (
+                name            TEXT PRIMARY KEY,
+                category        TEXT NOT NULL,
+                summary         TEXT NOT NULL DEFAULT '',
+                mechanics       TEXT NOT NULL DEFAULT '',
+                formula         TEXT NOT NULL DEFAULT '',
+                see_also        TEXT NOT NULL DEFAULT '[]',
+                source          TEXT NOT NULL DEFAULT 'manual',
+                league_version  TEXT,
+                updated_at      TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_concepts_category ON concepts(category);
+            CREATE INDEX IF NOT EXISTS idx_concepts_source   ON concepts(source);
+            CREATE VIRTUAL TABLE IF NOT EXISTS concepts_fts USING fts5(
+                name, category, summary, mechanics,
+                content='concepts',
+                tokenize='unicode61'
+            );
+            CREATE TABLE IF NOT EXISTS item_descriptions (
+                name            TEXT PRIMARY KEY,
+                category        TEXT NOT NULL,
+                description     TEXT NOT NULL DEFAULT '',
+                crafting_notes  TEXT NOT NULL DEFAULT '',
+                drop_notes      TEXT NOT NULL DEFAULT '',
+                see_also        TEXT NOT NULL DEFAULT '[]',
+                source          TEXT NOT NULL DEFAULT 'manual',
+                league_version  TEXT,
+                updated_at      TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_item_desc_category
+                ON item_descriptions(category);
+            CREATE INDEX IF NOT EXISTS idx_item_desc_source
+                ON item_descriptions(source);
+            CREATE VIRTUAL TABLE IF NOT EXISTS item_descriptions_fts USING fts5(
+                name, category, description, crafting_notes,
+                content='item_descriptions',
+                tokenize='unicode61'
+            );
         """)
         self._conn.commit()
 
@@ -396,3 +434,403 @@ class PriceDatabase:
     def trade_stats_fetched_at(self) -> str | None:
         """Return ISO datetime of last trade stats fetch, or None."""
         return self.get_meta("trade_stats_fetched_at")
+
+    # ── Concepts ───────────────────────────────────────────────────────────────
+
+    def upsert_concept(
+        self,
+        name: str,
+        category: str,
+        summary: str,
+        mechanics: str,
+        formula: str = "",
+        see_also: list[str] | None = None,
+        source: str = "manual",
+        league_version: str | None = None,
+    ) -> None:
+        """Insert or replace a single concept entry and rebuild FTS."""
+        import json as _json
+        now = self._now_iso()
+        self._conn.execute(
+            """INSERT OR REPLACE INTO concepts
+               (name, category, summary, mechanics, formula, see_also,
+                source, league_version, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (name, category, summary, mechanics, formula,
+             _json.dumps(see_also or []), source, league_version, now),
+        )
+        self._conn.execute("INSERT INTO concepts_fts(concepts_fts) VALUES('rebuild')")
+        self._conn.commit()
+
+    def upsert_concepts_bulk(self, concepts: list[dict]) -> int:
+        """
+        Bulk insert/replace concept entries from a list of dicts.
+
+        Each dict must have: name, category, summary, mechanics.
+        Optional: formula, see_also (list), source, league_version.
+        Also records concepts_seeded_at in economy_meta.
+        Returns number of rows written.
+        """
+        import json as _json
+        now = self._now_iso()
+        rows = [
+            (
+                c["name"], c["category"],
+                c.get("summary", ""), c.get("mechanics", ""),
+                c.get("formula", ""),
+                _json.dumps(c.get("see_also", [])),
+                c.get("source", "manual"),
+                c.get("league_version"),
+                now,
+            )
+            for c in concepts
+        ]
+        self._conn.executemany(
+            """INSERT OR REPLACE INTO concepts
+               (name, category, summary, mechanics, formula, see_also,
+                source, league_version, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+        self._conn.execute("INSERT INTO concepts_fts(concepts_fts) VALUES('rebuild')")
+        self._conn.commit()
+        self.set_meta("concepts_seeded_at", now)
+        self.set_meta("concepts_seed_count", str(len(rows)))
+        return len(rows)
+
+    def search_concepts(
+        self,
+        keyword: str = "",
+        category: str = "",
+        limit: int = 20,
+    ) -> list[dict]:
+        """
+        FTS search across concept name, category, summary, mechanics.
+
+        Falls back to LIKE scan if FTS index is empty or keyword is blank.
+        Returns list of concept dicts.
+        """
+        import json as _json
+
+        def _row_to_dict(row) -> dict:
+            d = dict(row)
+            try:
+                d["see_also"] = _json.loads(d.get("see_also") or "[]")
+            except Exception:
+                d["see_also"] = []
+            return d
+
+        # Blank keyword → return by category (or all)
+        if not keyword:
+            if category:
+                rows = self._conn.execute(
+                    "SELECT * FROM concepts WHERE category = ? ORDER BY name LIMIT ?",
+                    (category, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM concepts ORDER BY name LIMIT ?", (limit,)
+                ).fetchall()
+            return [_row_to_dict(r) for r in rows]
+
+        safe_kw = keyword.replace('"', '""')
+        try:
+            if category:
+                rows = self._conn.execute(
+                    "SELECT c.* FROM concepts_fts f"
+                    " JOIN concepts c ON c.name = f.name"
+                    " WHERE f.concepts_fts MATCH ? AND c.category = ?"
+                    " ORDER BY rank LIMIT ?",
+                    (safe_kw, category, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT c.* FROM concepts_fts f"
+                    " JOIN concepts c ON c.name = f.name"
+                    " WHERE f.concepts_fts MATCH ?"
+                    " ORDER BY rank LIMIT ?",
+                    (safe_kw, limit),
+                ).fetchall()
+        except Exception:
+            # FTS not yet populated — fall back to LIKE
+            pat = f"%{keyword}%"
+            if category:
+                rows = self._conn.execute(
+                    "SELECT * FROM concepts"
+                    " WHERE (name LIKE ? OR summary LIKE ? OR mechanics LIKE ?)"
+                    " AND category = ? LIMIT ?",
+                    (pat, pat, pat, category, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM concepts"
+                    " WHERE name LIKE ? OR summary LIKE ? OR mechanics LIKE ?"
+                    " LIMIT ?",
+                    (pat, pat, pat, limit),
+                ).fetchall()
+
+        return [_row_to_dict(r) for r in rows]
+
+    def get_concept(self, name: str) -> dict | None:
+        """Exact concept lookup by name (case-insensitive)."""
+        import json as _json
+        row = self._conn.execute(
+            "SELECT * FROM concepts WHERE lower(name) = lower(?)", (name,)
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        try:
+            d["see_also"] = _json.loads(d.get("see_also") or "[]")
+        except Exception:
+            d["see_also"] = []
+        return d
+
+    def delete_concept(self, name: str) -> bool:
+        """Delete a concept by exact name. Returns True if a row was deleted."""
+        cur = self._conn.execute(
+            "DELETE FROM concepts WHERE lower(name) = lower(?)", (name,)
+        )
+        self._conn.execute("INSERT INTO concepts_fts(concepts_fts) VALUES('rebuild')")
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def concept_status(self) -> dict:
+        """
+        Return freshness info for the concepts table.
+
+        status values:
+          "never_seeded" — ETL has never seeded concepts
+          "stale"        — seeded more than 30 days ago
+          "fresh"        — seeded within 30 days
+        """
+        _CONCEPT_STALE_DAYS = 30
+        seeded_at = self.get_meta("concepts_seeded_at")
+        try:
+            total = self._conn.execute(
+                "SELECT COUNT(*) FROM concepts"
+            ).fetchone()[0]
+            manual = self._conn.execute(
+                "SELECT COUNT(*) FROM concepts WHERE source = 'manual'"
+            ).fetchone()[0]
+        except Exception:
+            total = 0
+            manual = 0
+
+        age_days: float | None = None
+        if seeded_at:
+            age_days = round(self._age_seconds(seeded_at) / 86400, 1)
+
+        if not seeded_at or total == 0:
+            status = "never_seeded"
+        elif age_days is not None and age_days > _CONCEPT_STALE_DAYS:
+            status = "stale"
+        else:
+            status = "fresh"
+
+        return {
+            "status":      status,
+            "seeded_at":   seeded_at,
+            "total":       total,
+            "manual":      manual,
+            "age_days":    age_days,
+        }
+
+    # ── Item Descriptions ──────────────────────────────────────────────────────
+
+    def upsert_item_desc(
+        self,
+        name: str,
+        category: str,
+        description: str = "",
+        crafting_notes: str = "",
+        drop_notes: str = "",
+        see_also: list[str] | None = None,
+        source: str = "manual",
+        league_version: str | None = None,
+    ) -> None:
+        """Insert or replace a single item description and rebuild FTS."""
+        import json as _json
+        now = self._now_iso()
+        self._conn.execute(
+            """INSERT OR REPLACE INTO item_descriptions
+               (name, category, description, crafting_notes, drop_notes,
+                see_also, source, league_version, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (name, category, description, crafting_notes, drop_notes,
+             _json.dumps(see_also or []), source, league_version, now),
+        )
+        self._conn.execute(
+            "INSERT INTO item_descriptions_fts(item_descriptions_fts) VALUES('rebuild')"
+        )
+        self._conn.commit()
+
+    def upsert_item_descs_bulk(self, items: list[dict]) -> int:
+        """
+        Bulk insert/replace item description entries from a list of dicts.
+
+        Each dict must have: name, category.
+        Optional: description, crafting_notes, drop_notes, see_also (list),
+                  source, league_version.
+        Records item_descs_seeded_at in economy_meta.
+        Returns number of rows written.
+        """
+        import json as _json
+        now = self._now_iso()
+        rows = [
+            (
+                item["name"], item["category"],
+                item.get("description", ""),
+                item.get("crafting_notes", ""),
+                item.get("drop_notes", ""),
+                _json.dumps(item.get("see_also", [])),
+                item.get("source", "manual"),
+                item.get("league_version"),
+                now,
+            )
+            for item in items
+        ]
+        self._conn.executemany(
+            """INSERT OR REPLACE INTO item_descriptions
+               (name, category, description, crafting_notes, drop_notes,
+                see_also, source, league_version, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+        self._conn.execute(
+            "INSERT INTO item_descriptions_fts(item_descriptions_fts) VALUES('rebuild')"
+        )
+        self._conn.commit()
+        self.set_meta("item_descs_seeded_at", now)
+        self.set_meta("item_descs_seed_count", str(len(rows)))
+        return len(rows)
+
+    def search_item_descs(
+        self,
+        keyword: str = "",
+        category: str = "",
+        limit: int = 20,
+    ) -> list[dict]:
+        """FTS search across item description name, category, description, crafting_notes."""
+        import json as _json
+
+        def _row_to_dict(row) -> dict:
+            d = dict(row)
+            try:
+                d["see_also"] = _json.loads(d.get("see_also") or "[]")
+            except Exception:
+                d["see_also"] = []
+            return d
+
+        if not keyword:
+            if category:
+                rows = self._conn.execute(
+                    "SELECT * FROM item_descriptions WHERE category = ? ORDER BY name LIMIT ?",
+                    (category, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM item_descriptions ORDER BY name LIMIT ?", (limit,)
+                ).fetchall()
+            return [_row_to_dict(r) for r in rows]
+
+        safe_kw = keyword.replace('"', '""')
+        try:
+            if category:
+                rows = self._conn.execute(
+                    "SELECT d.* FROM item_descriptions_fts f"
+                    " JOIN item_descriptions d ON d.name = f.name"
+                    " WHERE f.item_descriptions_fts MATCH ? AND d.category = ?"
+                    " ORDER BY rank LIMIT ?",
+                    (safe_kw, category, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT d.* FROM item_descriptions_fts f"
+                    " JOIN item_descriptions d ON d.name = f.name"
+                    " WHERE f.item_descriptions_fts MATCH ?"
+                    " ORDER BY rank LIMIT ?",
+                    (safe_kw, limit),
+                ).fetchall()
+        except Exception:
+            pat = f"%{keyword}%"
+            if category:
+                rows = self._conn.execute(
+                    "SELECT * FROM item_descriptions"
+                    " WHERE (name LIKE ? OR description LIKE ? OR crafting_notes LIKE ?)"
+                    " AND category = ? LIMIT ?",
+                    (pat, pat, pat, category, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM item_descriptions"
+                    " WHERE name LIKE ? OR description LIKE ? OR crafting_notes LIKE ?"
+                    " LIMIT ?",
+                    (pat, pat, pat, limit),
+                ).fetchall()
+
+        return [_row_to_dict(r) for r in rows]
+
+    def get_item_desc(self, name: str) -> dict | None:
+        """Exact item description lookup by name (case-insensitive)."""
+        import json as _json
+        row = self._conn.execute(
+            "SELECT * FROM item_descriptions WHERE lower(name) = lower(?)", (name,)
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        try:
+            d["see_also"] = _json.loads(d.get("see_also") or "[]")
+        except Exception:
+            d["see_also"] = []
+        return d
+
+    def delete_item_desc(self, name: str) -> bool:
+        """Delete an item description by exact name. Returns True if deleted."""
+        cur = self._conn.execute(
+            "DELETE FROM item_descriptions WHERE lower(name) = lower(?)", (name,)
+        )
+        self._conn.execute(
+            "INSERT INTO item_descriptions_fts(item_descriptions_fts) VALUES('rebuild')"
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def item_desc_status(self) -> dict:
+        """
+        Return freshness info for the item_descriptions table.
+
+        status values: "never_seeded" | "stale" (>30 days) | "fresh"
+        """
+        _STALE_DAYS = 30
+        seeded_at = self.get_meta("item_descs_seeded_at")
+        try:
+            total = self._conn.execute(
+                "SELECT COUNT(*) FROM item_descriptions"
+            ).fetchone()[0]
+            manual = self._conn.execute(
+                "SELECT COUNT(*) FROM item_descriptions WHERE source = 'manual'"
+            ).fetchone()[0]
+        except Exception:
+            total = 0
+            manual = 0
+
+        age_days: float | None = None
+        if seeded_at:
+            age_days = round(self._age_seconds(seeded_at) / 86400, 1)
+
+        if not seeded_at or total == 0:
+            status = "never_seeded"
+        elif age_days is not None and age_days > _STALE_DAYS:
+            status = "stale"
+        else:
+            status = "fresh"
+
+        return {
+            "status":    status,
+            "seeded_at": seeded_at,
+            "total":     total,
+            "manual":    manual,
+            "age_days":  age_days,
+        }

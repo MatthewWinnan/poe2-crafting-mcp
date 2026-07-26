@@ -192,6 +192,59 @@ CREATE VIRTUAL TABLE IF NOT EXISTS trade_stats_fts USING fts5(
     tokenize='unicode61'
 );
 
+-- ── Concepts / Keyword Definitions ───────────────────────────────────────────
+-- Seeded from concepts.py during ETL; patchable at runtime via update_concept().
+-- source values: "manual", "PoB:ConfigOptions", "PoB:SkillTypes", "PoB:Gems", "poe2wiki"
+-- league_version: NULL = applies to all leagues; set to league name for league-specific entries.
+
+CREATE TABLE IF NOT EXISTS concepts (
+    name            TEXT PRIMARY KEY,
+    category        TEXT NOT NULL,      -- damage_type, ailment, keyword, mechanic, etc.
+    summary         TEXT NOT NULL DEFAULT '',
+    mechanics       TEXT NOT NULL DEFAULT '',
+    formula         TEXT NOT NULL DEFAULT '',
+    see_also        TEXT NOT NULL DEFAULT '[]',  -- JSON array of strings
+    source          TEXT NOT NULL DEFAULT 'manual',
+    league_version  TEXT,               -- NULL = all leagues
+    updated_at      TEXT NOT NULL       -- ISO datetime (UTC)
+);
+
+CREATE INDEX IF NOT EXISTS idx_concepts_category ON concepts(category);
+CREATE INDEX IF NOT EXISTS idx_concepts_source   ON concepts(source);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS concepts_fts USING fts5(
+    name, category, summary, mechanics,
+    content='concepts',
+    tokenize='unicode61'
+);
+
+-- ── Item Descriptions ────────────────────────────────────────────────────────
+-- Seeded from item_descriptions.py during ETL; patchable at runtime.
+-- category values: "base", "currency", "gem", "unique", "mechanic_item"
+-- source values: "manual", "poe2wiki", "poe2db"
+-- league_version: NULL = applies to all leagues; set to league name for league-specific entries.
+
+CREATE TABLE IF NOT EXISTS item_descriptions (
+    name            TEXT PRIMARY KEY,
+    category        TEXT NOT NULL,      -- "base", "currency", "gem", "unique", "mechanic_item"
+    description     TEXT NOT NULL DEFAULT '',   -- what it is / what it's used for
+    crafting_notes  TEXT NOT NULL DEFAULT '',   -- notable mods, best ilvl, typical uses
+    drop_notes      TEXT NOT NULL DEFAULT '',   -- where it drops / league source
+    see_also        TEXT NOT NULL DEFAULT '[]', -- JSON array of related names
+    source          TEXT NOT NULL DEFAULT 'manual',
+    league_version  TEXT,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_desc_category ON item_descriptions(category);
+CREATE INDEX IF NOT EXISTS idx_item_desc_source   ON item_descriptions(source);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS item_descriptions_fts USING fts5(
+    name, category, description, crafting_notes,
+    content='item_descriptions',
+    tokenize='unicode61'
+);
+
 -- ── ETL Metadata ─────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS etl_runs (

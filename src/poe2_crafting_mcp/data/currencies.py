@@ -139,13 +139,17 @@ CURRENCIES: list[tuple[str, str, str, str, str]] = [
     ("Barya",                  "Other",    "Trial",   "Currency used for the Trial of the Ancestor",       "barya"),
     ("Ultimatum Inscription",  "Other",    "Trial",   "Currency used for the Trial of Chaos",              "ultimatum-inscription"),
 
-    # ── Idols (Atlas tower socketables, poe.ninja type = "Idols") ──────────────
-    ("Fox Idol",   "Idol", "Atlas", "Socket in an Atlas tower to apply a fox spirit tower modifier",   "fox-idol"),
-    ("Bear Idol",  "Idol", "Atlas", "Socket in an Atlas tower to apply a bear spirit tower modifier",  "bear-idol"),
-    ("Wolf Idol",  "Idol", "Atlas", "Socket in an Atlas tower to apply a wolf spirit tower modifier",  "wolf-idol"),
-    ("Stag Idol",  "Idol", "Atlas", "Socket in an Atlas tower to apply a stag spirit tower modifier",  "stag-idol"),
-    ("Boar Idol",  "Idol", "Atlas", "Socket in an Atlas tower to apply a boar spirit tower modifier",  "boar-idol"),
-    ("Owl Idol",   "Idol", "Atlas", "Socket in an Atlas tower to apply an owl spirit tower modifier",  "owl-idol"),
+    # ── Idols (Augment socketables for Body Armour / Sceptre) ────────────────
+    # Idols socket into Augment Sockets on Body Armour or Sceptres, granting
+    # Bonded modifier effects. Bonded mods appear when the idol is socketed.
+    # Place into an empty Augment Socket in a Body Armour or Sceptre to apply
+    # its effect. Once socketed it cannot be retrieved but can be replaced.
+    ("Fox Idol",   "Idol", "Augment", "Socket into a Body Armour or Sceptre Augment Socket to grant fox spirit Bonded modifiers",   "fox-idol"),
+    ("Bear Idol",  "Idol", "Augment", "Socket into a Body Armour or Sceptre Augment Socket to grant bear spirit Bonded modifiers",  "bear-idol"),
+    ("Wolf Idol",  "Idol", "Augment", "Socket into a Body Armour or Sceptre Augment Socket to grant wolf spirit Bonded modifiers",  "wolf-idol"),
+    ("Stag Idol",  "Idol", "Augment", "Socket into a Body Armour or Sceptre Augment Socket to grant stag spirit Bonded modifiers",  "stag-idol"),
+    ("Boar Idol",  "Idol", "Augment", "Socket into a Body Armour or Sceptre Augment Socket to grant boar spirit Bonded modifiers",  "boar-idol"),
+    ("Owl Idol",   "Idol", "Augment", "Socket into a Body Armour or Sceptre Augment Socket to grant owl spirit Bonded modifiers",   "owl-idol"),
 
     # ── Omens (single-use crafting items, poe.ninja type = "Ritual") ──────────
     ("Omen of Whittling",        "Omen", "Crafting", "Single-use crafting item: reforges a modifier on an item",           "omen-of-whittling"),

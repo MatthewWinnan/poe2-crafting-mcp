@@ -36,6 +36,7 @@ Examples:
     poe2-price trade "cold damage" --slot staff --rarity rare --dps-min 200
     poe2-price trade "dexterity" --slot ring --gem-level-min 20 --slot "skill gem"
     poe2-price trade "map quantity" --slot waystone --map-tier-min 10
+
 """
 from __future__ import annotations
 
@@ -1312,7 +1313,6 @@ def _slot_to_pob_tag(slot: str) -> str:
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="poe2-price",
@@ -1500,16 +1500,16 @@ def main() -> None:
         _disable_color()
 
     handlers = {
-        "status":    cmd_status,
-        "league":    cmd_league,
-        "refresh":   cmd_refresh,
-        "general":   cmd_general,
-        "equipment": cmd_equipment,
-        "atlas":     cmd_atlas,
-        "list":      cmd_list,
-        "search":    cmd_search,
-        "stats":     cmd_stats,
-        "trade":     cmd_trade,
+        "status":           cmd_status,
+        "league":           cmd_league,
+        "refresh":          cmd_refresh,
+        "general":          cmd_general,
+        "equipment":        cmd_equipment,
+        "atlas":            cmd_atlas,
+        "list":             cmd_list,
+        "search":           cmd_search,
+        "stats":            cmd_stats,
+        "trade":            cmd_trade,
     }
 
     handler = handlers.get(args.cmd)

@@ -11,3 +11,4 @@ data/poe2_craft.db
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+*.har

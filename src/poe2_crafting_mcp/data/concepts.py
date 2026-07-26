@@ -2,14 +2,22 @@
 PoE2 keyword/concept dictionary.
 
 Each entry is a dict with:
-  name        — display name (matches poe2db Keywords page)
-  category    — one of: damage_type, ailment, attribute, defence, offence,
-                charge, resource, buff, debuff, mechanic, keyword, keystone,
-                projectile, ground
-  summary     — one-sentence plain-English description
-  mechanics   — detailed explanation (2-5 sentences)
-  formula     — calculation formula or numeric details (empty string if N/A)
-  see_also    — related concept names AND PoB config/stat var names
+  name           — display name (matches poe2db Keywords page)
+  category       — one of: damage_type, ailment, attribute, defence, offence,
+                   charge, resource, buff, debuff, mechanic, keyword, keystone,
+                   projectile, ground
+  summary        — one-sentence plain-English description
+  mechanics      — detailed explanation (2-5 sentences)
+  formula        — calculation formula or numeric details (empty string if N/A)
+  see_also       — related concept names AND PoB config/stat var names
+  source         — where the definition was verified:
+                   "manual"            hand-written, unverified from official source
+                   "PoB:ConfigOptions" verified against ConfigOptions.lua
+                   "PoB:SkillTypes"    verified against SkillType enum in PoB
+                   "PoB:Gems"          verified against Gems.lua
+                   "poe2wiki"          sourced from the PoE2 community wiki
+
+Entries without a "source" key default to "manual" when seeded into the DB.
 """
 
 from __future__ import annotations
@@ -1179,6 +1187,306 @@ CONCEPTS: list[dict] = [
         ),
         "formula": "",
         "see_also": ["Melee", "Strike", "Area of Effect"],
+    },
+
+    # ── PoE2 Combat Mechanics ─────────────────────────────────────────────────
+
+    {
+        "name": "Combo",
+        "category": "mechanic",
+        "summary": "Strike skills build Combo stacks, which Finisher skills consume for enhanced effects.",
+        "mechanics": (
+            "Combo (ComboStacks) is built by successfully Striking enemies. "
+            "Some skills and effects require a minimum Combo count to use. "
+            "Finisher skills consume all Combo stacks when activated for a powerful effect. "
+            "Maximum Combo stacks vary by build and passive investment."
+        ),
+        "formula": "Combo built per Strike: 1 (base). Finisher consumes all stacks on use.",
+        "see_also": ["Finisher", "Strike", "multiplierCombo", "ComboStacks"],
+        "source": "PoB:ConfigOptions",
+    },
+    {
+        "name": "Finisher",
+        "category": "mechanic",
+        "summary": "Skills that require and consume Combo stacks for a powerful effect.",
+        "mechanics": (
+            "Finisher skills are activated when you have sufficient Combo stacks. "
+            "They consume all Combo on use and deal significantly enhanced damage or apply "
+            "powerful effects. They are a subset of Strike skills available to classes that "
+            "build Combo (e.g. Warrior, Monk)."
+        ),
+        "formula": "",
+        "see_also": ["Combo", "Strike", "Melee"],
+        "source": "PoB:SkillTypes",
+    },
+    {
+        "name": "Parry",
+        "category": "mechanic",
+        "summary": "Monk defensive mechanic: successful Parry debuffs the attacker, making them take 50% more Attack Damage.",
+        "mechanics": (
+            "Parry is a Monk-specific ability. When you successfully Parry an attack, "
+            "the attacker gains the Parry debuff. While a target has the Parry debuff, "
+            "they take 50% more Attack Damage from you. "
+            "Parry can be activated as a reaction skill in the skill bar."
+        ),
+        "formula": "Parry debuff: enemy takes 50% more Attack Damage.",
+        "see_also": ["Guard", "parryActive", "conditionParryActive"],
+        "source": "PoB:ConfigOptions",
+    },
+    {
+        "name": "Exerted Attack",
+        "category": "mechanic",
+        "summary": "Warcries empower your next N attacks as 'Exerted Attacks' with bonus effects.",
+        "mechanics": (
+            "When you use a Warcry, your next few attacks become Exerted Attacks. "
+            "Exerted Attacks gain bonus effects specific to the Warcry used "
+            "(e.g. Infernal Cry adds Combustion, Rallying Cry adds damage). "
+            "The number of attacks exerted scales with Warcry Power (nearby enemy strength). "
+            "Support gems like Battershout interact specifically with Exerted Attacks."
+        ),
+        "formula": "Exert count = base + scales with Warcry Power (1 per Normal, 2 Magic, 10 Rare, 20 Unique enemy).",
+        "see_also": ["Warcries", "multiplierWarcryPower", "bannerValour"],
+        "source": "PoB:ConfigOptions",
+    },
+    {
+        "name": "Armour Break",
+        "category": "mechanic",
+        "summary": "Debuff that reduces enemy Armour; Fully Broken Armour sets it to 0 for 12 seconds.",
+        "mechanics": (
+            "Armour Break reduces a target's Armour by a specified amount per stack. "
+            "If Armour is reduced to 0 the target becomes Fully Broken: their Armour is "
+            "overridden to 0 for 12 seconds, meaning physical hits bypass all Armour mitigation. "
+            "Some skills can break Armour below 0 (stated explicitly on the skill). "
+            "Not to be confused with the Crushed debuff, which reduces Physical Damage Reduction by 15%."
+        ),
+        "formula": "Fully Broken: Armour = 0 for 12 seconds. Stacks reduce Armour by 1 per stack.",
+        "see_also": ["Armour", "Crushed", "conditionEnemyArmourBroken", "multiplierArmourBreak"],
+        "source": "PoB:ConfigOptions",
+    },
+    {
+        "name": "Ailment Threshold",
+        "category": "mechanic",
+        "summary": "Minimum hit size required to apply non-damaging ailments (Chill, Freeze, Shock, Electrocute).",
+        "mechanics": (
+            "Non-damaging ailments are only applied if the hit exceeds the enemy's Ailment Threshold. "
+            "Threshold is a percentage of the enemy's maximum life. "
+            "For maps and bosses the threshold is high, making large hits required to reliably ailment. "
+            "Ailment Threshold modifiers directly increase or decrease this requirement. "
+            "This mechanic replaced PoE1's instant Freeze from any cold hit."
+        ),
+        "formula": "Ailment applied if: hit damage ≥ enemy ailment threshold (% of max life).",
+        "see_also": ["Chill", "Freeze", "Shock", "Electrocute", "Freeze Buildup"],
+        "source": "manual",
+    },
+    {
+        "name": "Freeze Buildup",
+        "category": "mechanic",
+        "summary": "Cold hits accumulate Freeze Buildup on enemies; reaching 100% applies Freeze.",
+        "mechanics": (
+            "Unlike PoE1, Freeze in PoE2 is not applied instantly. Instead, cold hits add Freeze "
+            "Buildup proportional to the hit size relative to the enemy's max life. "
+            "When Buildup reaches 100%, the enemy becomes Frozen. "
+            "Buildup decays over time if hits stop. "
+            "Skills and modifiers that say 'increased Freeze Buildup' accelerate this accumulation."
+        ),
+        "formula": "Buildup per hit = cold_hit / enemy_ailment_threshold × 100%.",
+        "see_also": ["Freeze", "Cold Damage", "Ailment Threshold", "Chill"],
+        "source": "manual",
+    },
+    {
+        "name": "Trinity",
+        "category": "mechanic",
+        "summary": "Spirit skill that builds Resonance by alternating fire/cold/lightning hits; triggers powerful elemental explosions.",
+        "mechanics": (
+            "Trinity is a persistent Spirit skill that generates Resonance when you hit an enemy "
+            "with a damage type different from your last hit (fire → cold → lightning cycling). "
+            "Resonance stacks from 0–300. At 200 Resonance (configResonanceCount=200 for PoB), "
+            "Trinity triggers bonus explosions on kill and grants elemental penetration. "
+            "Builds that deal multiple element types in a single hit (via conversion or dual elements) "
+            "generate Resonance efficiently."
+        ),
+        "formula": "Resonance max: 300. PoB config: configResonanceCount (0–300).",
+        "see_also": ["Resonance", "Spirit", "Aura", "configResonanceCount", "Damage Conversion"],
+        "source": "PoB:ConfigOptions",
+    },
+    {
+        "name": "Resonance",
+        "category": "mechanic",
+        "summary": "Resource built by the Trinity skill; enables its damage and explosion bonuses.",
+        "mechanics": (
+            "Resonance is the internal counter for the Trinity skill, ranging from 0 to 300. "
+            "It is gained by hitting enemies with different elemental damage types consecutively. "
+            "Higher Resonance unlocks stronger Trinity effects. "
+            "In PoB, set configResonanceCount to 200 for a realistic combat scenario with Trinity."
+        ),
+        "formula": "Range: 0–300. Set configResonanceCount in PoB for accurate DPS.",
+        "see_also": ["Trinity", "configResonanceCount", "Fire Damage", "Cold Damage", "Lightning Damage"],
+        "source": "PoB:ConfigOptions",
+    },
+
+    # ── Additional Skill Keywords ──────────────────────────────────────────────
+
+    {
+        "name": "Aura",
+        "category": "keyword",
+        "summary": "Persistent Spirit-reservation skills that grant buffs to you and nearby allies.",
+        "mechanics": (
+            "Auras reserve a portion of your Spirit while active and continuously grant their "
+            "effects to you and nearby party members. Unlike PoE1, PoE2 auras use Spirit "
+            "rather than Mana. Common auras: Haste, Grace, Determination, Discipline. "
+            "Aura effect modifiers scale how powerful the granted buff is."
+        ),
+        "formula": "Cost: Spirit reservation (flat). Effect scales with Aura Effect %.",
+        "see_also": ["Spirit", "Herald", "Reserve", "Persistent Skills"],
+        "source": "PoB:SkillTypes",
+    },
+    {
+        "name": "Herald",
+        "category": "keyword",
+        "summary": "Persistent Spirit-reservation skills that grant bonuses on kill or on hit.",
+        "mechanics": (
+            "Heralds reserve Spirit and grant a passive bonus plus a triggered effect when you "
+            "kill or hit enemies. Examples: Herald of Ice (shatters frozen enemies on kill), "
+            "Herald of Ash (burns enemies on overkill), Herald of Thunder (calls lightning on kill). "
+            "Herald effect modifiers scale their proc damage and buff strength."
+        ),
+        "formula": "Cost: Spirit reservation. Trigger condition varies per Herald.",
+        "see_also": ["Aura", "Spirit", "Reserve", "conditionCritWithHeraldSkillRecently"],
+        "source": "PoB:ConfigOptions",
+    },
+    {
+        "name": "Banner",
+        "category": "keyword",
+        "summary": "Persistent area skills planted as flags; build Valour stacks and grant aura effects when placed.",
+        "mechanics": (
+            "Banners are initially kept active in hand (providing a basic aura effect). "
+            "When planted, they become stationary and gain power from Valour stacks "
+            "built up while the banner was held. Planted banners grant a stronger aura effect "
+            "to nearby allies. Banners are destroyed if you move too far away. "
+            "PoB config: bannerValour controls the Valour amount when placed."
+        ),
+        "formula": "Valour = enemy kills while banner held. Placed effect scales with Valour consumed.",
+        "see_also": ["Aura", "Spirit", "bannerValour", "Warcries"],
+        "source": "PoB:ConfigOptions",
+    },
+    {
+        "name": "Trap",
+        "category": "keyword",
+        "summary": "Skills thrown as Traps that trigger when an enemy walks over them.",
+        "mechanics": (
+            "Trap skills are thrown by the player and placed as objects on the ground. "
+            "They trigger automatically when an enemy comes within proximity. "
+            "Traps can be supported by Trap-specific support gems. "
+            "Multiple traps can be active simultaneously up to the trap limit. "
+            "Trap throw speed and trigger radius are moddable."
+        ),
+        "formula": "Default trap limit: 3 (moddable). Trigger: enemy proximity.",
+        "see_also": ["Mine", "Triggered Skills", "multiplierTrapTriggeredRecently"],
+        "source": "PoB:ConfigOptions",
+    },
+    {
+        "name": "Mine",
+        "category": "keyword",
+        "summary": "Skills thrown as Mines that must be manually detonated.",
+        "mechanics": (
+            "Mine skills are thrown by the player and placed on the ground. "
+            "Unlike Traps they do not auto-trigger — they are detonated manually "
+            "using the Detonate Mines skill. Multiple mines can be active simultaneously. "
+            "Mines can be supported by Mine-specific support gems and benefit from "
+            "mine throw speed and detonation chain modifiers."
+        ),
+        "formula": "Default mine limit: varies by skill. Detonation: manual via Detonate Mines.",
+        "see_also": ["Trap", "Triggered Skills", "multiplierMineDetonatedRecently"],
+        "source": "PoB:ConfigOptions",
+    },
+    {
+        "name": "Guard",
+        "category": "keyword",
+        "summary": "Skills that provide a temporary absorption layer or defensive reaction.",
+        "mechanics": (
+            "Guard skills create a temporary protective effect that absorbs or mitigates "
+            "incoming damage for a short duration. Examples: Molten Shell (armour shell that "
+            "absorbs hits), Steelskin (temporary life buffer). "
+            "Guard skills typically have a cooldown and are triggered or manually activated. "
+            "In PoE2 Guard skills include Barrier Invocation-type effects."
+        ),
+        "formula": "Absorption varies per skill. Duration: 2–4 seconds typically.",
+        "see_also": ["Energy Shield", "Armour", "Triggered Skills", "Parry"],
+        "source": "PoB:SkillTypes",
+    },
+    {
+        "name": "Invocation",
+        "category": "keyword",
+        "summary": "Meta Spirit skills that store energy from hits and release powerful effects when fully charged.",
+        "mechanics": (
+            "Invocation skills (Barrier Invocation, Elemental Invocation, Feral Invocation, "
+            "Reaper's Invocation) are persistent Trigger-type skills that accumulate Energy "
+            "from hits and release a powerful effect once fully charged. "
+            "They are tagged Persistent, Trigger, Invocation, Meta in PoB. "
+            "Invocations use Spirit for reservation and trigger automatically — no manual activation."
+        ),
+        "formula": "Energy threshold varies per Invocation skill. Trigger: automatic at full charge.",
+        "see_also": ["Spirit", "Aura", "Herald", "Triggered Skills", "GeneratesEnergy"],
+        "source": "PoB:Gems",
+    },
+    {
+        "name": "Shapeshift",
+        "category": "keyword",
+        "summary": "Class mechanic (Druid/Warbringer) that transforms you into an animal form with different skills.",
+        "mechanics": (
+            "Shapeshift transforms the player into a form (Wolf, Bear, Wyvern) with a dedicated "
+            "skill bar and different stat scaling. Shapeshifted forms often have higher base "
+            "movement speed and access to form-specific skills. "
+            "Returning to human form is treated as Shapeshifting to human (conditionShapeshiftToHuman). "
+            "Modifiers to Shapeshift forms only apply while in that form."
+        ),
+        "formula": "",
+        "see_also": ["conditionShapeshifted", "conditionShapeshiftToAnimal", "conditionShapeshiftToHuman"],
+        "source": "PoB:ConfigOptions",
+    },
+    {
+        "name": "Duration",
+        "category": "keyword",
+        "summary": "Skills and effects with Duration last for a set time; Duration modifiers extend this.",
+        "mechanics": (
+            "Many skills, buffs, and debuffs have a Duration tag meaning their effect expires "
+            "after a set number of seconds. Increased Duration modifiers extend how long they last. "
+            "Skills tagged Duration benefit from support gems like Intensify and Persistence. "
+            "Base duration varies per skill and is shown in the skill description."
+        ),
+        "formula": "Effective duration = base_duration × (1 + increased_duration / 100).",
+        "see_also": ["Channelling", "Persistent Skills", "Triggered Skills", "Cooldown"],
+        "source": "PoB:SkillTypes",
+    },
+    {
+        "name": "Cooldown",
+        "category": "keyword",
+        "summary": "Rate limit on skill use; Cooldown Recovery Rate reduces the wait between uses.",
+        "mechanics": (
+            "Skills with a Cooldown cannot be used again until the cooldown period expires. "
+            "Cooldown Recovery Rate (%) reduces the effective cooldown time proportionally. "
+            "At 100% increased Cooldown Recovery Rate the cooldown is halved. "
+            "Some skills have independent cooldowns per instance (traps, mines). "
+            "PoB supports both base and average cooldown calculation modes."
+        ),
+        "formula": "Effective cooldown = base_cooldown / (1 + cooldown_recovery_rate / 100).",
+        "see_also": ["Trap", "Mine", "Travel", "cooldownMode"],
+        "source": "PoB:ConfigOptions",
+    },
+    {
+        "name": "Companion",
+        "category": "keyword",
+        "summary": "Persistent beast ally summoned by certain skills; uses your presence to apply buffs.",
+        "mechanics": (
+            "Companion skills summon a persistent beast that fights alongside you. "
+            "Unlike regular Minions, Companions interact with 'Companion in Presence' conditions, "
+            "enabling specific passive and item bonuses. "
+            "Companions can have their own buff and curse skills enabled in PoB config. "
+            "A Companion can absorb damage taken before you (with certain items/passives)."
+        ),
+        "formula": "",
+        "see_also": ["Minions", "summonCompanionEnableBuffs", "companionInPresence", "TotalCompanionLife"],
+        "source": "PoB:ConfigOptions",
     },
 
     # ── Keystones ─────────────────────────────────────────────────────────────

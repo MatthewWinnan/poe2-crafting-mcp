@@ -76,10 +76,12 @@ def _init_db(conn: sqlite3.Connection) -> None:
 
 
 def _clear_tables(conn: sqlite3.Connection) -> None:
-    for tbl in ("item_bases", "item_mods", "gems", "uniques", "passive_nodes", "currencies"):
+    for tbl in ("item_bases", "item_mods", "gems", "uniques", "passive_nodes",
+                "currencies", "concepts", "item_descriptions"):
         conn.execute(f"DELETE FROM {tbl}")
     # FTS tables need rebuilding
-    for fts in ("item_mods_fts", "gems_fts", "uniques_fts", "passive_nodes_fts"):
+    for fts in ("item_mods_fts", "gems_fts", "uniques_fts", "passive_nodes_fts",
+                "concepts_fts", "item_descriptions_fts"):
         conn.execute(f"DELETE FROM {fts}")
     conn.commit()
 
@@ -406,6 +408,24 @@ def _load_currencies(conn: sqlite3.Connection) -> int:
     return len(CURRENCIES)
 
 
+# ── Concepts ──────────────────────────────────────────────────────────────────
+
+def _load_concepts(conn: sqlite3.Connection) -> int:
+    from .concepts import CONCEPTS
+    from .price_db import PriceDatabase
+    pdb = PriceDatabase(conn)
+    return pdb.upsert_concepts_bulk(CONCEPTS)
+
+
+# ── Item Descriptions ──────────────────────────────────────────────────────────
+
+def _load_item_descriptions(conn: sqlite3.Connection) -> int:
+    from .item_descriptions import ITEM_DESCRIPTIONS
+    from .price_db import PriceDatabase
+    pdb = PriceDatabase(conn)
+    return pdb.upsert_item_descs_bulk(ITEM_DESCRIPTIONS)
+
+
 # ── FTS Rebuild ───────────────────────────────────────────────────────────────
 
 def _rebuild_fts(conn: sqlite3.Connection) -> None:
@@ -413,6 +433,8 @@ def _rebuild_fts(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT INTO gems_fts(gems_fts) VALUES ('rebuild')")
     conn.execute("INSERT INTO uniques_fts(uniques_fts) VALUES ('rebuild')")
     conn.execute("INSERT INTO passive_nodes_fts(passive_nodes_fts) VALUES ('rebuild')")
+    conn.execute("INSERT INTO concepts_fts(concepts_fts) VALUES ('rebuild')")
+    conn.execute("INSERT INTO item_descriptions_fts(item_descriptions_fts) VALUES ('rebuild')")
     conn.commit()
 
 
@@ -479,6 +501,14 @@ def run(pob_path: Path | None = None, db_path: Path | None = None,
     log.info("Loading currencies…")
     counts["currencies"] = _load_currencies(conn)
     log.info("  %d rows", counts["currencies"])
+
+    log.info("Loading concepts…")
+    counts["concepts"] = _load_concepts(conn)
+    log.info("  %d rows", counts["concepts"])
+
+    log.info("Loading item descriptions…")
+    counts["item_descriptions"] = _load_item_descriptions(conn)
+    log.info("  %d rows", counts["item_descriptions"])
 
     log.info("Rebuilding FTS indexes…")
     _rebuild_fts(conn)

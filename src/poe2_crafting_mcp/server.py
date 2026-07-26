@@ -626,28 +626,30 @@ def get_db_summary() -> str:
 @mcp.tool()
 def search_concepts(keyword: str = "", category: str = "", limit: int = 10) -> str:
     """
-    Look up PoE2 keyword and mechanic definitions.
+    Look up PoE2 keyword and mechanic definitions from the live DB.
 
-    Covers ~180 core concepts including: damage types, ailments (Shock/Chill/Freeze/
+    Covers ~200 core concepts including: damage types, ailments (Shock/Chill/Freeze/
     Ignite/Bleed/Poison/Electrocute and lesser ailments), attributes (Strength/
     Dexterity/Intelligence), defence mechanics (Armour formula, Evasion, Energy Shield,
     Ward, Block, Suppress, Deflect, Resistances), offence mechanics (Critical Hits,
     Accuracy, Leech, Penetration, Conversion, Culling Strike), charges (Power/Frenzy/
     Endurance), resources (Life/Mana/Spirit/Rage), buffs (Onslaught/Elusive/Tailwind),
-    debuffs (Exposure/Blind/Crushed/Maim/Curses/Withered), mechanics (Recently/Lucky/
-    Stun/Recoup/Reserve/Low Life), skill keywords (Attack/Spell/Melee/Projectile/
-    Channelling/Totem/Minion/Warcry), keystones (Chaos Inoculation/Iron Reflexes/
-    Eldritch Battery/Blood Magic/Avatar of Fire/Resolute Technique etc.), and more.
+    debuffs (Exposure/Blind/Crushed/Maim/Curses/Withered), combat mechanics (Combo/
+    Finisher/Parry/Exerted Attack/Armour Break/Trinity/Resonance), skill keywords
+    (Attack/Spell/Melee/Projectile/Aura/Herald/Trap/Mine/Warcry/Invocation),
+    keystones (Chaos Inoculation/Iron Reflexes/Eldritch Battery/Blood Magic etc.).
 
     Each concept includes:
     - summary: plain English one-liner
     - mechanics: detailed explanation with PoE2-accurate rules
     - formula: numeric formula where applicable (e.g. Armour reduction, Freeze buildup)
     - see_also: related concepts AND PoB config var names for cross-referencing
+    - source: "manual" | "PoB:ConfigOptions" | "PoB:SkillTypes" | "PoB:Gems" | "poe2wiki"
+    - updated_at: ISO datetime of last update
 
     Args:
         keyword:  Search term — e.g. "shock", "armour", "critical", "leech", "rage".
-                  Searched across name, summary, mechanics, and see_also fields.
+                  Searched across name, summary, mechanics fields.
         category: Narrow by category — one of: damage_type, ailment, attribute,
                   defence, offence, charge, resource, buff, debuff, mechanic,
                   keyword, keystone, projectile, ground.
@@ -656,14 +658,14 @@ def search_concepts(keyword: str = "", category: str = "", limit: int = 10) -> s
     Returns:
         JSON array of matching concept dicts.
     """
-    from poe2_crafting_mcp.data.concepts import search_concepts as _search
-    return _to_json(_search(keyword=keyword, category=category, limit=limit))
+    pdb = _get_price_db()
+    return _to_json(pdb.search_concepts(keyword=keyword, category=category, limit=limit))
 
 
 @mcp.tool()
 def get_concept(name: str) -> str:
     """
-    Fetch the exact definition for a single PoE2 keyword by name.
+    Fetch the exact definition for a single PoE2 keyword by name (from DB).
 
     Use search_concepts() first if you're not sure of the exact name.
 
@@ -671,14 +673,173 @@ def get_concept(name: str) -> str:
         name: Concept name — e.g. "Shock", "Armour", "Power Charge", "Iron Reflexes".
 
     Returns:
-        JSON with name, category, summary, mechanics, formula, see_also.
+        JSON with name, category, summary, mechanics, formula, see_also, source, updated_at.
         Returns {"error": "..."} if not found.
     """
-    from poe2_crafting_mcp.data.concepts import get_concept as _get
-    result = _get(name)
+    pdb = _get_price_db()
+    result = pdb.get_concept(name)
     if not result:
         return _to_json({"error": f"Concept '{name}' not found"})
     return _to_json(result)
+
+
+@mcp.tool()
+def update_concept(
+    name: str,
+    category: str = "",
+    summary: str = "",
+    mechanics: str = "",
+    formula: str = "",
+    see_also: str = "[]",
+    source: str = "manual",
+    league_version: str = "",
+) -> str:
+    """
+    Insert or update a single PoE2 concept in the DB.
+
+    Use this to add league-specific entries, correct existing definitions, or
+    add knowledge not yet in the seed data. Changes survive server restarts.
+
+    Args:
+        name:          Concept name (primary key) — e.g. "Delirium Mirror".
+        category:      Category — e.g. "mechanic", "ailment", "keyword", "keystone".
+        summary:       One-sentence plain-English description.
+        mechanics:     Full mechanics explanation (PoE2-accurate).
+        formula:       Numeric formula if applicable, else "".
+        see_also:      JSON array of related concept names / PoB vars — e.g. '["Freeze","Chill"]'.
+        source:        Source tag — "manual" | "poe2wiki" | "PoB:ConfigOptions" etc.
+        league_version: League name if league-specific (e.g. "Settlers"), or "" for all leagues.
+
+    Returns:
+        JSON with {ok: true, name} on success or {error: ...} on failure.
+    """
+    pdb = _get_price_db()
+    try:
+        see_also_list = json.loads(see_also) if see_also else []
+        pdb.upsert_concept(
+            name=name,
+            category=category,
+            summary=summary,
+            mechanics=mechanics,
+            formula=formula,
+            see_also=see_also_list,
+            source=source,
+            league_version=league_version or None,
+        )
+        return _to_json({"ok": True, "name": name})
+    except Exception as e:
+        return _to_json({"error": str(e)})
+
+
+@mcp.tool()
+def refresh_concepts() -> str:
+    """
+    Re-seed the concepts table from the built-in concepts.py definitions.
+
+    Use this after a software update that adds new concepts, or to reset manual
+    edits to built-in concepts. Custom concepts with source="manual" are preserved
+    (upsert semantics — only built-in entries are overwritten).
+
+    Returns:
+        JSON with {seeded, total, status} where seeded = number of rows written.
+    """
+    pdb = _get_price_db()
+    from poe2_crafting_mcp.data.concepts import CONCEPTS
+    seeded = pdb.upsert_concepts_bulk(CONCEPTS)
+    status = pdb.concept_status()
+    return _to_json({"seeded": seeded, **status})
+
+
+@mcp.tool()
+def get_item_description(name: str) -> str:
+    """
+    Fetch crafting context and description for a specific item by name.
+
+    Covers key bases (Gold Gloves, Vaal Regalia, Imbued Wand, etc.), currencies
+    (Orb of Alteration, Essence, Fracture Orb, etc.), runes, catalysts, and
+    mechanic items. Returns crafting notes (best ilvl, target mods, which method
+    to use) and drop notes alongside a plain-English description.
+
+    Use alongside search_bases() to get both game stats and crafting context.
+    Add custom entries with poe2-lookup item-desc-add or update_item_description().
+
+    Args:
+        name: Item name — e.g. "Gold Gloves", "Orb of Alteration", "Stygian Vise".
+
+    Returns:
+        JSON with name, category, description, crafting_notes, drop_notes, see_also,
+        source, updated_at. Returns {"error": "..."} if not found.
+    """
+    pdb = _get_price_db()
+    result = pdb.get_item_desc(name)
+    if not result:
+        return _to_json({"error": f"No description for '{name}'"})
+    return _to_json(result)
+
+
+@mcp.tool()
+def update_item_description(
+    name: str,
+    category: str,
+    description: str = "",
+    crafting_notes: str = "",
+    drop_notes: str = "",
+    see_also: str = "[]",
+    source: str = "manual",
+    league_version: str = "",
+) -> str:
+    """
+    Insert or update an item description in the DB.
+
+    Use to add crafting context for items not yet in the seed data, or to
+    correct existing entries. Changes persist across server restarts.
+
+    Args:
+        name:           Item name (primary key).
+        category:       "base" | "currency" | "gem" | "unique" | "mechanic_item".
+        description:    Plain-English description of what the item is.
+        crafting_notes: When/how to use in crafting, best ilvl targets, etc.
+        drop_notes:     Where it drops / how to obtain.
+        see_also:       JSON array of related item/concept names.
+        source:         Source tag — "manual" | "poe2wiki" | "poe2db".
+        league_version: League name if league-specific, or "" for all leagues.
+
+    Returns:
+        JSON with {ok: true, name} on success or {error: ...} on failure.
+    """
+    pdb = _get_price_db()
+    try:
+        see_also_list = json.loads(see_also) if see_also else []
+        pdb.upsert_item_desc(
+            name=name, category=category,
+            description=description,
+            crafting_notes=crafting_notes,
+            drop_notes=drop_notes,
+            see_also=see_also_list,
+            source=source,
+            league_version=league_version or None,
+        )
+        return _to_json({"ok": True, "name": name})
+    except Exception as e:
+        return _to_json({"error": str(e)})
+
+
+@mcp.tool()
+def refresh_item_descriptions() -> str:
+    """
+    Re-seed the item_descriptions table from the built-in item_descriptions.py.
+
+    Use after a software update that adds new items, or to reset manual edits
+    to built-in entries (upsert semantics — custom manual entries are preserved).
+
+    Returns:
+        JSON with {seeded, total, status}.
+    """
+    pdb = _get_price_db()
+    from poe2_crafting_mcp.data.item_descriptions import ITEM_DESCRIPTIONS
+    seeded = pdb.upsert_item_descs_bulk(ITEM_DESCRIPTIONS)
+    status = pdb.item_desc_status()
+    return _to_json({"seeded": seeded, **status})
 
 
 # ── Economy & Pricing ────────────────────────────────────────────────────────
@@ -698,9 +859,12 @@ def get_data_status() -> str:
         "fresh" | "stale_ttl" | "stale_league" | "missing"
     - etl: {league, age_days, status} where status is one of:
         "fresh" | "stale_age" | "stale_league" | "never_run"
+    - concepts: {status, total, age_days} where status is one of:
+        "fresh" | "stale" | "never_seeded"
 
     If prices.status != "fresh", call refresh_prices().
     If etl.status != "fresh", warn the user and offer to call refresh_etl().
+    If concepts.status != "fresh", call refresh_concepts().
     """
     pdb = _get_price_db()
     active_league = pdb.get_active_league()
@@ -719,6 +883,8 @@ def get_data_status() -> str:
     else:
         result["prices"] = {"status": "unknown", "note": "Could not reach poe.ninja to detect league"}
         result["etl"] = {"status": "unknown"}
+    result["concepts"] = pdb.concept_status()
+    result["item_descriptions"] = pdb.item_desc_status()
     return _to_json(result)
 
 

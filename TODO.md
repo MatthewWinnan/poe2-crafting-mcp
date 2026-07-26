@@ -13,10 +13,13 @@
 - [x] get_combat_profile() — charges, rage, ailments, defence, damage type %, dynamic config
 - [x] get_condition_sources() — decodes why each condition matters (passive names, gem names)
 - [x] setup_realistic_scenario() — generic auto-config for any build (6 heuristics)
-- [x] Full MCP server (39 tools via FastMCP)
-- [x] ETL pipeline — SQLite DB with 1755 bases, 9365 mods, 966 gems, 441 uniques, 4912 nodes, 99 currencies
+- [x] Full MCP server (43 tools via FastMCP)
+- [x] ETL pipeline — SQLite DB with 1755 bases, 9365 mods, 966 gems, 441 uniques, 4912 nodes, 135 currencies
 - [x] poe2-lookup CLI — unified search across all data types
-- [x] concepts.py — 180 PoE2 keyword definitions with formulas, cross-links to PoB vars
+- [x] concepts.py — 146 PoE2 keyword definitions with formulas, cross-links to PoB vars
+- [x] Concepts DB table (SQLite, FTS5, staleness tracking, runtime upsert/delete)
+- [x] MCP: search_concepts, get_concept, update_concept, refresh_concepts, get_data_status (concepts)
+- [x] CLI: poe2-price concept-status/list/search/get/add/delete/refresh (to move to poe2-lookup)
 
 ---
 
@@ -52,7 +55,15 @@ Goal: search the live GGG trade2 API for items with specific mods.
 
 ---
 
-## 🎯 NEXT SESSION — Start here: Sprint 5a
+## 🎯 NEXT SESSION — Start here
+
+### Step 0 — Move concept commands from poe2-price → poe2-lookup ✅ DONE
+
+`poe2-price` is the economy/trade CLI. `poe2-lookup` is the knowledge CLI.
+Concept commands belong in poe2-lookup.
+
+- [x] Add concept-* subcommands to poe2-lookup (status/list/search/get/add/delete/refresh)
+- [x] Remove concept-* from poe2-price (keep poe2-price clean for economy/trade only)
 
 ---
 
@@ -66,13 +77,42 @@ what mods can roll, what method to use, and what it will cost.
 The agent needs to know what modifiers are *eligible* on a specific base at a given ilvl.
 The data exists in the DB (item_mods.weight_keys tags + req_level), just needs a tool.
 
-- [ ] `get_craftable_mods(base_name, ilvl, slot?)` MCP tool
+**Design decisions (finalised):**
+- `--tag` is a leaky abstraction — users don't know PoB internal tags. Tags are resolved
+  *internally* from the base name. `--tag` stays as a power-user cross-base filter only.
+- `--craftable` on a base lookup is the natural bridge: resolves tags → shows eligible mods.
+- Intended workflow:
+  ```
+  poe2-lookup "Gold Gloves"                   # base stats + slot + tags (shown) + mod count hint
+  poe2-lookup "Gold Gloves" --craftable       # all mods eligible on this base, grouped by affix type
+  poe2-lookup "Gold Gloves" --craftable --ilvl 80  # further filtered by item level
+  poe2-price trade "energy shield" --slot gloves --tier 1 --rarity magic  # find it on trade
+  ```
+
+- [ ] `get_craftable_mods(base_name, ilvl=100, slot=None)` MCP tool
   - Look up base item tags from item_bases
-  - Filter item_mods where weight_keys overlaps base tags AND req_level ≤ ilvl
-  - Group into prefixes / suffixes, show all tiers with value ranges
-  - Return mod weights (for probability calculations)
-- [ ] `poe2-lookup craftable <base> [--ilvl N]` CLI command
-- [ ] Include in search_bases() result: hint "call get_craftable_mods() for mod pool"
+  - Filter item_mods: any weight_key in base tags AND weight > 0 AND req_level ≤ ilvl
+  - Group into prefixes / suffixes; show all tiers with stat ranges + weights
+  - Return weights (needed for Sprint 5c probability calculations)
+- [ ] `poe2-lookup "Gold Gloves" --craftable [--ilvl N]` CLI flag
+  - Enhances existing base lookup: shows base stats first, then craftable mods below
+- [ ] `poe2-lookup <keyword> --type mods --tag <tag>` — keep as power-user cross-base filter
+- [ ] search_bases() result: add hint "N craftable mods available — use --craftable to list"
+
+### 5a+. Trade Filter Extensions (same session as 5a)
+
+Real GGG trade2 API filters not yet exposed in search_trade_listings:
+
+- [ ] `--stat-id <id>` — pass a raw stat ID directly (bypass keyword resolution)
+- [ ] `--affix-count-min N / --affix-count-max N` — filter by total affix count on the item
+- [ ] `--stats-min-count N` — minimum number of the listed stats that must match
+  (maps to `count` filter type in trade2 API — useful for "at least 2 of these 3 stats")
+
+These let the agent do compound queries like:
+```
+poe2-price trade "energy shield" --slot gloves --tier 1 --rarity magic \
+  --stats-min-count 2 --affix-count-min 1 --affix-count-max 4
+```
 
 ### 5b. Trade Item → PoB Simulation ✅
 
@@ -96,10 +136,23 @@ Closes the loop between "what's on trade" and "how much does this actually help 
   - Estimates expected currency cost for alteration spam, essence, regal+augment paths
 - [ ] Currency cost formulas encoded as structured data (not prose)
 
-### 5d. Crafting Knowledge Base (MCP Resources)
+### 5d. Item Descriptions + Crafting Knowledge Base ✅ DONE
 
-Agent needs expert crafting strategy — when to use which method, what fractured bases
-are worth buying, how to block mods, etc.
+**Item Descriptions pipeline** (same pattern as concepts — static seed → SQLite → updatable at runtime):
+- 69 seed entries: orbs, essences, bases by slot, jewels, runes, catalysts, distilled emotions,
+  fragments, focus/foci, shields, quivers, jewellery, rings, amulets, charms, idols
+- `item_descriptions` table + FTS5 in schema.sql
+- `item_descriptions.py` seed file
+- ETL: seed item_descriptions, added to _clear_tables + _rebuild_fts
+- price_db.py: upsert_item_desc, get_item_desc, search_item_descs, delete_item_desc, item_desc_status
+- poe2-lookup: item-desc-status/list/get/add/delete/refresh subcommands
+- MCP: get_item_description(), update_item_description(), refresh_item_descriptions()
+- poe2-lookup base output: appends description block if available
+- Type aliases: "foci"→descriptions, "jewellery"→descriptions, "focus"→descriptions, etc.
+- Exchange dedup: items already shown in Currencies not shown again in Exchange Items
+- Spurious mod filter: mods with empty stat_text (idols as Rune mods) suppressed
+
+**Crafting Knowledge Base (MCP Resources):**
 
 - [ ] `@mcp.resource("poe2://crafting-guide/methods")` — orb usage guide:
   - Alteration spam → regal: cheap, good for 1 target mod
@@ -110,6 +163,16 @@ are worth buying, how to block mods, etc.
 - [ ] `@mcp.resource("poe2://crafting-guide/priorities")` — per-slot mod priority tiers
   (e.g. gloves: ES > life > res > attack speed)
 - [ ] `@mcp.resource("poe2://scenario-rules")` — realistic scenario setup rules (from Sprint 3 deferred)
+
+### 5e. Mechanic / Tag Cross-Search
+
+`poe2-lookup --mechanic breach` groups all breach-related items, concepts, and mods.
+Requires tagging concepts + item_descriptions entries with mechanic keywords.
+
+- [ ] Add `mechanic_tags` JSON field to both concepts and item_descriptions tables
+- [ ] `poe2-lookup --mechanic <keyword>` — cross-table grouped results:
+  concepts matching the mechanic + items tagged with it + mods related to it
+- [ ] MCP: `search_by_mechanic(mechanic)` — returns grouped dict
 
 ---
 
