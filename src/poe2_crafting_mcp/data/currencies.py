@@ -108,6 +108,8 @@ CURRENCIES: list[tuple[str, str, str, str, str]] = [
     ("Soul Core of Citaqualotl","SoulCore","Defence",  "Grants energy shield",                              "soul-core-of-citaqualotl"),
     ("Soul Core of Puhuarte",  "SoulCore", "Resistance","Grants elemental resistance",                      "soul-core-of-puhuarte"),
     ("Soul Core of Quipolatl", "SoulCore", "Crit",    "Grants critical hit chance",                        "soul-core-of-quipolatl"),
+    # Runes of Aldur league soul core (new format)
+    ("Xopec's Soul Core of Power", "SoulCore", "Charges", "Grants power charge bonuses",                   "xopecs-soul-core-of-power"),
 
     # ── Distilled Emotions (Essence-like, from Ultimatum/league) ─────────────
     ("Distilled Fear",         "Distilled", "Damage",    "Guarantees a cold or chaos damage mod",          "distilled-fear"),
@@ -130,10 +132,36 @@ CURRENCIES: list[tuple[str, str, str, str, str]] = [
     ("Uul-Netol's Splinter",   "Fragment", "Breach",  "Splinter of Uul-Netol (Physical Breach)",          "uul-netols-splinter"),
     ("Chayula's Splinter",     "Fragment", "Breach",  "Splinter of Chayula (Chaos Breach)",               "chayulas-splinter"),
     ("Simulacrum Splinter",    "Fragment", "Delirium","Combine 300 to open a Simulacrum",                  "simulacrum-splinter"),
+    ("Simulacrum",             "Fragment", "Delirium","Opens a Simulacrum encounter (crafted from 300 splinters)","simulacrum"),
+    ("Kulemak's Invitation",   "Fragment", "Boss",    "Opens access to the Kulemak pinnacle boss encounter","kulemaks-invitation"),
     ("Precursor Tablet",       "Other",    "Tower",   "Maps a tower with modifiers for the surrounding region","precursor-tablet"),
     ("Logbook",                "Other",    "Expedition","Expedition logbook to run an Expedition encounter","logbook"),
     ("Barya",                  "Other",    "Trial",   "Currency used for the Trial of the Ancestor",       "barya"),
     ("Ultimatum Inscription",  "Other",    "Trial",   "Currency used for the Trial of Chaos",              "ultimatum-inscription"),
+
+    # ── Idols (Atlas tower socketables, poe.ninja type = "Idols") ──────────────
+    ("Fox Idol",   "Idol", "Atlas", "Socket in an Atlas tower to apply a fox spirit tower modifier",   "fox-idol"),
+    ("Bear Idol",  "Idol", "Atlas", "Socket in an Atlas tower to apply a bear spirit tower modifier",  "bear-idol"),
+    ("Wolf Idol",  "Idol", "Atlas", "Socket in an Atlas tower to apply a wolf spirit tower modifier",  "wolf-idol"),
+    ("Stag Idol",  "Idol", "Atlas", "Socket in an Atlas tower to apply a stag spirit tower modifier",  "stag-idol"),
+    ("Boar Idol",  "Idol", "Atlas", "Socket in an Atlas tower to apply a boar spirit tower modifier",  "boar-idol"),
+    ("Owl Idol",   "Idol", "Atlas", "Socket in an Atlas tower to apply an owl spirit tower modifier",  "owl-idol"),
+
+    # ── Omens (single-use crafting items, poe.ninja type = "Ritual") ──────────
+    ("Omen of Whittling",        "Omen", "Crafting", "Single-use crafting item: reforges a modifier on an item",           "omen-of-whittling"),
+    ("Omen of Sinistral Erasure","Omen", "Crafting", "Single-use crafting item: removes a prefix modifier from an item",   "omen-of-sinistral-erasure"),
+    ("Omen of Dextral Erasure",  "Omen", "Crafting", "Single-use crafting item: removes a suffix modifier from an item",   "omen-of-dextral-erasure"),
+    ("Omen of Amelioration",     "Omen", "Crafting", "Single-use crafting item: upgrades a modifier to a higher tier",     "omen-of-amelioration"),
+    ("Omen of Resurgence",       "Omen", "Crafting", "Single-use item: restores life and mana to full during combat",      "omen-of-resurgence"),
+
+    # ── Lineage Support Gems (Runes of Aldur league mechanic) ─────────────────
+    ("Seraph's Heart", "LineageGem", "Support", "Lineage support gem from the Runes of Aldur league mechanic", "seraphs-heart"),
+
+    # ── Expedition Artifacts ──────────────────────────────────────────────────
+    ("Chilling Flux",  "Expedition", "Artifact", "Expedition reagent: adds cold-related modifiers to excavated items", "chilling-flux"),
+
+    # ── Verisium ──────────────────────────────────────────────────────────────
+    ("Runic Alloy",    "Verisium", "Material", "Verisium crafting material used to upgrade runes to Perfect quality", "runic-alloy"),
 
     # ── Catalysts ─────────────────────────────────────────────────────────────
     ("Turbulent Catalyst",     "Catalyst", "Elemental", "Adds quality that enhances elemental damage mods","turbulent-catalyst"),

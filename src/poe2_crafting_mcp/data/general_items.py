@@ -139,7 +139,8 @@ EXCHANGE_SLUGS: dict[str, list[tuple[str, str]]] = {
         ("Ulaman's Gaze",   "ulamans-gaze"),
     ],
 
-    # ── Fragments (Breach splinters, Simulacrum splinter) ────────────────────
+    # ── Fragments (Breach splinters, Simulacrum splinter, Boss invitation) ──────
+    # _by_cat("Fragment") covers: breach splinters, simulacrum splinter, simulacrum, kulemak's invitation
     "Fragments": _by_cat("Fragment"),
 
     # ── Uncut Gems ────────────────────────────────────────────────────────────
@@ -157,12 +158,20 @@ EXCHANGE_SLUGS: dict[str, list[tuple[str, str]]] = {
         ),
     ],
 
-    # ── TODO: confirm slugs from poe.ninja for these categories ──────────────
-    # "LineageSupportGems": [],  # Lineage support gems from league mechanic
-    # "Idols":              [],  # Tower modifier idols for atlas
-    # "Ritual":             [],  # Omens (Omen of Whittling, etc.)
-    # "Expedition":         [],  # Logbooks / artifacts
-    # "Verisium":           [],  # Verisium material
+    # ── Lineage Support Gems (poe.ninja type = "LineageSupportGems") ─────────
+    "LineageSupportGems": _by_cat("LineageGem"),
+
+    # ── Idols (Atlas tower socketables, poe.ninja type = "Idols") ────────────
+    "Idols": _by_cat("Idol"),
+
+    # ── Omens (crafting consumables, poe.ninja type = "Ritual") ──────────────
+    "Ritual": _by_cat("Omen"),
+
+    # ── Expedition Artifacts (poe.ninja type = "Expedition") ─────────────────
+    "Expedition": _by_cat("Expedition"),
+
+    # ── Verisium crafting materials (poe.ninja type = "Verisium") ────────────
+    "Verisium": _by_cat("Verisium"),
 }
 
 # ── Exchange item descriptions ─────────────────────────────────────────────────
@@ -267,6 +276,34 @@ EXCHANGE_DESCRIPTIONS: dict[str, str] = {
        for lvl in range(14, 21)},
     **{f"uncut-spirit-gem-level-{lvl}":  f"Cut to create a level {lvl} spirit (trigger/reserve) gem of your choice"
        for lvl in range(14, 21)},
+
+    # ── Idols ────────────────────────────────────────────────────────────────
+    "fox-idol":  "Socket in an Atlas tower to apply a fox spirit tower modifier",
+    "bear-idol": "Socket in an Atlas tower to apply a bear spirit tower modifier",
+    "wolf-idol": "Socket in an Atlas tower to apply a wolf spirit tower modifier",
+    "stag-idol": "Socket in an Atlas tower to apply a stag spirit tower modifier",
+    "boar-idol": "Socket in an Atlas tower to apply a boar spirit tower modifier",
+    "owl-idol":  "Socket in an Atlas tower to apply an owl spirit tower modifier",
+
+    # ── Omens ────────────────────────────────────────────────────────────────
+    "omen-of-whittling":         "Single-use crafting item: reforges a modifier on an item",
+    "omen-of-sinistral-erasure": "Single-use crafting item: removes a prefix modifier from an item",
+    "omen-of-dextral-erasure":   "Single-use crafting item: removes a suffix modifier from an item",
+    "omen-of-amelioration":      "Single-use crafting item: upgrades a modifier to a higher tier",
+    "omen-of-resurgence":        "Single-use item: restores life and mana to full during combat",
+
+    # ── Lineage Support Gems ─────────────────────────────────────────────────
+    "seraphs-heart": "Lineage support gem from the Runes of Aldur league mechanic",
+
+    # ── Expedition Artifacts ─────────────────────────────────────────────────
+    "chilling-flux": "Expedition reagent: adds cold-related modifiers to excavated items",
+
+    # ── Verisium ─────────────────────────────────────────────────────────────
+    "runic-alloy": "Verisium crafting material used to upgrade runes to Perfect quality",
+
+    # ── Fragments ────────────────────────────────────────────────────────────
+    "kulemaks-invitation": "Opens access to the Kulemak pinnacle boss encounter",
+    "simulacrum":          "Opens a Simulacrum encounter (crafted from 300 Simulacrum Splinters)",
 }
 
 
