@@ -650,22 +650,43 @@ _ALL_TYPES = ("bases", "mods", "gems", "uniques", "nodes", "currencies",
               "concepts", "exchange", "descriptions")
 
 _TYPE_ALIASES: dict[str, str] = {
+    # ── Data section aliases ───────────────────────────────────────────────────
+    # bases: item base types (use --slot to filter by equipment slot)
     "base": "bases", "item": "bases", "items": "bases",
+    "weapon": "bases", "weapons": "bases",
+    "armour": "bases", "armor": "bases",
+    "helmet": "bases", "helm": "bases",
+    "gloves": "bases", "glove": "bases",
+    "boots": "bases", "boot": "bases",
+    "shield": "bases",
+    "quiver": "bases",
+    "jewel": "bases",
+    "waystone": "bases", "waystones": "bases", "map": "bases", "maps": "bases",
+    # mods: explicit/crafted/flask/jewel/charm mods — combine with --category
     "mod": "mods", "affix": "mods", "affixes": "mods", "craft": "mods",
+    # gems: skill/support gems
     "gem": "gems", "skill": "gems", "skills": "gems",
+    # uniques
     "unique": "uniques",
+    # passive tree nodes
     "node": "nodes", "passive": "nodes", "passives": "nodes", "tree": "nodes",
+    # currencies: orbs, quality currency, expedition, etc.
     "currency": "currencies", "orb": "currencies",
+    # concepts: keyword/mechanic definitions
     "concept": "concepts", "keyword": "concepts", "keywords": "concepts",
     "mechanic": "concepts", "mechanics": "concepts", "definition": "concepts",
+    # exchange: poe.ninja exchange items (runes, essences, catalysts, fragments…)
+    # Use this to look up prices for these consumable/exchange items
     "rune": "exchange", "essence": "exchange", "catalyst": "exchange",
     "delirium": "exchange", "breach": "exchange", "abyss": "exchange",
     "liquid": "exchange", "wombgift": "exchange", "fragment": "exchange",
     "soulcore": "exchange", "soul_core": "exchange",
+    "omen": "exchange", "idol": "exchange", "distilled": "exchange",
+    # descriptions: item category / mechanic context entries
+    # (Jewellery, Focus, Weapon, Flask, Essence, Omen, Abyss Jewel, etc.)
     "desc": "descriptions", "description": "descriptions",
     "item-desc": "descriptions", "foci": "descriptions",
     "focus": "descriptions", "jewellery": "descriptions", "jewelry": "descriptions",
-    "shield": "descriptions", "quiver": "descriptions",
 }
 
 
@@ -698,7 +719,11 @@ def main() -> None:
             "  poe2-lookup 'Vaal Regalia' --type bases        body armour base\n"
             "  poe2-lookup '' --type bases --slot Focus       all focus bases\n"
             "  poe2-lookup '' --type bases --slot Ring        all ring bases\n"
+            "  poe2-lookup '' --type mods --category Flask    all flask mods\n"
+            "  poe2-lookup '' --type mods --category Charm    all charm mods\n"
             "  poe2-lookup 'chaos orb' --type descriptions    crafting notes for Chaos Orb\n"
+            "  poe2-lookup 'essence' --type descriptions      essence crafting overview\n"
+            "  poe2-lookup 'omen' --type descriptions         omen overview\n"
             "\n"
             "Management subcommands (bypass query parser):\n"
             "  poe2-lookup concept-status\n"
@@ -717,10 +742,14 @@ def main() -> None:
         "--type", "-t", dest="types", metavar="TYPE",
         help=(
             "Limit search to specific data types. Comma-separated for multiple.\n"
-            "Values: bases, mods, gems, uniques, nodes, currencies, concepts, "
+            "Core values: bases, mods, gems, uniques, nodes, currencies, concepts, "
             "exchange, descriptions.\n"
-            "Aliases: base, mod, gem, unique, node, currency, concept, "
-            "keyword, mechanic, rune, essence, desc, foci, focus, jewellery, shield, quiver."
+            "Slot shortcuts (→ bases): weapon, armour, helmet, gloves, boots, "
+            "shield, quiver, jewel, waystone/map.\n"
+            "Concept shortcuts (→ concepts): keyword, mechanic, definition.\n"
+            "Exchange shortcuts (→ exchange): rune, essence, catalyst, omen, idol, "
+            "breach, abyss, distilled, fragment.\n"
+            "Description shortcuts (→ descriptions): desc, foci, focus, jewellery."
         ),
     )
     parser.add_argument("--slot", "-s", default="",
@@ -728,7 +757,17 @@ def main() -> None:
     parser.add_argument("--tag", default="",
                         help="Item tag filter for mods/bases (e.g. staff, ring, int_armour)")
     parser.add_argument("--category", "-c", default="",
-                        help="Mod category: Item (default), Jewel, Runes, Corruption, Desecrated, Flask, Charm")
+                        help=(
+                            "Mod category filter (for --type mods). "
+                            "Item=weapons/armour/jewellery explicit mods (default), "
+                            "Jewel=passive jewel mods, "
+                            "Flask=flask prefix/suffix mods, "
+                            "Charm=charm mods, "
+                            "Runes=rune socket effects, "
+                            "Corruption=vaal corruption implicits, "
+                            "Desecrated=abyss jewel desecrated mods, "
+                            "Exclusive=vendor/special-only mods."
+                        ))
     parser.add_argument("--min-level", type=int, default=0,
                         help="Minimum ilvl for bases (default 0)")
     parser.add_argument("--max-level", type=int, default=100,

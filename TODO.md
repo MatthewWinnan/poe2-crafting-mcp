@@ -59,6 +59,8 @@ Goal: search the live GGG trade2 API for items with specific mods.
 
 ### Step 0 — Move concept commands from poe2-price → poe2-lookup ✅ DONE
 
+### Sprint 5h — Wiki Concept Seeder ✅ DONE
+
 `poe2-price` is the economy/trade CLI. `poe2-lookup` is the knowledge CLI.
 Concept commands belong in poe2-lookup.
 
@@ -168,6 +170,17 @@ Essences guarantee one specific mod per item class — this is NOT the standard 
 - [ ] Seed from wiki description text parsing (Essence of X pages have mod text inline)
 - [ ] MCP: `get_essence_mods(essence_name, item_class)` tool
 - [ ] `estimate_craft_cost` needs essence path: cost = essence_price + (N tries until rest fills in)
+
+### 5h. Wiki Concept Seeder ✅ DONE
+
+- [x] `fetch_concept(name)` in wiki_client.py — parses `{{status}}` infobox (ailments) and body prose (mechanics)
+- [x] `fetch_concepts(names)` — batched version with 1.5s inter-batch delay + 429 retry
+- [x] `seed_concepts_from_db(pdb)` — bulk updates all concepts from wiki (skips wiki-not-found)
+- [x] `_get_pages()` now uses `redirects=1` — Lightning Damage → Lightning page, etc.
+- [x] `concept-seed` CLI command (with `--dry-run`)
+- [x] `_fmt_concept()` now shows source badge (`poe2wiki`/`PoB:*`)
+- [x] `upsert_concepts_bulk(overwrite=False)` — refresh preserves wiki-sourced entries
+- Result: 124/153 concepts now `source='poe2wiki'`; 29 remain manual (custom craft concepts, PoB tags)
 
 ### 5d. Item Descriptions + Crafting Knowledge Base ✅ DONE
 
