@@ -172,6 +172,21 @@ def _mod_tier(m: object) -> str:
     return ""
 
 
+def _mod_hash(m: object) -> str:
+    """
+    Extract the normalised stat ID from a mod dict.
+
+    The API sends 'hash': 'stat.explicit.stat_4052037485'.
+    We strip the leading 'stat.' so it matches our trade stat IDs.
+    """
+    if isinstance(m, dict):
+        h = m.get("hash", "")
+        if h.startswith("stat."):
+            h = h[5:]
+        return h
+    return ""
+
+
 def _trade_item_to_pob_text(item: dict) -> str:
     """
     Convert a trade2 API item JSON dict to PoB/in-game clipboard item text.
@@ -372,6 +387,8 @@ def build_api_filters(
     area_level_max: int | None = None,
     stack_size_min: int | None = None,
     stack_size_max: int | None = None,
+    affix_count_min: int | None = None,
+    affix_count_max: int | None = None,
     # map_filters
     map_tier_min: int | None = None,
     map_tier_max: int | None = None,
@@ -481,6 +498,8 @@ def build_api_filters(
         misc_f["area_level"] = v
     if (v := _rng(stack_size_min, stack_size_max)) is not None:
         misc_f["stack_size"] = v
+    # NOTE: affix_count_min/max is NOT sent to the trade2 API (rejected as invalid filter).
+    # It is handled as a client-side filter in estimate_trade_price().
     if misc_f:
         filters["misc_filters"] = {"filters": misc_f}
 
@@ -793,7 +812,7 @@ class TradeClient:
 
     def fetch_listings(self, search_id: str, result_ids: list[str]) -> list[dict]:
         """
-        Fetch up to _FETCH_BATCH listing details for the given IDs.
+        Fetch listing details for the given IDs, batching in groups of _FETCH_BATCH (10).
 
         Returns list of dicts with:
           name, base_type, rarity, ilvl, corrupted, fractured,
@@ -803,42 +822,43 @@ class TradeClient:
         """
         if not result_ids:
             return []
-        ids = result_ids[:_FETCH_BATCH]
-        ids_str = ",".join(ids)
-        resp = self._get(f"fetch/{ids_str}", {"query": search_id, "realm": "poe2"})
         results = []
-        for r in resp.get("result", []):
-            item    = r.get("item", {})
-            listing = r.get("listing", {})
-            price   = listing.get("price", {})
-            results.append({
-                "name":           item.get("name", ""),
-                "base_type":      item.get("baseType", ""),
-                "rarity":         _RARITY_NAMES.get(item.get("rarity", 1), "Magic"),
-                "ilvl":           item.get("ilvl", 0),
-                "corrupted":      item.get("corrupted", False),
-                "fractured":      bool(item.get("fracturedMods") or item.get("fractured")),
-                "price_amount":   price.get("amount"),
-                "price_currency": price.get("currency", ""),
-                "account":        listing.get("account", {}).get("name", ""),
-                "mods": {
-                    k: [
-                        {"text": _mod_text(m), "tier": _mod_tier(m)}
-                        if isinstance(m, dict) else {"text": _mod_text(m), "tier": ""}
-                        for m in (item.get(field) or [])
-                    ]
-                    for k, field in [
-                        ("implicit",    "implicitMods"),
-                        ("explicit",    "explicitMods"),
-                        ("fractured",   "fracturedMods"),
-                        ("crafted",     "craftedMods"),
-                        ("enchant",     "enchantMods"),
-                        ("rune",        "runeMods"),
-                        ("desecrated",  "desecratedMods"),
-                    ]
-                },
-                "item_text": _trade_item_to_pob_text(item),
-            })
+        for batch_start in range(0, len(result_ids), _FETCH_BATCH):
+            batch = result_ids[batch_start : batch_start + _FETCH_BATCH]
+            ids_str = ",".join(batch)
+            resp = self._get(f"fetch/{ids_str}", {"query": search_id, "realm": "poe2"})
+            for r in resp.get("result", []):
+                item    = r.get("item", {})
+                listing = r.get("listing", {})
+                price   = listing.get("price", {})
+                results.append({
+                    "name":           item.get("name", ""),
+                    "base_type":      item.get("baseType", ""),
+                    "rarity":         _RARITY_NAMES.get(item.get("rarity", 1), "Magic"),
+                    "ilvl":           item.get("ilvl", 0),
+                    "corrupted":      item.get("corrupted", False),
+                    "fractured":      bool(item.get("fracturedMods") or item.get("fractured")),
+                    "price_amount":   price.get("amount"),
+                    "price_currency": price.get("currency", ""),
+                    "account":        listing.get("account", {}).get("name", ""),
+                    "mods": {
+                        k: [
+                            {"text": _mod_text(m), "tier": _mod_tier(m), "hash": _mod_hash(m)}
+                            if isinstance(m, dict) else {"text": _mod_text(m), "tier": "", "hash": ""}
+                            for m in (item.get(field) or [])
+                        ]
+                        for k, field in [
+                            ("implicit",    "implicitMods"),
+                            ("explicit",    "explicitMods"),
+                            ("fractured",   "fracturedMods"),
+                            ("crafted",     "craftedMods"),
+                            ("enchant",     "enchantMods"),
+                            ("rune",        "runeMods"),
+                            ("desecrated",  "desecratedMods"),
+                        ]
+                    },
+                    "item_text": _trade_item_to_pob_text(item),
+                })
         return results
 
     # ── Price Estimation ──────────────────────────────────────────────────────
@@ -955,6 +975,9 @@ class TradeClient:
         stats_min_count: int | None = None,
         stat_groups: list[dict] | None = None,
         sample: int = _DEFAULT_SAMPLE,
+        affix_filter: str | None = None,
+        affix_count_min: int | None = None,
+        affix_count_max: int | None = None,
         **filter_kwargs: Any,
     ) -> dict:
         """
@@ -964,6 +987,12 @@ class TradeClient:
         stats_type: "and" | "if" | "count" | "not" | "weight"
         stats_min_count: for stats_type="count", minimum number of matching stats
         stat_groups: list of {filters, type?, min_count?} for multiple stat blocks
+        affix_filter: optional stat_id (e.g. "explicit.stat_4052037485") — after
+            fetching, keep only listings that contain this stat in any mod slot.
+            Useful for client-side affix verification when the trade query is broad.
+        affix_count_min/max: client-side filter on total affix count (explicit + fractured).
+            Useful to find magic items with exactly 1 affix, e.g. affix_count_max=1.
+            NOTE: not sent to the trade2 API (unsupported), applied post-fetch.
         **filter_kwargs: passed directly to build_api_filters() — see search_trade() docstring.
 
         Returns the same shape as estimate_price():
@@ -997,6 +1026,34 @@ class TradeClient:
             }
 
         listings = self.fetch_listings(search_id, ids[:sample])
+
+        # Client-side affix filter: keep only listings containing the given stat_id
+        if affix_filter:
+            _MOD_SLOTS = ("explicit", "fractured", "crafted", "implicit", "enchant")
+            filtered_listings = []
+            for lst in listings:
+                mods = lst.get("mods") or {}
+                matched = any(
+                    mod.get("hash") == affix_filter
+                    for slot in _MOD_SLOTS
+                    for mod in (mods.get(slot) or [])
+                )
+                if matched:
+                    filtered_listings.append(lst)
+            listings = filtered_listings
+
+        # Client-side affix count filter: count explicit + fractured mods
+        if affix_count_min is not None or affix_count_max is not None:
+            filtered_listings = []
+            for lst in listings:
+                mods = lst.get("mods") or {}
+                count = len(mods.get("explicit") or []) + len(mods.get("fractured") or [])
+                if affix_count_min is not None and count < affix_count_min:
+                    continue
+                if affix_count_max is not None and count > affix_count_max:
+                    continue
+                filtered_listings.append(lst)
+            listings = filtered_listings
 
         prices_by_currency: dict[str, list[float]] = {}
         for lst in listings:

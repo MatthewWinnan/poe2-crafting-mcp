@@ -39,20 +39,33 @@ class PoBDatabase:
         slot: str = "",
         sub_type: str = "",
         keyword: str = "",
+        tag: str = "",
         min_level: int = 0,
         max_level: int = 100,
         limit: int = 50,
     ) -> list[dict]:
         """
-        Find item bases by slot, sub-type, name keyword, and level range.
+        Find item bases by slot, sub-type, name keyword, tag, and level range.
 
         Args:
             slot:      e.g. "Gloves", "Ring", "Body Armour", "Weapon"
             sub_type:  e.g. "Armour", "Evasion", "Energy Shield"
-            keyword:   substring search on base name (e.g. "Sleek", "Jacket")
+            keyword:   substring search on base name OR sub_type
+                       (e.g. "Sleek", "Jacket", "Energy Shield", "Armour/Evasion")
+            tag:       PoB weight_keys tag (e.g. "int_armour", "str_armour",
+                       "dex_int_armour"). Filters to bases that carry this tag.
             min_level: minimum required level (inclusive)
             max_level: maximum required level (inclusive)
             limit:     max rows returned
+
+        Tag → sub_type mapping:
+            int_armour          Energy Shield (INT req)
+            str_armour          Armour (STR req)
+            dex_armour          Evasion (DEX req)
+            str_int_armour      Armour/Energy Shield (STR+INT req)
+            dex_int_armour      Evasion/Energy Shield (DEX+INT req)
+            str_dex_armour      Armour/Evasion (STR+DEX req)
+            str_dex_int_armour  Armour/Evasion/Energy Shield (STR+DEX+INT req)
         """
         q = "SELECT * FROM item_bases WHERE req_level BETWEEN ? AND ?"
         params: list = [min_level, max_level]
@@ -63,11 +76,19 @@ class PoBDatabase:
             q += " AND sub_type LIKE ?"
             params.append(f"%{sub_type}%")
         if keyword:
-            q += " AND name LIKE ?"
-            params.append(f"%{keyword}%")
+            q += " AND (name LIKE ? OR sub_type LIKE ? OR slot LIKE ?)"
+            params.extend([f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"])
+        if tag:
+            # Use broad LIKE pre-filter then exact Python post-filter
+            q += " AND tags LIKE ?"
+            params.append(f"%{tag}%")
         q += " ORDER BY req_level, name LIMIT ?"
-        params.append(limit)
-        return [_row_to_dict(r) for r in self._conn.execute(q, params)]
+        params.append(limit * 3 if tag else limit)
+        rows = [_row_to_dict(r) for r in self._conn.execute(q, params)]
+        if tag:
+            rows = [r for r in rows if tag in (r.get("tags") or [])]
+            rows = rows[:limit]
+        return rows
 
     # ── Item Mods ─────────────────────────────────────────────────────────────
 
@@ -91,6 +112,7 @@ class PoBDatabase:
                        (e.g. "gloves", "ring", "staff", "str_armour").
             category:  "Item" (default), "Jewel", "Runes", "Corruption",
                        "Desecrated", "Flask", "Charm".
+                       Lookup auto-shows all categories when no --category given.
             mod_type:  "Prefix" or "Suffix" (blank = both).
             min_level: minimum ilvl to consider (req_level).
             max_level: maximum ilvl.
@@ -124,14 +146,17 @@ class PoBDatabase:
         if item_tag:
             fts_q += " AND weight_keys LIKE ?"
             params.append(f"%{item_tag}%")
+        # Fetch extra rows when tag-filtering so post-filter doesn't under-deliver
+        sql_limit = limit * 5 if item_tag else limit
         fts_q += " ORDER BY req_level DESC LIMIT ?"
-        params.append(limit)
+        params.append(sql_limit)
 
         rows = [_row_to_dict(r) for r in self._conn.execute(fts_q, params)]
 
         # Post-filter: only mods with non-zero weight for the requested tag
         if item_tag:
             rows = _filter_by_tag_weight(rows, item_tag)
+            rows = rows[:limit]
 
         return rows
 
@@ -323,6 +348,67 @@ class PoBDatabase:
 
     # ── Summary ───────────────────────────────────────────────────────────────
 
+    def expand_mod_tiers(
+        self,
+        mods: list[dict],
+        category: str = "Item",
+        item_tag: str = "",
+        max_groups: int = 10,
+    ) -> list[dict]:
+        """
+        Given a set of mods (e.g. FTS results), return ALL tiers for each unique
+        group_name found in those mods.
+
+        Rows are ordered by (group_name, req_level DESC) so _with_tiers() in the
+        CLI correctly assigns T1 = highest ilvl within each group.
+
+        Args:
+            mods:       Seed mods from search_mods() — used to collect group_names.
+            category:   Same category filter as the original search.
+            item_tag:   If provided, keep only mods with non-zero weight for this tag.
+            max_groups: Cap on number of groups to expand (avoids explosion on broad queries).
+        """
+        group_names = list(dict.fromkeys(
+            m.get("group_name", "") for m in mods if m.get("group_name")
+        ))[:max_groups]
+        if not group_names:
+            return mods
+        placeholders = ",".join("?" * len(group_names))
+        params: list = group_names + [category]
+        q = (
+            f"SELECT * FROM item_mods"
+            f" WHERE group_name IN ({placeholders})"
+            f" AND category = ?"
+            # Skip unique mods and untyped entries (implicit, corruption, etc.)
+            # Standard craftable tiers always have an affix name and Prefix/Suffix type.
+            f" AND affix IS NOT NULL"
+            f" AND mod_type IN ('Prefix', 'Suffix')"
+        )
+        if item_tag:
+            q += " AND weight_keys LIKE ?"
+            params.append(f"%{item_tag}%")
+        q += " ORDER BY group_name, req_level DESC"
+        rows = [_row_to_dict(r) for r in self._conn.execute(q, params)]
+        if item_tag:
+            rows = _filter_by_tag_weight(rows, item_tag)
+
+        # Deduplicate within each group: different item-class variants (e.g. HandWraps)
+        # often share the same stat range at ilvl=1 alongside the generic version.
+        # Keep the highest req_level entry per (group_name, mod_type, stat_min, stat_max).
+        seen: dict[tuple, bool] = {}
+        deduped: list[dict] = []
+        for row in rows:
+            key = (
+                row.get("group_name"),
+                row.get("mod_type"),
+                row.get("stat_min"),
+                row.get("stat_max"),
+            )
+            if key not in seen:
+                seen[key] = True
+                deduped.append(row)
+        return deduped
+
     def get_summary(self) -> dict[str, int]:
         """Return row counts for all tables."""
         tables = ["item_bases", "item_mods", "gems", "uniques", "passive_nodes", "currencies"]
@@ -346,16 +432,25 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict:
 
 
 def _filter_by_tag_weight(rows: list[dict], tag: str) -> list[dict]:
-    """Keep only rows where the given tag has a non-zero weight."""
+    """Keep only rows where the given tag has a non-zero weight, or default applies."""
     filtered = []
     for row in rows:
         keys = row.get("weight_keys") or []
         vals = row.get("weight_vals") or []
+        if not keys:
+            # No weight info — include by default
+            filtered.append(row)
+            continue
         try:
             idx = keys.index(tag)
             if idx < len(vals) and int(float(vals[idx])) > 0:
                 filtered.append(row)
         except (ValueError, IndexError, TypeError):
-            # Tag not in weight_keys — include by default (may be broadly applicable)
-            filtered.append(row)
+            # Tag not in weight_keys — check if default weight allows it
+            try:
+                def_idx = keys.index("default")
+                if def_idx < len(vals) and int(float(vals[def_idx])) > 0:
+                    filtered.append(row)
+            except (ValueError, IndexError, TypeError):
+                pass  # Tag absent, no default weight — exclude
     return filtered

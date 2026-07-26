@@ -80,7 +80,12 @@ def _fmt_base(b: dict) -> None:
 
 
 def _with_tiers(mods: list[dict]) -> list[dict]:
-    """Add a 'tier' field to each mod — 1 = best within its group_name."""
+    """
+    Add a 'tier' field to each mod — T1 = highest req_level within its group_name.
+
+    Assumes mods are ordered by (group_name, req_level DESC), which is what
+    PoBDatabase.expand_mod_tiers() returns.
+    """
     group_count: dict[str, int] = {}
     result = []
     for m in mods:
@@ -246,9 +251,13 @@ def main() -> None:
     parser.add_argument("--slot", "-s", default="",
                         help="Item slot filter for bases/uniques (e.g. Gloves, Ring)")
     parser.add_argument("--tag", default="",
-                        help="Item tag filter for mods (e.g. staff, ring, str_armour)")
+                        help="Item tag filter for mods/bases (e.g. staff, ring, int_armour)")
     parser.add_argument("--category", "-c", default="",
-                        help="Mod category: Item (default), Jewel, Runes, Corruption, Flask")
+                        help="Mod category: Item (default), Jewel, Runes, Corruption, Desecrated, Flask, Charm")
+    parser.add_argument("--min-level", type=int, default=0,
+                        help="Minimum ilvl for bases (default 0)")
+    parser.add_argument("--max-level", type=int, default=100,
+                        help="Maximum ilvl for bases (default 100)")
     parser.add_argument("--limit", "-l", type=int, default=10,
                         help="Max results per section (default 10)")
     parser.add_argument("--no-color", action="store_true",
@@ -285,8 +294,9 @@ def main() -> None:
     found_any = False
 
     if "bases" in types_to_search:
-        results = db.search_bases(slot=args.slot, keyword=query,
-                                  min_level=0, max_level=100, limit=args.limit)
+        results = db.search_bases(slot=args.slot, keyword=query, tag=args.tag,
+                                  min_level=args.min_level, max_level=args.max_level,
+                                  limit=args.limit)
         if results:
             found_any = True
             print(_h("Item Bases"))
@@ -299,6 +309,9 @@ def main() -> None:
         results = db.search_mods(keyword=query, item_tag=args.tag,
                                  category=cat, limit=args.limit)
         if results:
+            # Expand: fetch all tiers for each matched group (limit groups = args.limit)
+            results = db.expand_mod_tiers(results, category=cat,
+                                          item_tag=args.tag, max_groups=args.limit)
             found_any = True
             print(_h(f"Mods ({cat})"))
             for m in _with_tiers(results):
@@ -306,10 +319,12 @@ def main() -> None:
                 print()
         # Also search other categories if no specific category was given
         if not args.category:
-            for extra_cat in ("Jewel", "Runes", "Corruption"):
+            for extra_cat in ("Jewel", "Runes", "Corruption", "Desecrated", "Flask", "Charm"):
                 extra = db.search_mods(keyword=query, item_tag=args.tag,
                                        category=extra_cat, limit=5)
                 if extra:
+                    extra = db.expand_mod_tiers(extra, category=extra_cat,
+                                                item_tag=args.tag, max_groups=5)
                     found_any = True
                     print(_h(f"Mods ({extra_cat})"))
                     for m in _with_tiers(extra):

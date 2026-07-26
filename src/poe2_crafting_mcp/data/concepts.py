@@ -1428,6 +1428,141 @@ CONCEPTS: list[dict] = [
         "see_also": ["Chaos Damage", "Ground Effects"],
     },
 
+    # ── Item Base Types ───────────────────────────────────────────────────────
+
+    {
+        "name": "Armour Base Tags",
+        "category": "base_type",
+        "summary": "Internal tags that identify which defence type(s) an armour base provides.",
+        "mechanics": (
+            "Every armour item base carries an internal tag used by the mod weight system to "
+            "determine which mods can roll on it. The tag is derived from the base's stat "
+            "requirements and sub-type: "
+            "int_armour = Energy Shield (INT req, e.g. Sombre Gloves, Lacquered Helmet); "
+            "str_armour = Armour only (STR req, e.g. Riveted Mitts, Plate Helmet); "
+            "dex_armour = Evasion only (DEX req, e.g. Rawhide Boots, Jade Mask); "
+            "str_int_armour = Armour + Energy Shield (STR+INT, e.g. Crusader Gauntlets); "
+            "dex_int_armour = Evasion + Energy Shield (DEX+INT, e.g. Scholar Boots); "
+            "str_dex_armour = Armour + Evasion (STR+DEX, e.g. Zealot Gauntlets); "
+            "str_dex_int_armour = Armour + Evasion + Energy Shield (STR+DEX+INT, e.g. Vanguard Gloves). "
+            "To look up bases of a specific type: poe2-lookup <slot> --type bases --tag int_armour. "
+            "To look up mods for a specific base type: poe2-lookup <stat> --type mods --tag int_armour. "
+            "A base's tags are visible in the Tags line of the base lookup output."
+        ),
+        "formula": (
+            "int_armour → sub_type 'Energy Shield' | "
+            "str_armour → 'Armour' | "
+            "dex_armour → 'Evasion' | "
+            "str_int_armour → 'Armour/Energy Shield' | "
+            "dex_int_armour → 'Evasion/Energy Shield' | "
+            "str_dex_armour → 'Armour/Evasion' | "
+            "str_dex_int_armour → 'Armour/Evasion/Energy Shield'"
+        ),
+        "see_also": [
+            "int_armour", "str_armour", "dex_armour",
+            "str_int_armour", "dex_int_armour", "str_dex_armour", "str_dex_int_armour",
+            "Armour", "Evasion", "Energy Shield", "Strength", "Dexterity", "Intelligence",
+        ],
+    },
+    {
+        "name": "int_armour",
+        "category": "base_type",
+        "summary": "Tag for Energy Shield armour bases (pure INT requirement).",
+        "mechanics": (
+            "Bases tagged int_armour are pure Energy Shield armour pieces. "
+            "They require Intelligence to equip and provide Energy Shield as their defence stat. "
+            "Examples: Sombre Gloves, Quilted Vest, Lacquered Helmet, Scholar Boots. "
+            "Mods that target int_armour include: LocalEnergyShieldPercent (% increased ES, "
+            "T1=Unassailable 92-100%), LocalIncreasedEnergyShieldAndMana, flat ES prefix. "
+            "Unfaltering (101-110% ES) does NOT roll on int_armour — it is body_armour/shield only. "
+            "To find all int_armour gloves: poe2-lookup gloves --type bases --tag int_armour. "
+            "To find mods for int_armour: poe2-lookup 'energy shield' --type mods --tag int_armour."
+        ),
+        "formula": "sub_type = 'Energy Shield'. Requires INT. Defence: ES only.",
+        "see_also": ["Armour Base Tags", "Energy Shield", "Intelligence", "str_int_armour", "dex_int_armour"],
+    },
+    {
+        "name": "str_armour",
+        "category": "base_type",
+        "summary": "Tag for pure Armour bases (STR requirement).",
+        "mechanics": (
+            "Bases tagged str_armour are pure physical Armour pieces. "
+            "They require Strength to equip and provide Armour as their defence. "
+            "Examples: Riveted Mitts, Plate Helmet, Titan Greaves, Iron Gauntlets. "
+            "To find all str_armour boots: poe2-lookup boots --type bases --tag str_armour."
+        ),
+        "formula": "sub_type = 'Armour'. Requires STR. Defence: Armour only.",
+        "see_also": ["Armour Base Tags", "Armour", "Strength", "str_int_armour", "str_dex_armour"],
+    },
+    {
+        "name": "dex_armour",
+        "category": "base_type",
+        "summary": "Tag for pure Evasion bases (DEX requirement).",
+        "mechanics": (
+            "Bases tagged dex_armour are pure Evasion pieces. "
+            "They require Dexterity to equip and provide Evasion Rating as their defence. "
+            "Examples: Rawhide Boots, Jade Mask, Wyrmscale Gauntlets. "
+            "To find all dex_armour gloves: poe2-lookup gloves --type bases --tag dex_armour."
+        ),
+        "formula": "sub_type = 'Evasion'. Requires DEX. Defence: Evasion only.",
+        "see_also": ["Armour Base Tags", "Evasion", "Dexterity", "dex_int_armour", "str_dex_armour"],
+    },
+    {
+        "name": "str_int_armour",
+        "category": "base_type",
+        "summary": "Tag for Armour + Energy Shield bases (STR+INT requirement).",
+        "mechanics": (
+            "Bases tagged str_int_armour provide both Armour and Energy Shield. "
+            "They require both Strength and Intelligence. "
+            "Examples: Crusader Gauntlets, Chainmail, Sage's Robe. "
+            "Mods like LocalArmourAndEnergyShield (% increased Armour and ES) roll here. "
+            "To find all str_int_armour helmets: poe2-lookup helmet --type bases --tag str_int_armour."
+        ),
+        "formula": "sub_type = 'Armour/Energy Shield'. Requires STR+INT. Defence: Armour + ES.",
+        "see_also": ["Armour Base Tags", "Armour", "Energy Shield", "str_armour", "int_armour"],
+    },
+    {
+        "name": "dex_int_armour",
+        "category": "base_type",
+        "summary": "Tag for Evasion + Energy Shield bases (DEX+INT requirement).",
+        "mechanics": (
+            "Bases tagged dex_int_armour provide both Evasion and Energy Shield. "
+            "They require Dexterity and Intelligence. "
+            "Examples: Scholar Boots, Occultist's Vestment, Silken Hood. "
+            "To find all dex_int_armour boots: poe2-lookup boots --type bases --tag dex_int_armour."
+        ),
+        "formula": "sub_type = 'Evasion/Energy Shield'. Requires DEX+INT. Defence: Evasion + ES.",
+        "see_also": ["Armour Base Tags", "Evasion", "Energy Shield", "dex_armour", "int_armour"],
+    },
+    {
+        "name": "str_dex_armour",
+        "category": "base_type",
+        "summary": "Tag for Armour + Evasion bases (STR+DEX requirement).",
+        "mechanics": (
+            "Bases tagged str_dex_armour provide both Armour and Evasion. "
+            "They require Strength and Dexterity. "
+            "Examples: Zealot Gauntlets, Ringmail, Scale Vest. "
+            "To find all str_dex_armour gloves: poe2-lookup gloves --type bases --tag str_dex_armour."
+        ),
+        "formula": "sub_type = 'Armour/Evasion'. Requires STR+DEX. Defence: Armour + Evasion.",
+        "see_also": ["Armour Base Tags", "Armour", "Evasion", "str_armour", "dex_armour"],
+    },
+    {
+        "name": "str_dex_int_armour",
+        "category": "base_type",
+        "summary": "Tag for tri-defence bases (STR+DEX+INT requirement, all three defences).",
+        "mechanics": (
+            "Bases tagged str_dex_int_armour provide Armour, Evasion, AND Energy Shield. "
+            "They require all three attributes. "
+            "Examples: Vanguard Gloves, Glorious Plate, Royal Burgonet. "
+            "The mod Unfaltering (101-110% increased Armour, Evasion and Energy Shield) rolls on "
+            "str_dex_int_armour as the top tier. "
+            "To find all tri-defence body armours: poe2-lookup 'body armour' --type bases --tag str_dex_int_armour."
+        ),
+        "formula": "sub_type = 'Armour/Evasion/Energy Shield'. Requires STR+DEX+INT. Defence: all three.",
+        "see_also": ["Armour Base Tags", "Armour", "Evasion", "Energy Shield"],
+    },
+
     # ── Item Modification System ───────────────────────────────────────────────
 
     {
@@ -1610,6 +1745,6 @@ def get_concept(name: str) -> dict | None:
 ALL_CATEGORIES: list[str] = [
     "damage_type", "ailment", "attribute", "defence", "offence",
     "charge", "resource", "buff", "debuff", "mechanic", "keyword",
-    "keystone", "projectile", "ground", "item_mod", "passive_tree",
-    "exchange_item",
+    "keystone", "projectile", "ground", "base_type", "item_mod",
+    "passive_tree", "exchange_item",
 ]

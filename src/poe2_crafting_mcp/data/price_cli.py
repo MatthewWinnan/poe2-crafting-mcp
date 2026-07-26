@@ -974,7 +974,13 @@ def cmd_trade(args: argparse.Namespace) -> int:
     # ── Resolve tier → min value ──────────────────────────────────────────────
     min_val: float | None = args.min_val
     if args.tier is not None and min_val is None:
-        min_val = _lookup_tier_min(keyword, args.tier, slot_raw)
+        # Use the resolved stat's text for a more targeted game-DB lookup.
+        # e.g. "#% increased Energy Shield" is more specific than "energy shield".
+        import re as _re_tmp
+        stat_text_kw = _re_tmp.sub(r'[#%+()]+|\b\d+\b', ' ', chosen["stat_text"])
+        stat_text_kw = ' '.join(stat_text_kw.split())
+        lookup_kw = stat_text_kw or keyword
+        min_val = _lookup_tier_min(lookup_kw, args.tier, slot_raw)
         if min_val is not None:
             print(f"  {_DIM}T{args.tier} min value from game DB:{_RESET} {_CYAN}{min_val}{_RESET}\n")
         else:
@@ -1047,6 +1053,25 @@ def cmd_trade(args: argparse.Namespace) -> int:
     # Strip None values so build_api_filters skips them
     filter_kwargs = {k: v for k, v in filter_kwargs.items() if v is not None}
 
+    # affix_count_min/max are client-side filters — NOT passed through filter_kwargs
+    affix_count_min: int | None = getattr(args, "affix_count_min", None)
+    affix_count_max: int | None = getattr(args, "affix_count_max", None)
+
+    # ── Resolve --affix-filter keyword to stat_id ──────────────────────────────
+    affix_filter: str | None = None
+    affix_kw: str | None = getattr(args, "affix_filter", None)
+    if affix_kw:
+        af_matches = pdb.search_trade_stats(affix_kw, limit=3, prefer_local=prefer_local)
+        if not af_matches:
+            af_matches = pdb.search_trade_stats(affix_kw, limit=3)
+        if af_matches:
+            affix_filter = af_matches[0]["stat_id"]
+            print(f"  {_DIM}Affix filter:{_RESET} {af_matches[0]['stat_text']}")
+            print(f"  {_DIM}  ID:{_RESET} {_DIM}{affix_filter}{_RESET}\n")
+        else:
+            print(f"  {_YELLOW}Warning: --affix-filter '{affix_kw}' not found in stat cache. "
+                  f"Client-side filter skipped.{_RESET}\n")
+
     desc_parts = [f"rarity={rarity}", f"ilvl≥{ilvl_min}"]
     if category:
         desc_parts.append(f"category={category}")
@@ -1061,6 +1086,12 @@ def cmd_trade(args: argparse.Namespace) -> int:
     for fk in ("corrupted", "fractured_item", "indexed", "gem_level_min", "map_tier_min"):
         if fk in filter_kwargs:
             desc_parts.append(f"{fk}={filter_kwargs[fk]}")
+    if affix_count_min is not None:
+        desc_parts.append(f"affix_count≥{affix_count_min} [client]")
+    if affix_count_max is not None:
+        desc_parts.append(f"affix_count≤{affix_count_max} [client]")
+    if affix_filter:
+        desc_parts.append("affix-filter=client-side")
     print(f"  {_DIM}Searching: {', '.join(desc_parts)}…{_RESET}\n")
 
     try:
@@ -1071,6 +1102,9 @@ def cmd_trade(args: argparse.Namespace) -> int:
             stats_min_count=stats_min_count,
             stat_groups=stat_groups,
             sample=args.sample,
+            affix_filter=affix_filter,
+            affix_count_min=affix_count_min,
+            affix_count_max=affix_count_max,
             **filter_kwargs,
         )
     except TradeError as e:
@@ -1099,57 +1133,70 @@ def _lookup_tier_min(keyword: str, tier: int, slot: str = "") -> float | None:
     import re as _re
 
     try:
-        from poe2_crafting_mcp.data.database import PoBDatabase
+        from poe2_crafting_mcp.data.database import PoBDatabase, _filter_by_tag_weight
         db = PoBDatabase()
     except (FileNotFoundError, Exception):
         return None
 
+    slot_tags = _slot_to_pob_tags(slot) if slot else []
+
     try:
-        # FTS search item_mods for this keyword
-        safe_kw = keyword.replace('"', '""')
-        rows = db._conn.execute(
-            "SELECT m.group_name, m.stat_text, m.stat_min, m.stat_max,"
-            "       m.req_level, m.weight_keys"
-            " FROM item_mods m"
-            " JOIN item_mods_fts f ON m.rowid = f.rowid"
-            " WHERE f.stat_text MATCH ?"
-            "   AND m.stat_min IS NOT NULL"
-            "   AND m.category = 'Item'"
-            " ORDER BY m.req_level DESC, m.stat_min DESC",
-            (safe_kw,),
-        ).fetchall()
+        # Use the first slot tag as a pre-filter (expand_mod_tiers does exact filtering)
+        item_tag = slot_tags[0] if slot_tags else ""
+        seed_mods = db.search_mods(keyword=keyword, item_tag=item_tag,
+                                   category="Item", limit=50)
+        if not seed_mods and item_tag:
+            seed_mods = db.search_mods(keyword=keyword, category="Item", limit=50)
     except Exception:
         return None
 
-    if not rows:
+    if not seed_mods:
         return None
 
-    # If slot given, filter by weight_keys containing the slot tag
-    if slot:
-        slot_tag = _slot_to_pob_tag(slot)
-        if slot_tag:
-            filtered = [r for r in rows if slot_tag in (r["weight_keys"] or "")]
-            if filtered:
-                rows = filtered
+    # Expand to all tiers for matched groups, filtering by slot tag so only
+    # mods that actually roll on this slot type are kept (e.g. int_armour
+    # excludes Unfaltering which only rolls on body_armour/shield).
+    try:
+        expanded = db.expand_mod_tiers(seed_mods, category="Item",
+                                       item_tag=item_tag, max_groups=20)
+    except Exception:
+        expanded = seed_mods
 
-    # Deduplicate: find best-matching group by highest req_level (T1 = highest ilvl)
-    seen_group: dict[str, int] = {}
-    for r in rows:
-        gn = r["group_name"] or ""
+    if not expanded:
+        return None
+
+    # Normalise keyword for comparison (strip # % + and digits)
+    kw_clean = _re.sub(r'[#%+()]+|\b\d+\b', ' ', keyword).lower()
+    kw_clean = ' '.join(kw_clean.split())
+
+    # Group selection: prefer groups where stat_text ends with keyword
+    # (e.g. "% increased Energy Shield" ends-match beats "increased Energy Shield Recharge Rate")
+    seen_group: dict[str, tuple[bool, float, int]] = {}  # → (ends_match, max_stat_min, max_ilvl)
+    for m in expanded:
+        gn = m.get("group_name") or ""
+        st = _re.sub(r'[#%+()]+|\b\d+\b', ' ', (m.get("stat_text") or "")).lower()
+        st = ' '.join(st.split())
+        ends_match = st.endswith(kw_clean)
+        stat_min = m.get("stat_min") or 0.0
+        ilvl = m.get("req_level") or 0
         if gn not in seen_group:
-            seen_group[gn] = r["req_level"] or 0
+            seen_group[gn] = (ends_match, stat_min, ilvl)
+        else:
+            prev = seen_group[gn]
+            seen_group[gn] = (
+                prev[0] or ends_match,
+                max(prev[1], stat_min),
+                max(prev[2], ilvl),
+            )
 
     if not seen_group:
         return None
 
+    # Priority: (ends_match, highest T1 stat_min, highest ilvl)
     best_group = max(seen_group, key=lambda g: seen_group[g])
 
-    # Collect all tiers for this group, sorted by req_level DESC (T1 first)
-    tier_rows = sorted(
-        [r for r in rows if (r["group_name"] or "") == best_group],
-        key=lambda r: (r["req_level"] or 0, r["stat_min"] or 0),
-        reverse=True,
-    )
+    # Collect all tiers for this group (already sorted by req_level DESC from expand_mod_tiers)
+    tier_rows = [m for m in expanded if (m.get("group_name") or "") == best_group]
 
     idx = tier - 1
     if idx < 0 or idx >= len(tier_rows):
@@ -1159,23 +1206,46 @@ def _lookup_tier_min(keyword: str, tier: int, slot: str = "") -> float | None:
 
     # For 2-range mods "Adds X to (A-B) Damage", the trade site filters by the
     # max-damage value (A). Extract A from stat_text if present.
-    text = row["stat_text"] or ""
-    m = _re.search(r'\bto \((\d+)[-–]\d+\)', text)
-    if m:
-        return float(m.group(1))
+    text = row.get("stat_text") or ""
+    match = _re.search(r'\bto \((\d+)[-–]\d+\)', text)
+    if match:
+        return float(match.group(1))
 
-    return row["stat_min"]
+    return row.get("stat_min")
+
+
+def _slot_to_pob_tags(slot: str) -> list[str]:
+    """
+    Map a slot name to the set of PoB weight_keys tags that cover that slot.
+
+    Armour slots can have multiple sub-type tags (int_armour, str_armour, etc.)
+    because the same slot can hold different base types.
+    """
+    _armour_subtypes = [
+        "int_armour", "str_armour", "dex_armour",
+        "str_int_armour", "dex_int_armour", "str_dex_armour", "str_dex_int_armour",
+    ]
+    mapping: dict[str, list[str]] = {
+        "gloves":      _armour_subtypes,
+        "boots":       _armour_subtypes,
+        "helmet":      _armour_subtypes,
+        "helm":        _armour_subtypes,
+        "body armour": _armour_subtypes,
+        "chest":       _armour_subtypes,
+        "body":        _armour_subtypes,
+        "ring":        ["ring"],
+        "amulet":      ["amulet"],
+        "belt":        ["belt"],
+        "shield":      ["shield"] + _armour_subtypes,
+        "quiver":      ["quiver"],
+    }
+    return mapping.get(slot.lower(), [])
 
 
 def _slot_to_pob_tag(slot: str) -> str:
-    """Map a slot name to a PoB item tag used in weight_keys."""
-    mapping = {
-        "gloves": "gloves", "boots": "boots", "helmet": "helmet", "helm": "helmet",
-        "body armour": "body_armour", "chest": "body_armour", "body": "body_armour",
-        "ring": "ring", "amulet": "amulet", "belt": "belt",
-        "shield": "shield", "quiver": "quiver",
-    }
-    return mapping.get(slot.lower(), "")
+    """Legacy single-tag form — returns first tag (kept for other callers)."""
+    tags = _slot_to_pob_tags(slot)
+    return tags[0] if tags else ""
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -1331,6 +1401,14 @@ def main() -> None:
                          action="append", default=[],
                          help='Independent stat group as JSON: \'{"type":"and","filters":[{"id":"...","min":30}]}\'. '
                               'Repeatable. When used, overrides --stat-filter/--stats-type/--stats-min-count.')
+    p_trade.add_argument("--affix-filter", dest="affix_filter", default=None,
+                         help='Client-side filter: only show listings containing this affix keyword. '
+                              'Resolved to a stat_id and matched against mod hashes in fetched results. '
+                              'E.g. --affix-filter "energy shield local" to verify T1 flat ES is present.')
+    p_trade.add_argument("--affix-count-min", dest="affix_count_min", type=int, default=None,
+                         help="Minimum number of affixes on the item (trade API filter)")
+    p_trade.add_argument("--affix-count-max", dest="affix_count_max", type=int, default=None,
+                         help="Maximum number of affixes on the item (trade API filter)")
 
     # search
     p_search = sub.add_parser(

@@ -1123,6 +1123,10 @@ def search_trade_listings(
     price_max: float | None = None,
     price_currency: str | None = None,
     account: str | None = None,
+    # Client-side filters (not supported by trade2 API, applied post-fetch)
+    affix_filter: str | None = None,
+    affix_count_min: int | None = None,
+    affix_count_max: int | None = None,
 ) -> str:
     """
     Search the GGG trade site for items with a specific mod/stat.
@@ -1226,6 +1230,17 @@ def search_trade_listings(
         price_max:      Maximum price (in price_currency units).
         price_currency: Currency for price_max — "divine", "exalted", "chaos", etc.
         account:        Filter by seller account name.
+        affix_filter:     Client-side keyword filter. After fetching results, only keep
+                          listings where one of the explicit/fractured/crafted mods
+                          matches this stat keyword. Useful to verify a specific affix
+                          is truly present, e.g. affix_filter="energy shield local" to
+                          confirm flat local ES (not % ES) appears on each result.
+                          Resolved automatically to the best-matching trade stat_id.
+        affix_count_min:  Client-side filter: minimum number of explicit+fractured mods.
+        affix_count_max:  Client-side filter: maximum number of explicit+fractured mods.
+                          E.g. affix_count_max=1 finds magic items with only 1 affix
+                          (ideal crafting bases — one good mod, room for bench craft).
+                          NOTE: trade2 API doesn't support affix count filtering natively.
 
     Returns:
         JSON with:
@@ -1351,6 +1366,15 @@ def search_trade_listings(
         stat_groups = resolved_groups
         all_stat_filters = None  # stat_groups takes over
 
+    # ── Resolve affix_filter keyword → stat_id ────────────────────────────────
+    resolved_affix_filter: str | None = None
+    if affix_filter:
+        af_matches = pdb.search_trade_stats(affix_filter, limit=1, prefer_local=prefer_local)
+        if not af_matches:
+            af_matches = pdb.search_trade_stats(affix_filter, limit=1)
+        if af_matches:
+            resolved_affix_filter = af_matches[0]["stat_id"]
+
     # ── Search ────────────────────────────────────────────────────────────────
     try:
         result = TradeClient().estimate_trade_price(
@@ -1359,6 +1383,9 @@ def search_trade_listings(
             stats_type=stats_type,
             stats_min_count=stats_min_count,
             stat_groups=stat_groups,
+            affix_filter=resolved_affix_filter,
+            affix_count_min=affix_count_min,
+            affix_count_max=affix_count_max,
             category=category,
             rarity=rarity if rarity != "any" else None,
             ilvl_min=ilvl_min if ilvl_min else None,
