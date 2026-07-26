@@ -45,9 +45,9 @@ _CLASS_TO_CAT: dict[str, str] = {
 
 def _strip_wiki(text: str) -> str:
     """Strip MediaWiki markup from text."""
-    # [[Display|Link]] → Display
-    text = re.sub(r'\[\[([^\|\]]+)\|([^\]]+)\]\]', r'\1', text)
-    # [[Link]] → Link
+    # [[page_title|display_text]] → display_text  (MediaWiki piped link)
+    text = re.sub(r'\[\[([^\|\]]+)\|([^\]]+)\]\]', r'\2', text)
+    # [[page_title]] → page_title
     text = re.sub(r'\[\[([^\]]+)\]\]', r'\1', text)
     # <br> → newline
     text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
@@ -106,31 +106,54 @@ class Poe2WikiClient:
         return fields if fields else None
 
     def _to_item_desc(self, page_title: str, fields: dict) -> dict:
-        """Convert {{Item}} template fields to an item_descriptions row dict."""
+        """Convert {{Item}} template fields to an item_descriptions row dict.
+
+        Description mirrors in-game item text order:
+          <item description>
+          <augment slot effects>
+          Bonded:
+          <bonded modifier effects>
+
+        Crafting notes contain the usage instruction and stack/limit properties.
+        """
         name = fields.get('name') or page_title.replace('_', ' ')
         class_id = fields.get('class_id', '')
         category = _CLASS_TO_CAT.get(class_id, 'base')
 
-        # Description: item description + augment socket effects
+        # --- Description: matches in-game item text order ---
         desc_parts: list[str] = []
+
         raw_desc = _strip_wiki(fields.get('description', ''))
         if raw_desc:
             desc_parts.append(raw_desc)
+
         aug = _strip_wiki(fields.get('augment_stat_text', ''))
         if aug:
-            desc_parts.append('Socket effects:\n' + aug)
-        description = '\n'.join(desc_parts)
+            desc_parts.append(aug)
 
-        # Crafting notes: usage instruction + bonded modifier text
-        help_text = _strip_wiki(fields.get('help_text', ''))
         bonded = _strip_wiki(fields.get('augment_stat_text_bonded', ''))
         if bonded:
-            crafting_notes = (help_text + '\nBonded modifiers:\n' + bonded
-                              if help_text else bonded)
-        else:
-            crafting_notes = help_text
+            desc_parts.append('Bonded:\n' + bonded)
 
-        # Drop notes
+        description = '\n'.join(desc_parts)
+
+        # --- Crafting notes: usage + item properties ---
+        crafting_parts: list[str] = []
+
+        stack = fields.get('stack_size', '')
+        limit = fields.get('augment_limit', '')
+        if stack:
+            crafting_parts.append(f"Stack Size: {stack}")
+        if limit:
+            crafting_parts.append(f"Limited to: {limit}")
+
+        help_text = _strip_wiki(fields.get('help_text', ''))
+        if help_text:
+            crafting_parts.append(help_text)
+
+        crafting_notes = '\n'.join(crafting_parts)
+
+        # --- Drop notes ---
         drop_parts: list[str] = []
         dl = fields.get('drop_level', '')
         dl_max = fields.get('drop_level_maximum', '')
