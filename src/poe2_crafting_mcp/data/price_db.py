@@ -786,6 +786,33 @@ class PriceDatabase:
             d["see_also"] = []
         return d
 
+    def get_item_desc_or_fetch(self, name: str, wiki_client=None) -> dict | None:
+        """Return cached item description, or fetch from wiki on cache miss.
+
+        Args:
+            name:        Item name to look up.
+            wiki_client: Optional Poe2WikiClient. When provided, a cache miss
+                         triggers a live wiki fetch which is then cached.
+        """
+        result = self.get_item_desc(name)
+        if result is not None:
+            return result
+        if wiki_client is None:
+            return None
+        item = wiki_client.fetch_item(name)
+        if item:
+            self.upsert_item_desc(**item)
+            # Rebuild FTS so the new entry is searchable
+            try:
+                self._conn.execute(
+                    "INSERT INTO item_descriptions_fts(item_descriptions_fts) VALUES('rebuild')"
+                )
+                self._conn.commit()
+            except Exception:
+                pass
+            return self.get_item_desc(name)
+        return None
+
     def delete_item_desc(self, name: str) -> bool:
         """Delete an item description by exact name. Returns True if deleted."""
         cur = self._conn.execute(

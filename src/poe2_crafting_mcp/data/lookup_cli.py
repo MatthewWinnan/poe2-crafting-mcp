@@ -456,11 +456,20 @@ def _cmd_item_desc_list(argv: list[str]) -> int:
 def _cmd_item_desc_get(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="poe2-lookup item-desc-get")
     p.add_argument("name", nargs="+")
+    p.add_argument("--no-fetch", action="store_true",
+                   help="skip wiki fetch on cache miss")
     args = p.parse_args(argv)
     name = " ".join(args.name)
-    d = _get_pdb().get_item_desc(name)
+    pdb = _get_pdb()
+    if args.no_fetch:
+        d = pdb.get_item_desc(name)
+    else:
+        from poe2_crafting_mcp.data.wiki_client import Poe2WikiClient
+        wiki = Poe2WikiClient()
+        d = pdb.get_item_desc_or_fetch(name, wiki_client=wiki)
     if not d:
-        print(f"{_RED}No description for '{name}'.{_RESET}", file=sys.stderr)
+        print(f"{_RED}No description for '{name}' (not in cache or wiki).{_RESET}",
+              file=sys.stderr)
         return 1
     print(_h(d["name"]))
     print(f"  {_BOLD}Category:{_RESET} {d['category']}")
@@ -527,11 +536,62 @@ def _cmd_item_desc_delete(argv: list[str]) -> int:
 
 
 def _cmd_item_desc_refresh(argv: list[str]) -> int:
+    """Re-seed mechanic concept entries from the built-in definitions."""
     from poe2_crafting_mcp.data.item_descriptions import ITEM_DESCRIPTIONS
     pdb = _get_pdb()
     n = pdb.upsert_item_descs_bulk(ITEM_DESCRIPTIONS)
     ds = pdb.item_desc_status()
-    print(f"{_GREEN}✓ Seeded {n} item descriptions from built-in definitions.{_RESET}")
+    print(f"{_GREEN}✓ Seeded {n} mechanic-concept entries from built-in definitions.{_RESET}")
+    print(f"  {_BOLD}Total in DB:{_RESET} {ds.get('total', 0)}")
+    print(f"  {_DIM}Run 'poe2-lookup item-desc-seed' to bulk-seed from poe2wiki.net{_RESET}")
+    return 0
+
+
+def _cmd_item_desc_seed(argv: list[str]) -> int:
+    """Bulk-seed item descriptions from poe2wiki.net for all known bases + currencies."""
+    p = argparse.ArgumentParser(prog="poe2-lookup item-desc-seed",
+                                description=(
+                                    "Fetch item descriptions from poe2wiki.net for all "
+                                    "currencies and bases in the PoB DB. Results are cached "
+                                    "in the item_descriptions table. Requires internet."
+                                ))
+    p.add_argument("--dry-run", action="store_true",
+                   help="show counts without writing to DB")
+    args = p.parse_args(argv)
+
+    from poe2_crafting_mcp.data.wiki_client import Poe2WikiClient
+    from poe2_crafting_mcp.data.database import PoBDatabase
+
+    pdb = _get_pdb()
+    db = PoBDatabase()
+    wiki = Poe2WikiClient()
+
+    # Re-seed mechanic concept entries from built-ins first
+    from poe2_crafting_mcp.data.item_descriptions import ITEM_DESCRIPTIONS
+    n_concepts = pdb.upsert_item_descs_bulk(ITEM_DESCRIPTIONS)
+    print(f"  {n_concepts} mechanic concept entries seeded from built-ins.")
+
+    print("Collecting item names from PoB DB…")
+    currency_rows = db.search_currencies(limit=5000)
+    base_rows = db.search_bases(limit=5000)
+    names: list[str] = []
+    seen: set[str] = set()
+    for r in list(currency_rows) + list(base_rows):
+        n = r['name']
+        if n not in seen:
+            seen.add(n)
+            names.append(n)
+    print(f"  {len(names)} unique names ({len(currency_rows)} currencies, {len(base_rows)} bases)")
+
+    if args.dry_run:
+        print(f"{_YELLOW}Dry run — no DB writes.{_RESET}")
+        return 0
+
+    print(f"Fetching from poe2wiki.net in batches of 50…")
+    fetched, skipped = wiki.seed_from_db(pdb, db)
+    ds = pdb.item_desc_status()
+    print(f"\n{_GREEN}✓ Seeded {fetched} items from poe2wiki.net "
+          f"({skipped} not found on wiki).{_RESET}")
     print(f"  {_BOLD}Total in DB:{_RESET} {ds.get('total', 0)}")
     return 0
 
@@ -543,6 +603,7 @@ _ITEM_DESC_CMDS = {
     "item-desc-add":     _cmd_item_desc_add,
     "item-desc-delete":  _cmd_item_desc_delete,
     "item-desc-refresh": _cmd_item_desc_refresh,
+    "item-desc-seed":    _cmd_item_desc_seed,
 }
 
 
@@ -677,6 +738,24 @@ def main() -> None:
         if results:
             found_any = True
             pdb = _get_pdb()
+            # Bulk-fetch missing descriptions from wiki (only uncached names)
+            uncached = [b["name"] for b in results
+                        if pdb.get_item_desc(b["name"]) is None]
+            if uncached:
+                try:
+                    from poe2_crafting_mcp.data.wiki_client import Poe2WikiClient
+                    wiki = Poe2WikiClient()
+                    fetched = wiki.fetch_items(uncached)
+                    for item in fetched:
+                        pdb.upsert_item_desc(**item)
+                    if fetched:
+                        pdb._conn.execute(
+                            "INSERT INTO item_descriptions_fts(item_descriptions_fts)"
+                            " VALUES('rebuild')"
+                        )
+                        pdb._conn.commit()
+                except Exception:
+                    pass  # wiki unavailable — continue without descriptions
             print(_h("Item Bases"))
             for b in results:
                 desc = pdb.get_item_desc(b["name"])
@@ -780,6 +859,21 @@ def main() -> None:
             for d in results:
                 _fmt_item_desc(d)
                 print()
+
+    if not found_any:
+        # Last resort: try fetching directly from poe2wiki.net
+        try:
+            from poe2_crafting_mcp.data.wiki_client import Poe2WikiClient
+            pdb = _get_pdb()
+            wiki = Poe2WikiClient()
+            item = pdb.get_item_desc_or_fetch(query, wiki_client=wiki)
+            if item:
+                found_any = True
+                print(_h("Item Descriptions (from poe2wiki.net)"))
+                _fmt_item_desc(item)
+                print()
+        except Exception:
+            pass
 
     if not found_any:
         print(f"No results found for '{query}'.")

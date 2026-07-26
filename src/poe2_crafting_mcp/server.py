@@ -771,9 +771,10 @@ def get_item_description(name: str) -> str:
         source, updated_at. Returns {"error": "..."} if not found.
     """
     pdb = _get_price_db()
-    result = pdb.get_item_desc(name)
+    from poe2_crafting_mcp.data.wiki_client import Poe2WikiClient
+    result = pdb.get_item_desc_or_fetch(name, wiki_client=Poe2WikiClient())
     if not result:
-        return _to_json({"error": f"No description for '{name}'"})
+        return _to_json({"error": f"No description for '{name}' (not in cache or wiki)"})
     return _to_json(result)
 
 
@@ -827,10 +828,12 @@ def update_item_description(
 @mcp.tool()
 def refresh_item_descriptions() -> str:
     """
-    Re-seed the item_descriptions table from the built-in item_descriptions.py.
+    Re-seed mechanic concept entries (Jewellery, Focus, Idol, Rune, etc.)
+    from the built-in item_descriptions.py.
 
-    Use after a software update that adds new items, or to reset manual edits
-    to built-in entries (upsert semantics — custom manual entries are preserved).
+    Individual item descriptions (currencies, bases) are sourced from poe2wiki.net
+    and cached automatically on first access. To bulk-seed those, run:
+        poe2-lookup item-desc-seed   (requires internet, ~1–2 min)
 
     Returns:
         JSON with {seeded, total, status}.
