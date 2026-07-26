@@ -176,6 +176,60 @@ def get_notables() -> str:
 
 
 @mcp.tool()
+def get_tree_jewels() -> str:
+    """
+    Get all jewels socketed in passive tree nodes.
+
+    Returns each jewel with its passive tree node context so the agent knows
+    WHERE in the tree the jewel sits (node name, ID, and approximate position).
+
+    Returns:
+        JSON list of:
+        - node_id:    Passive tree node ID (use with set_tree_jewel/remove_tree_jewel)
+        - node_name:  Display name of the jewel socket node on the tree
+        - node_x/y:   Approximate position on the passive tree canvas
+        - name:       Item name (unique name, or magic prefix/suffix combined)
+        - base_type:  Base jewel type (e.g. "Viridian Jewel", "Cobalt Jewel")
+        - corrupted:  Whether the jewel is corrupted
+        - explicit_mods: List of mod strings on the jewel
+    """
+    return _to_json([vars(j) for j in _get_engine().get_tree_jewels()])
+
+
+@mcp.tool()
+def set_tree_jewel(node_id: int, item_text: str) -> str:
+    """
+    Socket a jewel into a passive tree node and return the stat delta.
+
+    Use get_tree_jewels() to see current jewels and their node IDs.
+    Use search_trade_listings(slot="jewel") to find jewels to test.
+
+    Args:
+        node_id:   Passive tree node ID to socket into.
+                   Get valid IDs from get_tree_jewels() results.
+        item_text: Jewel in PoB clipboard format, or item_text from a trade listing.
+
+    Returns:
+        JSON BuildStats (same shape as get_stats()) after the jewel is socketed.
+    """
+    return _to_json(vars(_get_engine().set_tree_jewel(node_id, item_text)))
+
+
+@mcp.tool()
+def remove_tree_jewel(node_id: int) -> str:
+    """
+    Remove the jewel from a passive tree node and return the stat delta.
+
+    Args:
+        node_id: Passive tree node ID to unsocket. Get from get_tree_jewels().
+
+    Returns:
+        JSON BuildStats after the jewel is removed.
+    """
+    return _to_json(vars(_get_engine().remove_tree_jewel(node_id)))
+
+
+@mcp.tool()
 def get_output() -> str:
     """
     Get the full raw PoB calculation output as a flat JSON object.
@@ -436,10 +490,19 @@ def search_mods(keyword: str = "", item_tag: str = "",
 
     Returns:
         JSON array of mods with id, category, mod_type, affix, stat_text,
-        stat_min, stat_max, req_level, group_name, mod_tags, weight_keys.
+        stat_min, stat_max, req_level, group_name, mod_tags, weight_keys,
+        and tier (1=best within group, use with search_trade_listings tier= param).
     """
-    return _to_json(_get_db().search_mods(keyword, item_tag, category, mod_type,
-                                          min_level, max_level, limit))
+    mods = _get_db().search_mods(keyword, item_tag, category, mod_type,
+                                 min_level, max_level, limit)
+    # Add tier numbers: position within each group_name (1=T1=best)
+    group_count: dict[str, int] = {}
+    result = []
+    for m in mods:
+        gn = m.get("group_name") or ""
+        group_count[gn] = group_count.get(gn, 0) + 1
+        result.append({**m, "tier": group_count[gn]})
+    return _to_json(result)
 
 
 @mcp.tool()
@@ -945,6 +1008,76 @@ def refresh_trade_stats() -> str:
 
 
 @mcp.tool()
+def search_trade_stats(
+    keyword: str,
+    stat_type: str = "",
+    slot: str = "",
+    limit: int = 10,
+) -> str:
+    """
+    Look up trade stat IDs by keyword from the local cache.
+
+    Use this to find the exact stat ID(s) needed for extra_stats or stat_groups
+    in search_trade_listings(). No HTTP call — reads from the local cache only.
+
+    Prerequisite: call refresh_trade_stats() at least once.
+
+    Args:
+        keyword:   Keyword to search — "maximum life", "lightning damage", etc.
+        stat_type: Filter by stat type — "explicit", "implicit", "pseudo",
+                   "fractured", "enchant", "desecrated", etc. Empty = all types.
+        slot:      Item slot hint — used to prefer (Local) variants for armour/weapons.
+                   E.g. "gloves" prefers "# to maximum Energy Shield (Local)" over global.
+        limit:     Max results (default 10).
+
+    Returns:
+        JSON list of [{stat_id, stat_text, stat_type}] sorted by relevance.
+
+    Example workflow:
+        search_trade_stats("maximum life")
+        → [{"stat_id": "explicit.stat_3299347043", "stat_text": "+# to maximum Life", ...}]
+
+        search_trade_stats("energy shield", slot="gloves")
+        → [{"stat_id": "explicit.stat_4052037485", "stat_text": "# to maximum Energy Shield (Local)", ...}]
+
+        Then use the stat_id in search_trade_listings():
+        search_trade_listings(
+            stat_name="energy shield", slot="gloves", tier=1,
+            extra_stats=[{"id": "explicit.stat_3299347043", "min": 80}]
+        )
+    """
+    pdb = _get_price_db()
+    if pdb.trade_stats_count() == 0:
+        return _to_json({
+            "error": "Trade stat cache is empty. Call refresh_trade_stats() first.",
+            "results": [],
+        })
+
+    _armour_weapon_slots = {
+        "gloves", "boots", "helmet", "helm", "body armour", "body", "chest",
+        "shield", "focus", "buckler", "sword", "axe", "mace", "flail",
+        "bow", "staff", "crossbow", "wand", "sceptre", "dagger", "claw",
+        "spear", "quarterstaff", "warstaff", "talisman",
+    }
+    prefer_local = slot.lower() in _armour_weapon_slots
+
+    matches = pdb.search_trade_stats(
+        keyword, stat_type=stat_type or None, limit=limit, prefer_local=prefer_local
+    )
+    if not matches and stat_type:
+        matches = pdb.search_trade_stats(keyword, limit=limit, prefer_local=prefer_local)
+
+    return _to_json({
+        "results": [
+            {"stat_id": m["stat_id"], "stat_text": m["stat_text"], "stat_type": m.get("stat_type", "")}
+            for m in matches
+        ],
+        "total": len(matches),
+        "hint": "Use stat_id in extra_stats=[{\"id\": \"...\", \"min\": N}] or stat_groups.",
+    })
+
+
+@mcp.tool()
 def search_trade_listings(
     stat_name: str,
     slot: str = "",
@@ -953,17 +1086,53 @@ def search_trade_listings(
     max_value: float | None = None,
     tier: int | None = None,
     ilvl_min: int = 80,
+    ilvl_max: int | None = None,
     stat_type: str = "explicit",
     league: str = "",
+    # Multi-stat parameters
+    extra_stats: list[dict] | None = None,
+    stats_type: str = "and",
+    stats_min_count: int | None = None,
+    stat_groups: list[dict] | None = None,
+    # Item property filters
+    corrupted: bool | None = None,
+    fractured_item: bool | None = None,
+    identified: bool | None = None,
+    mirrored: bool | None = None,
+    quality_min: int | None = None,
+    quality_max: int | None = None,
+    rune_sockets_min: int | None = None,
+    # Equipment stat filters
+    ar_min: int | None = None,
+    ev_min: int | None = None,
+    es_min: int | None = None,
+    dps_min: float | None = None,
+    pdps_min: float | None = None,
+    edps_min: float | None = None,
+    aps_min: float | None = None,
+    # Gem filters
+    gem_level_min: int | None = None,
+    gem_level_max: int | None = None,
+    # Map filters
+    map_tier_min: int | None = None,
+    map_tier_max: int | None = None,
+    map_iir_min: int | None = None,
+    map_packsize_min: int | None = None,
+    # Trade filters
+    indexed: str | None = None,
+    price_max: float | None = None,
+    price_currency: str | None = None,
+    account: str | None = None,
 ) -> str:
     """
     Search the GGG trade site for items with a specific mod/stat.
 
-    This is the primary tool for finding items to buy based on desired stats.
-    Example use cases:
+    Primary tool for finding items to buy based on desired stats.
+    Examples:
     - "Find the cheapest magic gloves with T1 energy shield"
     - "Find rare rings with at least 80 max life"
-    - "Find magic boots with movement speed T1"
+    - "Find fractured boots with T1 movement speed (crafting base)"
+    - "Find uncorrupted magic helmets with T1 ES, listed in the last day"
 
     Prerequisite: call refresh_trade_stats() at least once per session if
     the cache is empty (check via get_data_status()).
@@ -978,38 +1147,99 @@ def search_trade_listings(
                tier=1                      # auto-looks up T1 min from game DB
            )
 
+    Multi-stat example (all stats in one query):
+        search_trade_listings(
+            stat_name="energy shield", slot="gloves", tier=1,
+            extra_stats=[{"id": "explicit.stat_XXXX", "min": 30}],
+            stats_type="and"
+        )
+
+    Stat groups example (N of M matching):
+        search_trade_listings(
+            stat_name="",  # ignored when stat_groups provided
+            stat_groups=[
+                {"type": "count", "min_count": 2, "filters": [
+                    {"id": "explicit.stat_A", "min": 30},
+                    {"id": "explicit.stat_B", "min": 20},
+                    {"id": "explicit.stat_C", "min": 15},
+                ]},
+            ]
+        )
+
     Args:
-        stat_name:  Stat to search for — e.g. "energy shield", "maximum life",
-                    "cold resistance", "movement speed", "attack speed".
-                    Matched against the trade stat ID cache via FTS.
-        slot:       Item slot to restrict to — e.g. "gloves", "boots", "helmet",
-                    "ring", "amulet", "belt", "body armour", "shield".
-                    Leave blank to search all item types.
-        rarity:     "magic" (default) | "rare" | "normal" | "any".
-                    Magic bases with one strong mod are prime crafting candidates.
-        min_value:  Minimum stat value (e.g. 50 for 50+ energy shield).
-                    If both min_value and tier are given, min_value takes precedence.
-        max_value:  Maximum stat value (optional upper bound).
-        tier:       Mod tier number — 1 = best. Auto-looks up the tier's minimum
-                    value from the game DB (item_mods table). If the DB lookup
-                    fails, the search runs without a value floor.
-        ilvl_min:   Minimum item level (default 80).
-        stat_type:  "explicit" (default) | "implicit" | "pseudo".
-        league:     League name. Defaults to the active league.
+        stat_name:      Stat keyword — "energy shield", "maximum life", "cold resistance", etc.
+                        Matched against the trade stat ID cache. Can be empty if stat_groups used.
+        slot:           Item slot — "gloves", "boots", "helmet", "ring", "amulet", "belt",
+                        "body armour", "shield", "focus", "buckler", "spear", "staff",
+                        "bow", "crossbow", "wand", "sceptre", "gem", "jewel", "waystone",
+                        "tablet", "flask", "charm", etc. See SLOT_TO_CATEGORY for full list.
+        rarity:         "magic" | "rare" | "normal" | "nonunique" | "any" (default: "magic").
+        min_value:      Minimum stat value. Takes precedence over `tier`.
+        max_value:      Maximum stat value.
+        tier:           Mod tier (1=best). Auto-looks up minimum value from game DB.
+        ilvl_min:       Minimum item level (default 80).
+        ilvl_max:       Maximum item level (optional).
+        stat_type:      "explicit" (default) | "implicit" | "fractured" | "pseudo" | "desecrated".
+        league:         League name (defaults to active league).
+
+        Multi-stat parameters:
+        extra_stats:    Additional stat filters [{id, min?, max?}] merged into the primary group.
+                        Use when searching for items with multiple mods simultaneously.
+        stats_type:     Type of stat matching — "and" (all match), "if" (match if present),
+                        "count" (N of M), "not" (must not have), "weight" (weighted sum).
+                        Default: "and".
+        stats_min_count: For stats_type="count", the minimum number of stats that must match.
+        stat_groups:    List of independent stat group dicts, each with:
+                          - filters: [{id, min?, max?}] — stats to match
+                          - type: "and"|"if"|"count"|"not"|"weight" (default "and")
+                          - min_count: int — for type="count"
+                        When provided, overrides stat_name/extra_stats/stats_type/stats_min_count.
+
+        Item property filters (None = any):
+        corrupted:      True = corrupted only, False = non-corrupted, None = any.
+        fractured_item: True = has a fractured mod. Key for crafting base searches.
+        identified:     True/False filter.
+        mirrored:       True = mirrored copies.
+        quality_min/max: Quality % bounds.
+        rune_sockets_min: Minimum number of rune sockets.
+
+        Equipment stat filters (direct item stats, not mod-based):
+        ar_min:         Minimum total armour on the item.
+        ev_min:         Minimum total evasion.
+        es_min:         Minimum total energy shield.
+        dps_min:        Minimum combined DPS (physical + elemental).
+        pdps_min:       Minimum physical DPS.
+        edps_min:       Minimum elemental DPS.
+        aps_min:        Minimum attacks per second.
+
+        Gem filters:
+        gem_level_min/max: Gem level bounds.
+
+        Map filters:
+        map_tier_min/max:     Waystone tier bounds.
+        map_iir_min:          Minimum item quantity %.
+        map_packsize_min:     Minimum pack size %.
+
+        Trade filters:
+        indexed:        Listing freshness — "1hour", "3hours", "12hours", "1day",
+                        "3days", "1week", "2weeks", "1month". Restricts to recent listings.
+        price_max:      Maximum price (in price_currency units).
+        price_currency: Currency for price_max — "divine", "exalted", "chaos", etc.
+        account:        Filter by seller account name.
 
     Returns:
         JSON with:
         - found: bool
-        - total_listings: int (how many exist on trade)
-        - min_price: {amount, currency}
-        - median_price: {amount, currency}
+        - total_listings: int
+        - min_price / median_price: {amount, currency}
         - trade_url: direct link to open in browser
         - listings: [{name, base_type, rarity, ilvl, price_amount, price_currency, account}]
-        - matched_stat: {stat_id, stat_text} — the stat we searched for
-        - tier_min_used: float | null — the min value used (from tier lookup or min_value)
+        - matched_stat: {stat_id, stat_text}
+        - tier_min_used: float | null
+        - other_stat_matches: [{stat_id, stat_text}] (up to 2 alternatives)
     """
     from poe2_crafting_mcp.data.trade_client import TradeClient, TradeError, SLOT_TO_CATEGORY
-    from poe2_crafting_mcp.data.price_cli import _lookup_tier_min, _slot_to_pob_tag
+    from poe2_crafting_mcp.data.price_cli import _lookup_tier_min
 
     pdb = _get_price_db()
 
@@ -1023,25 +1253,17 @@ def search_trade_listings(
             "error": "Trade stat cache is empty. Call refresh_trade_stats() first.",
         })
 
-    # ── Resolve stat ID ───────────────────────────────────────────────────────
-    # Armour/weapon slots use local mods — prefer (Local) stat variants
-    _armour_slots = {"gloves", "boots", "helmet", "helm", "body armour", "body", "chest",
-                     "shield", "focus", "buckler", "weapon", "sword", "axe", "mace",
-                     "bow", "staff", "crossbow", "wand", "sceptre", "dagger", "claw", "spear"}
-    prefer_local = slot_lower in _armour_slots
-    matches = pdb.search_trade_stats(stat_name, stat_type=stat_type, limit=5, prefer_local=prefer_local)
-    if not matches:
-        matches = pdb.search_trade_stats(stat_name, limit=5, prefer_local=prefer_local)
-    if not matches:
-        return _to_json({
-            "error": f"No stat IDs found for '{stat_name}'.",
-            "hint": "Try a different keyword, or call refresh_trade_stats() to refresh the cache.",
-        })
-    chosen = matches[0]
+    slot_lower = slot.lower()
+    _armour_weapon_slots = {
+        "gloves", "boots", "helmet", "helm", "body armour", "body", "chest",
+        "shield", "focus", "buckler", "sword", "axe", "mace", "flail",
+        "bow", "staff", "crossbow", "wand", "sceptre", "dagger", "claw",
+        "spear", "quarterstaff", "warstaff", "talisman",
+    }
+    prefer_local = slot_lower in _armour_weapon_slots
 
     # ── Resolve slot → category ───────────────────────────────────────────────
     category: str | None = None
-    slot_lower = slot.lower()
     if slot_lower:
         category = SLOT_TO_CATEGORY.get(slot_lower)
         if not category:
@@ -1050,37 +1272,293 @@ def search_trade_listings(
                     category = v
                     break
 
-    # ── Resolve tier → min value ──────────────────────────────────────────────
-    tier_min_used: float | None = min_value
-    if tier is not None and min_value is None:
-        tier_min_used = _lookup_tier_min(stat_name, tier, slot_lower)
+    def _resolve_stat_spec(spec: dict) -> dict | None:
+        """Resolve a stat spec that may use 'keyword' instead of 'id'."""
+        if "id" in spec:
+            return spec
+        kw = spec.get("keyword", "")
+        if not kw:
+            return None
+        kw_matches = pdb.search_trade_stats(kw, limit=1, prefer_local=prefer_local)
+        if not kw_matches:
+            return None
+        resolved = {"id": kw_matches[0]["stat_id"]}
+        if "min" in spec:
+            resolved["min"] = spec["min"]
+        if "max" in spec:
+            resolved["max"] = spec["max"]
+        return resolved
 
-    # ── Build stat filter ─────────────────────────────────────────────────────
-    stat_filter: dict = {"id": chosen["stat_id"]}
-    if tier_min_used is not None:
-        stat_filter["min"] = tier_min_used
-    if max_value is not None:
-        stat_filter["max"] = max_value
+    # ── When stat_groups provided, skip stat_name resolution ──────────────────
+    chosen = None
+    matches: list[dict] = []
+    tier_min_used: float | None = min_value
+    primary_stat_filter: list[dict] = []
+
+    if not stat_groups:
+        # ── Resolve stat ID ───────────────────────────────────────────────────
+        if stat_name:
+            matches = pdb.search_trade_stats(stat_name, stat_type=stat_type, limit=5, prefer_local=prefer_local)
+            if not matches:
+                matches = pdb.search_trade_stats(stat_name, limit=5, prefer_local=prefer_local)
+            if not matches:
+                return _to_json({
+                    "error": f"No stat IDs found for '{stat_name}'.",
+                    "hint": "Try a different keyword, or call refresh_trade_stats() to refresh the cache.",
+                })
+            chosen = matches[0]
+
+        # ── Resolve tier → min value ──────────────────────────────────────────
+        if tier is not None and min_value is None and stat_name:
+            tier_min_used = _lookup_tier_min(stat_name, tier, slot_lower)
+
+        # ── Build primary stat filter ─────────────────────────────────────────
+        if chosen:
+            sf: dict = {"id": chosen["stat_id"]}
+            if tier_min_used is not None:
+                sf["min"] = tier_min_used
+            if max_value is not None:
+                sf["max"] = max_value
+            primary_stat_filter = [sf]
+
+        # ── Resolve + merge extra_stats ───────────────────────────────────────
+        resolved_extras: list[dict] = []
+        for spec in (extra_stats or []):
+            r = _resolve_stat_spec(spec)
+            if r:
+                resolved_extras.append(r)
+            else:
+                return _to_json({
+                    "error": f"Could not resolve extra stat spec: {spec}",
+                    "hint": "Provide 'id' (raw stat ID) or 'keyword' (auto-resolved via cache).",
+                })
+        all_stat_filters = primary_stat_filter + resolved_extras
+    else:
+        # ── Resolve keyword-form filters inside each stat group ───────────────
+        resolved_groups: list[dict] = []
+        for group in stat_groups:
+            resolved_filters: list[dict] = []
+            for spec in group.get("filters", []):
+                r = _resolve_stat_spec(spec)
+                if r:
+                    resolved_filters.append(r)
+                else:
+                    return _to_json({
+                        "error": f"Could not resolve stat group filter: {spec}",
+                        "hint": "Provide 'id' or 'keyword' in each filter.",
+                    })
+            resolved_groups.append({**group, "filters": resolved_filters})
+        stat_groups = resolved_groups
+        all_stat_filters = None  # stat_groups takes over
 
     # ── Search ────────────────────────────────────────────────────────────────
     try:
         result = TradeClient().estimate_trade_price(
             league,
-            stat_filters=[stat_filter],
+            stat_filters=all_stat_filters,
+            stats_type=stats_type,
+            stats_min_count=stats_min_count,
+            stat_groups=stat_groups,
             category=category,
-            rarity=rarity,
-            ilvl_min=ilvl_min,
+            rarity=rarity if rarity != "any" else None,
+            ilvl_min=ilvl_min if ilvl_min else None,
+            ilvl_max=ilvl_max,
+            quality_min=quality_min,
+            quality_max=quality_max,
+            ar_min=ar_min,
+            ev_min=ev_min,
+            es_min=es_min,
+            dps_min=dps_min,
+            pdps_min=pdps_min,
+            edps_min=edps_min,
+            aps_min=aps_min,
+            rune_sockets_min=rune_sockets_min,
+            corrupted=corrupted,
+            fractured_item=fractured_item,
+            identified=identified,
+            mirrored=mirrored,
+            gem_level_min=gem_level_min,
+            gem_level_max=gem_level_max,
+            map_tier_min=map_tier_min,
+            map_tier_max=map_tier_max,
+            map_iir_min=map_iir_min,
+            map_packsize_min=map_packsize_min,
+            indexed=indexed,
+            price_max=price_max,
+            price_currency=price_currency,
+            account=account,
         )
     except TradeError as e:
         return _to_json({"error": str(e)})
 
-    result["matched_stat"] = {"stat_id": chosen["stat_id"], "stat_text": chosen["stat_text"]}
+    if chosen:
+        result["matched_stat"] = {"stat_id": chosen["stat_id"], "stat_text": chosen["stat_text"]}
+        result["other_stat_matches"] = [
+            {"stat_id": m["stat_id"], "stat_text": m["stat_text"]}
+            for m in matches[1:3]
+        ]
     result["tier_min_used"] = tier_min_used
-    result["other_stat_matches"] = [
-        {"stat_id": m["stat_id"], "stat_text": m["stat_text"]}
-        for m in matches[1:3]
-    ]
+
+    # Include the PoB slot name so the agent can call simulate_trade_item directly
+    from poe2_crafting_mcp.data.trade_client import CATEGORY_TO_POB_SLOT
+    pob_slot = CATEGORY_TO_POB_SLOT.get(category or "")
+    if pob_slot:
+        result["pob_slot"] = pob_slot
+
     return _to_json(result)
+
+
+@mcp.tool()
+def simulate_trade_item(
+    item_text: str,
+    slot: str,
+    price_amount: float | None = None,
+    price_currency: str = "divine",
+) -> str:
+    """
+    Equip a trade listing item into the loaded build, measure its impact, then unequip.
+
+    This is the core tool for evaluating whether a specific item is worth buying.
+    Feed it the item_text from a search_trade_listings() result and it will:
+      1. Equip the item into the given slot
+      2. Measure DPS and defence changes
+      3. Unequip (restore previous item)
+      4. Return the delta + value rating (dps gain per chaos)
+
+    Typical workflow:
+        results = search_trade_listings("energy shield", slot="gloves", tier=1)
+        for listing in results["listings"][:5]:
+            sim = simulate_trade_item(
+                item_text=listing["item_text"],
+                slot=results["pob_slot"],          # "Gloves"
+                price_amount=listing["price_amount"],
+                price_currency=listing["price_currency"],
+            )
+            # sim["dps_delta_pct"] tells you how much DPS this item adds
+            # sim["dps_gain_per_chaos"] ranks items by value
+
+    Args:
+        item_text:       Item text from listing["item_text"] in search_trade_listings results.
+                         Also accepts manual PoB clipboard text (Ctrl+C from in-game).
+        slot:            PoB slot name — "Gloves", "Boots", "Helmet", "Body Armour",
+                         "Weapon 1", "Weapon 2", "Amulet", "Ring 1", "Ring 2", "Belt".
+                         Use results["pob_slot"] from search_trade_listings directly.
+        price_amount:    Item price for value calculations (optional).
+        price_currency:  Currency of the price — "divine", "exalted", "chaos", etc.
+
+    Returns:
+        JSON with:
+        - slot: str
+        - item_summary: {name, base_type, ilvl, mods preview}
+        - dps_before / dps_after: float
+        - dps_delta: float
+        - dps_delta_pct: float
+        - es_before / es_after / es_delta: float
+        - life_before / life_after / life_delta: float
+        - evasion_before / evasion_after: float
+        - armour_before / armour_after: float
+        - price: {amount, currency, chaos_value} (if price provided)
+        - dps_gain_per_chaos: float | null (dps_delta / chaos_value, for ranking)
+        - verdict: "upgrade" | "downgrade" | "sidegrade"
+    """
+    from poe2_crafting_mcp.data.price_db import PriceDatabase
+
+    engine = _get_engine()
+
+    # Snapshot stats before
+    before = engine.get_stats()
+    dps_before  = before.get("TotalDPS", 0) or 0
+    es_before   = before.get("EnergyShield", 0) or 0
+    life_before = before.get("Life", 0) or 0
+    ev_before   = before.get("Evasion", 0) or 0
+    ar_before   = before.get("Armour", 0) or 0
+
+    # Extract a brief item summary from the text (first 3 non-separator lines)
+    text_lines = [ln.strip() for ln in item_text.splitlines() if ln.strip() and ln.strip() != "--------"]
+    item_summary = " | ".join(text_lines[:3])
+
+    # Equip
+    try:
+        engine.equip_item(slot, item_text)
+    except Exception as exc:
+        return _to_json({"error": f"equip_item failed: {exc}", "slot": slot})
+
+    # Snapshot stats after
+    after = engine.get_stats()
+    dps_after  = after.get("TotalDPS", 0) or 0
+    es_after   = after.get("EnergyShield", 0) or 0
+    life_after = after.get("Life", 0) or 0
+    ev_after   = after.get("Evasion", 0) or 0
+    ar_after   = after.get("Armour", 0) or 0
+
+    # Restore previous item
+    try:
+        engine.unequip_slot(slot)
+    except Exception:
+        pass  # Non-fatal — build state may be slightly off but simulation is done
+
+    # Compute deltas
+    dps_delta     = dps_after - dps_before
+    dps_delta_pct = (dps_delta / dps_before * 100) if dps_before else 0.0
+
+    # Convert price → chaos for value rating
+    chaos_value: float | None = None
+    dps_gain_per_chaos: float | None = None
+    price_result: dict | None = None
+
+    if price_amount is not None and price_amount > 0:
+        pdb = _get_price_db()
+        league = pdb.get_active_league() or ""
+        if price_currency in ("divine", "exalted"):
+            rate_row = pdb.get_price(
+                "Divine Orb" if price_currency == "divine" else "Exalted Orb",
+                league, "currency"
+            )
+            rate = float(rate_row["chaos_value"]) if rate_row and rate_row.get("chaos_value") else None
+            chaos_value = price_amount * rate if rate else None
+        elif price_currency == "chaos":
+            chaos_value = price_amount
+        price_result = {"amount": price_amount, "currency": price_currency, "chaos_value": chaos_value}
+        if chaos_value and chaos_value > 0 and dps_delta > 0:
+            dps_gain_per_chaos = dps_delta / chaos_value
+
+    # Verdict
+    if dps_delta_pct > 2:
+        verdict = "upgrade"
+    elif dps_delta_pct < -2:
+        verdict = "downgrade"
+    else:
+        # Check defences even if DPS is neutral
+        total_def_before = es_before + life_before
+        total_def_after  = es_after  + life_after
+        def_delta_pct = ((total_def_after - total_def_before) / total_def_before * 100) if total_def_before else 0
+        verdict = "upgrade" if def_delta_pct > 2 else ("downgrade" if def_delta_pct < -2 else "sidegrade")
+
+    out: dict = {
+        "slot":           slot,
+        "item_summary":   item_summary,
+        "dps_before":     round(dps_before, 1),
+        "dps_after":      round(dps_after, 1),
+        "dps_delta":      round(dps_delta, 1),
+        "dps_delta_pct":  round(dps_delta_pct, 2),
+        "es_before":      round(es_before, 0),
+        "es_after":       round(es_after, 0),
+        "es_delta":       round(es_after - es_before, 0),
+        "life_before":    round(life_before, 0),
+        "life_after":     round(life_after, 0),
+        "life_delta":     round(life_after - life_before, 0),
+        "evasion_before": round(ev_before, 0),
+        "evasion_after":  round(ev_after, 0),
+        "armour_before":  round(ar_before, 0),
+        "armour_after":   round(ar_after, 0),
+        "verdict":        verdict,
+    }
+    if price_result:
+        out["price"] = price_result
+    if dps_gain_per_chaos is not None:
+        out["dps_gain_per_chaos"] = round(dps_gain_per_chaos, 2)
+
+    return _to_json(out)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

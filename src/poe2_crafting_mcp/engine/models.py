@@ -124,8 +124,11 @@ class TreeJewel:
     """A jewel socketed in the passive tree."""
 
     node_id: int
-    name: str
-    base_type: str
+    node_name: str           # passive tree node display name (e.g. "Jewel Socket")
+    node_x: float            # approximate x position on tree (for spatial context)
+    node_y: float            # approximate y position on tree
+    name: str                # item name (unique name or magic prefix/suffix)
+    base_type: str           # base type (e.g. "Viridian Jewel")
     corrupted: bool = False
     explicit_mods: list[str] = field(default_factory=list)
 

@@ -418,7 +418,7 @@ class PoBEngine:
         return groups
 
     def get_tree_jewels(self) -> list[TreeJewel]:
-        """Get jewels socketed in passive tree nodes."""
+        """Get jewels socketed in passive tree nodes, with node name and position."""
         self._ensure_build_loaded()
 
         raw = self._lua.execute('''
@@ -431,12 +431,24 @@ class PoBEngine:
                     for _, ml in ipairs(item.explicitModLines or {}) do
                         mods[#mods+1] = ml.line
                     end
+                    -- Look up the passive tree node to get its name/position
+                    local node = build.spec.tree.nodes[nodeId]
+                    local nodeName = ""
+                    local nodeX, nodeY = 0, 0
+                    if node then
+                        nodeName = node.dn or node.name or ""
+                        nodeX = node.x or 0
+                        nodeY = node.y or 0
+                    end
                     result[idx] = {
-                        nodeId = nodeId,
-                        name = item.name or "",
+                        nodeId   = nodeId,
+                        nodeName = nodeName,
+                        nodeX    = nodeX,
+                        nodeY    = nodeY,
+                        name     = item.name or "",
                         baseName = item.baseName or "",
                         corrupted = item.corrupted or false,
-                        mods = mods,
+                        mods     = mods,
                     }
                     idx = idx + 1
                 end
@@ -448,6 +460,9 @@ class PoBEngine:
         for j in (raw.values() if raw else []):
             jewels.append(TreeJewel(
                 node_id=int(j["nodeId"]),
+                node_name=str(j.get("nodeName") or ""),
+                node_x=float(j.get("nodeX") or 0),
+                node_y=float(j.get("nodeY") or 0),
                 name=j["name"],
                 base_type=j["baseName"],
                 corrupted=bool(j["corrupted"]),

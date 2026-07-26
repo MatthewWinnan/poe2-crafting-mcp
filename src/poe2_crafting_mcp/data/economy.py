@@ -99,23 +99,73 @@ class NinjaClient:
             return leagues[0]["name"]
         raise EconomyError("No leagues found from poe.ninja")
 
+    # ── Item Overview (Equipment / Atlas) ────────────────────────────────────
+
+    def fetch_item_overview(self, league: str, item_type: str) -> list[dict]:
+        """
+        Fetch all item prices for a stash-based category (Equipment / Atlas).
+
+        Uses the poe.ninja stash item overview endpoint:
+          GET /poe2/api/economy/stash/current/item/overview?league=...&type=...
+
+        item_type values: UniqueWeapons, UniqueArmours, UniqueAccessories,
+            UniqueFlasks, UniqueCharms, UniqueJewels, UniqueSanctumRelics,
+            UniqueTablets, PrecursorTablets
+
+        Returns list of {name, category, chaos_value, divine_value,
+                         listing_count, base_type} ready for
+        PriceDatabase.upsert_prices().
+        """
+        try:
+            data = self._get("economy/stash/current/item/overview", {
+                "league": league,
+                "type": item_type,
+            })
+        except EconomyError:
+            return []
+
+        if not data or not isinstance(data, dict):
+            return []
+
+        category = _item_type_to_category(item_type)
+        results: list[dict] = []
+        for item in data.get("lines", []):
+            name = item.get("name") or item.get("typeLine", "")
+            if not name:
+                continue
+            results.append({
+                "name":          name,
+                "category":      category,
+                "chaos_value":   item.get("chaosValue"),
+                "divine_value":  item.get("divineValue"),
+                "listing_count": item.get("count", 0),
+                "base_type":     item.get("baseType", ""),
+            })
+        return results
+
     # ── Currency Prices ───────────────────────────────────────────────────────
 
-    def fetch_currency_rate(self, league: str, trade_id: str) -> dict | None:
+    def fetch_currency_rate(
+        self, league: str, trade_id: str, item_type: str = "Currency"
+    ) -> dict | None:
         """
-        Fetch the exchange rate for a single currency by its trade_id slug.
+        Fetch the exchange rate for a single item by its trade_id slug.
+
+        item_type: poe.ninja exchange type — "Currency" (default), "Runes",
+            "Essences", "SoulCores", "Breach", "Delirium", "Fragments",
+            "UncutGems", etc.
 
         Returns:
             {trade_id, divine_value, volume} or None if not found / no pairs.
 
-        The divine_value is how many divine orbs this currency is worth.
+        The divine_value is how many divine orbs this item is worth.
         For Chaos Orb: divine_value ≈ 0.113 (1 chaos = 0.113 divine).
         For Divine Orb: divine_value = 1.0 (by definition).
         """
         try:
             data = self._get("economy/exchange/current/details", {
                 "league": league,
-                "type": "Currency",
+                "type": item_type,
                 "id": trade_id,
             })
         except EconomyError:
@@ -132,7 +182,7 @@ class NinjaClient:
         divine_pair = next((p for p in pairs if p.get("id") == "divine"), None)
 
         # For Divine Orb itself, look at chaos pair to derive the inverse
-        if divine_pair is None and trade_id == "divine-orb":
+        if divine_pair is None and item_type == "Currency" and trade_id == "divine-orb":
             return {
                 "trade_id": trade_id,
                 "divine_value": 1.0,
@@ -207,9 +257,118 @@ class NinjaClient:
 
         return results
 
+    def fetch_exchange_items(
+        self,
+        league: str,
+        item_type: str,
+        slugs: list[tuple[str, str]],
+        category: str | None = None,
+        progress_cb: Any = None,
+    ) -> list[dict]:
+        """
+        Fetch prices for a list of (name, slug) pairs for any exchange category.
+
+        item_type: poe.ninja type (e.g. "Runes", "Essences", "SoulCores", "Breach").
+        slugs: list of (display_name, trade_slug) pairs.
+        category: internal category name (e.g. "rune"). If None, derived from item_type.
+
+        Returns list ready for PriceDatabase.upsert_prices().
+        chaos_value will be None — call fill_chaos_from_divine() after upsert.
+        """
+        from poe2_crafting_mcp.data.general_items import EXCHANGE_CATEGORIES
+        cat = category or EXCHANGE_CATEGORIES.get(item_type, item_type.lower())
+
+        results: list[dict] = []
+        total = len(slugs)
+
+        for i, (name, slug) in enumerate(slugs):
+            if progress_cb:
+                progress_cb(i + 1, total, name)
+
+            rate_data = self.fetch_currency_rate(league, slug, item_type=item_type)
+            if rate_data is None:
+                time.sleep(_INTER_REQUEST_DELAY)
+                continue
+
+            results.append({
+                "name":          name,
+                "category":      cat,
+                "trade_id":      slug,
+                "divine_value":  rate_data["divine_value"],
+                "chaos_value":   None,   # filled by PriceDatabase.fill_chaos_from_divine()
+                "listing_count": rate_data["volume"],
+            })
+            time.sleep(_INTER_REQUEST_DELAY)
+
+        return results
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _slug_to_name(slug: str) -> str:
     """Convert a poe.ninja slug back to a display name. e.g. 'chaos-orb' → 'Chaos Orb'."""
     return slug.replace("-", " ").title()
+
+
+# Map poe.ninja item_type → our internal price category name.
+_ITEM_TYPE_TO_CATEGORY: dict[str, str] = {
+    # Equipment
+    "UniqueWeapons":        "unique_weapon",
+    "UniqueArmours":        "unique_armour",
+    "UniqueAccessories":    "unique_accessory",
+    "UniqueFlasks":         "unique_flask",
+    "UniqueCharms":         "unique_charm",
+    "UniqueJewels":         "unique_jewel",
+    "UniqueSanctumRelics":  "unique_relic",
+    # Atlas
+    "UniqueTablets":        "unique_tablet",
+    "PrecursorTablets":     "precursor_tablet",
+    # General
+    "Fragments":            "fragment",
+    "Abyss":                "abyss",
+    "UncutGems":            "uncut_gem",
+    "LineageSupportGems":   "lineage_gem",
+    "Essences":             "essence",
+    "SoulCores":            "soul_core",
+    "Idols":                "idol",
+    "Runes":                "rune",
+    "Ritual":               "omen",
+    "Expedition":           "expedition",
+    "Delirium":             "liquid_emotion",
+    "Breach":               "catalyst",
+    "Verisium":             "verisium",
+}
+
+# All stash-based item types for Equipment + Atlas
+STASH_ITEM_TYPES: list[tuple[str, str]] = [
+    ("UniqueWeapons",       "Unique Weapons"),
+    ("UniqueArmours",       "Unique Armours"),
+    ("UniqueAccessories",   "Unique Accessories"),
+    ("UniqueFlasks",        "Unique Flasks"),
+    ("UniqueCharms",        "Unique Charms"),
+    ("UniqueJewels",        "Unique Jewels"),
+    ("UniqueSanctumRelics", "Unique Relics"),
+    ("UniqueTablets",       "Unique Tablets"),
+    ("PrecursorTablets",    "Precursor Tablets"),
+]
+
+# General exchange categories — try stash endpoint; may return empty if unsupported
+GENERAL_ITEM_TYPES: list[tuple[str, str]] = [
+    ("Fragments",           "Fragments"),
+    ("Abyss",               "Abyssal Bones"),
+    ("UncutGems",           "Uncut Gems"),
+    ("LineageSupportGems",  "Lineage Gems"),
+    ("Essences",            "Essences"),
+    ("SoulCores",           "Soul Cores"),
+    ("Idols",               "Idols"),
+    ("Runes",               "Runes"),
+    ("Ritual",              "Omens"),
+    ("Expedition",          "Expedition"),
+    ("Delirium",            "Liquid Emotions"),
+    ("Breach",              "Catalysts"),
+    ("Verisium",            "Verisium"),
+]
+
+
+def _item_type_to_category(item_type: str) -> str:
+    return _ITEM_TYPE_TO_CATEGORY.get(item_type, item_type.lower())

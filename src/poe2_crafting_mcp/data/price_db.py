@@ -185,6 +185,32 @@ class PriceDatabase:
         self.set_meta("prices_fetched_at", now)
         return len(rows)
 
+    def fill_chaos_from_divine(self, league: str) -> int:
+        """
+        Fill chaos_value for rows that have divine_value but not chaos_value.
+
+        Uses the stored Divine Orb chaos value (1 divine = N chaos) as the
+        conversion rate. Called after upserting exchange items whose prices are
+        expressed in divine orbs (Runes, Essences, Soul Cores, etc.).
+
+        Returns number of rows updated.
+        """
+        row = self._conn.execute(
+            "SELECT chaos_value FROM prices"
+            " WHERE name = 'Divine Orb' AND league = ? AND category = 'currency'",
+            (league,),
+        ).fetchone()
+        if not row or not row["chaos_value"]:
+            return 0
+        chaos_per_divine = row["chaos_value"]
+        cur = self._conn.execute(
+            "UPDATE prices SET chaos_value = ROUND(divine_value * ?, 4)"
+            " WHERE league = ? AND chaos_value IS NULL AND divine_value IS NOT NULL",
+            (chaos_per_divine, league),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
     def fill_divine_values(self, league: str) -> None:
         """
         Back-fill divine_value for currency rows that have None.

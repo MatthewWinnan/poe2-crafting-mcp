@@ -79,6 +79,17 @@ def _fmt_base(b: dict) -> None:
         print(f"    {_DIM}Tags:{_RESET} {', '.join(t for t in tags if t)}")
 
 
+def _with_tiers(mods: list[dict]) -> list[dict]:
+    """Add a 'tier' field to each mod — 1 = best within its group_name."""
+    group_count: dict[str, int] = {}
+    result = []
+    for m in mods:
+        gn = m.get("group_name") or ""
+        group_count[gn] = group_count.get(gn, 0) + 1
+        result.append({**m, "tier": group_count[gn]})
+    return result
+
+
 def _fmt_mod(m: dict) -> None:
     mt = m.get("mod_type", "")
     cat = m.get("category", "")
@@ -86,7 +97,8 @@ def _fmt_mod(m: dict) -> None:
     label = f"{color}{mt}{_RESET}" if mt else ""
     cat_label = f"  {_DIM}{cat}{_RESET}" if cat and cat != "Item" else ""
     affix = f"  {_DIM}«{m['affix']}»{_RESET}" if m.get("affix") else ""
-    print(f"  {label}{cat_label}{affix}")
+    tier_label = f"  {_YELLOW}T{m['tier']}{_RESET}" if m.get("tier") else ""
+    print(f"  {label}{cat_label}{affix}{tier_label}")
     print(f"    {_BOLD}{m.get('stat_text','')}{_RESET}")
     mn, mx = m.get("stat_min"), m.get("stat_max")
     range_str = ""
@@ -193,9 +205,17 @@ def _fmt_currency(c: dict) -> None:
         print(f"    {c['effect']}")
 
 
+def _fmt_exchange(e: dict) -> None:
+    cat = f"  {_DIM}[{e.get('category','')}]{_RESET}"
+    print(f"  {_BOLD}{e['name']}{_RESET}{cat}")
+    desc = e.get("description", "")
+    if desc:
+        print(f"    {desc}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-_ALL_TYPES = ("bases", "mods", "gems", "uniques", "nodes", "currencies", "concepts")
+_ALL_TYPES = ("bases", "mods", "gems", "uniques", "nodes", "currencies", "concepts", "exchange")
 
 _TYPE_ALIASES: dict[str, str] = {
     "base": "bases", "item": "bases", "items": "bases",
@@ -203,9 +223,13 @@ _TYPE_ALIASES: dict[str, str] = {
     "gem": "gems", "skill": "gems", "skills": "gems",
     "unique": "uniques",
     "node": "nodes", "passive": "nodes", "passives": "nodes", "tree": "nodes",
-    "currency": "currencies", "orb": "currencies", "essence": "currencies",
+    "currency": "currencies", "orb": "currencies",
     "concept": "concepts", "keyword": "concepts", "keywords": "concepts",
     "mechanic": "concepts", "mechanics": "concepts", "definition": "concepts",
+    "rune": "exchange", "essence": "exchange", "catalyst": "exchange",
+    "delirium": "exchange", "breach": "exchange", "abyss": "exchange",
+    "liquid": "exchange", "wombgift": "exchange", "fragment": "exchange",
+    "soulcore": "exchange", "soul_core": "exchange",
 }
 
 
@@ -277,7 +301,7 @@ def main() -> None:
         if results:
             found_any = True
             print(_h(f"Mods ({cat})"))
-            for m in results:
+            for m in _with_tiers(results):
                 _fmt_mod(m)
                 print()
         # Also search other categories if no specific category was given
@@ -288,7 +312,7 @@ def main() -> None:
                 if extra:
                     found_any = True
                     print(_h(f"Mods ({extra_cat})"))
-                    for m in extra:
+                    for m in _with_tiers(extra):
                         _fmt_mod(m)
                         print()
 
@@ -336,6 +360,16 @@ def main() -> None:
             print(_h("Concepts / Keywords"))
             for c in results:
                 _fmt_concept(c)
+                print()
+
+    if "exchange" in types_to_search:
+        from poe2_crafting_mcp.data.general_items import search_exchange_items
+        results = search_exchange_items(keyword=query, limit=args.limit)
+        if results:
+            found_any = True
+            print(_h("Exchange Items"))
+            for e in results:
+                _fmt_exchange(e)
                 print()
 
     if not found_any:

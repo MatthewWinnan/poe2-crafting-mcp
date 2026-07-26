@@ -1427,6 +1427,111 @@ CONCEPTS: list[dict] = [
         "formula": "",
         "see_also": ["Chaos Damage", "Ground Effects"],
     },
+
+    # ── Item Modification System ───────────────────────────────────────────────
+
+    {
+        "name": "Desecrated Mod",
+        "category": "item_mod",
+        "summary": "A mod added to an item by socketing an Abyss Jewel into its Bone Socket.",
+        "mechanics": (
+            "Desecrated mods are a unique mod type introduced via Abyss mechanics in PoE2. "
+            "Bone Sockets appear on some items (similar to rune sockets). Socketing an Abyss Jewel "
+            "into a Bone Socket grants the item a desecrated mod — a bonus drawn from the Abyss "
+            "jewel's mod pool rather than the item's own explicit mod pool. "
+            "Desecrated mods are separate from explicit, implicit, fractured, and crafted mods. "
+            "On the trade site they use the stat type prefix 'desecrated.' "
+            "(e.g. desecrated.stat_XXXX). "
+            "They appear in the item's mod list tagged as (desecrated). "
+            "To search for items with desecrated mods, use stat_type='desecrated' in trade searches."
+        ),
+        "formula": "Desecrated mod value is determined by the socketed Abyss Jewel's mod.",
+        "see_also": ["Abyss Jewel", "Bone Socket", "Rune", "Corruption"],
+    },
+    {
+        "name": "Abyss Jewel",
+        "category": "item_mod",
+        "summary": "A special jewel that sockets into Bone Sockets to add Desecrated mods.",
+        "mechanics": (
+            "Abyss Jewels are a category of jewel that socket into Bone Sockets on items "
+            "(not into the passive tree). When socketed they grant the item a Desecrated mod. "
+            "They can also be socketed into the passive tree like normal jewels if a passive "
+            "node supports it. "
+            "The mods available on Abyss Jewels include life/mana on kill, added damage, "
+            "resistances, and other bonuses not available in the standard item mod pool. "
+            "This makes items with Bone Sockets valuable as crafting bases. "
+            "To find items with specific desecrated mods on trade, search with stat_type='desecrated'."
+        ),
+        "formula": "",
+        "see_also": ["Desecrated Mod", "Bone Socket", "Jewel"],
+    },
+    {
+        "name": "Bone Socket",
+        "category": "item_mod",
+        "summary": "A special socket on items that accepts Abyss Jewels, granting Desecrated mods.",
+        "mechanics": (
+            "Bone Sockets are a socket type on certain item bases in PoE2. Unlike Rune Sockets "
+            "(which accept Runes for flat bonuses), Bone Sockets accept Abyss Jewels. "
+            "Socketing an Abyss Jewel into a Bone Socket grants the item a Desecrated mod "
+            "drawn from the jewel's stat pool. "
+            "Items with Bone Sockets are valuable crafting targets since desecrated mods "
+            "add stats outside the normal mod pool — effectively giving an item extra affixes. "
+            "On the trade site, search for 'rune sockets' filters to find items with bone sockets "
+            "(they share the same socket count filter)."
+        ),
+        "formula": "",
+        "see_also": ["Abyss Jewel", "Desecrated Mod", "Rune Socket"],
+    },
+    {
+        "name": "Fractured Mod",
+        "category": "item_mod",
+        "summary": "A permanently locked mod on a Fractured Item that cannot be changed by crafting.",
+        "mechanics": (
+            "Fractured mods are created by using a Fracturing Orb on an item. One random mod "
+            "becomes 'fractured' — it is permanently locked and cannot be removed or changed by "
+            "any crafting currency. The item gains the Fractured Item tag. "
+            "Fractured items are valuable crafting bases because they guarantee one T1 mod, "
+            "reducing the crafting goal to hitting the remaining affixes. "
+            "On trade, use stat_type='fractured' to find items with a specific fractured mod. "
+            "In item listings, fractured mods appear tagged as (fractured). "
+            "Fractured items cannot be Mirrored."
+        ),
+        "formula": "",
+        "see_also": ["Fracturing Orb", "Crafting", "Item Mod Tiers"],
+    },
+    {
+        "name": "Crafted Mod",
+        "category": "item_mod",
+        "summary": "A mod added via the Crafting Bench that occupies a prefix or suffix slot.",
+        "mechanics": (
+            "Crafted mods are added to items via the Crafting Bench in your hideout. "
+            "They behave like normal explicit mods and occupy a prefix or suffix slot. "
+            "Only one crafted mod can be on an item at a time. "
+            "Crafted mods are removed when you use certain crafting currencies (e.g. Scour, Chaos). "
+            "They appear on the item tagged as (crafted). "
+            "Common uses: fill the last open prefix/suffix with a useful defensive mod "
+            "while you continue crafting the remaining slots."
+        ),
+        "formula": "",
+        "see_also": ["Crafting", "Prefix", "Suffix", "Affix"],
+    },
+    {
+        "name": "Jewel Socket",
+        "category": "passive_tree",
+        "summary": "A passive tree node that holds a Jewel, applying its mods to the build.",
+        "mechanics": (
+            "Jewel Sockets are special nodes on the passive tree that accept Jewels. "
+            "Allocating a Jewel Socket node (costs 1 passive point) enables you to socket a jewel. "
+            "The jewel's mods then apply to the build as if they were passive nodes. "
+            "Each jewel socket has a node_id in PoB — use get_tree_jewels() to see which jewels "
+            "are currently socketed and at which node_ids. "
+            "Use set_tree_jewel(node_id, item_text) to simulate a different jewel in that slot. "
+            "Jewel sockets near keystones or large cluster areas amplify their value via "
+            "radius mods that affect nearby passive nodes."
+        ),
+        "formula": "",
+        "see_also": ["Jewel", "Passive Tree", "Cluster Jewel", "Abyss Jewel"],
+    },
 ]
 
 _NAME_INDEX: dict[str, dict] | None = None
@@ -1439,6 +1544,9 @@ def _build_index() -> dict[str, dict]:
 def search_concepts(keyword: str = "", category: str = "", limit: int = 20) -> list[dict]:
     """
     Search concept definitions by keyword and/or category.
+
+    Also searches exchange items (catalysts, liquid emotions, abyss bones, etc.)
+    when category is blank or "exchange_item".
 
     Args:
         keyword:  Text to search in name, summary, and mechanics fields.
@@ -1456,19 +1564,38 @@ def search_concepts(keyword: str = "", category: str = "", limit: int = 20) -> l
     cat = category.lower().strip()
 
     results: list[dict] = []
-    for c in CONCEPTS:
-        if cat and c["category"] != cat:
-            continue
-        if kw:
-            haystack = (
-                c["name"] + " " + c["summary"] + " " + c["mechanics"] + " "
-                + " ".join(c["see_also"])
-            ).lower()
-            if kw not in haystack:
+
+    # Search core CONCEPTS unless caller asked only for exchange_item
+    if cat != "exchange_item":
+        for c in CONCEPTS:
+            if cat and c["category"] != cat:
                 continue
-        results.append(c)
-        if len(results) >= limit:
-            break
+            if kw:
+                haystack = (
+                    c["name"] + " " + c["summary"] + " " + c["mechanics"] + " "
+                    + " ".join(c["see_also"])
+                ).lower()
+                if kw not in haystack:
+                    continue
+            results.append(c)
+            if len(results) >= limit:
+                return results
+
+    # Also search exchange items when no category filter or "exchange_item"
+    if not cat or cat == "exchange_item":
+        from poe2_crafting_mcp.data.general_items import search_exchange_items
+        remaining = limit - len(results)
+        if remaining > 0:
+            for e in search_exchange_items(keyword=keyword, limit=remaining):
+                results.append({
+                    "name": e["name"],
+                    "category": "exchange_item",
+                    "summary": e.get("description", ""),
+                    "mechanics": f"item_type: {e['item_type']}  slug: {e['slug']}",
+                    "formula": "",
+                    "see_also": [],
+                })
+
     return results
 
 
@@ -1483,5 +1610,6 @@ def get_concept(name: str) -> dict | None:
 ALL_CATEGORIES: list[str] = [
     "damage_type", "ailment", "attribute", "defence", "offence",
     "charge", "resource", "buff", "debuff", "mechanic", "keyword",
-    "keystone", "projectile", "ground",
+    "keystone", "projectile", "ground", "item_mod", "passive_tree",
+    "exchange_item",
 ]
