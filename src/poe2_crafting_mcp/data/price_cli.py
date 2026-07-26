@@ -403,6 +403,68 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
+def _general_live_lookup(name: str, league: str, pdb: object) -> dict | None:
+    """
+    Fallback: try to fetch a general item price directly from poe.ninja exchange API.
+
+    Converts 'Lesser Essence of the Body' → 'lesser-essence-of-the-body' and
+    probes each exchange item_type in turn. On success, caches the result and
+    returns a price dict compatible with _fmt_price_row.
+    """
+    from poe2_crafting_mcp.data.economy import NinjaClient, EconomyError
+    from poe2_crafting_mcp.data.general_items import EXCHANGE_CATEGORIES
+
+    slug = name.lower().replace(" ", "-").replace("'s", "s").replace("'", "")
+
+    _EXCHANGE_TYPES = [
+        ("Currency",         "currency"),
+        ("Essences",         "essence"),
+        ("Runes",            "rune"),
+        ("SoulCores",        "soul_core"),
+        ("Breach",           "catalyst"),
+        ("Delirium",         "liquid_emotion"),
+        ("Fragments",        "fragment"),
+        ("UncutGems",        "uncut_gem"),
+        ("Abyss",            "abyss"),
+    ]
+
+    client = NinjaClient()
+    print(f"{_DIM}Not in cache — querying poe.ninja live for '{name}'…{_RESET}")
+
+    for item_type, cat in _EXCHANGE_TYPES:
+        try:
+            rate_data = client.fetch_currency_rate(league, slug, item_type=item_type)
+        except EconomyError:
+            continue
+        if rate_data is None:
+            continue
+
+        divine_value = rate_data["divine_value"]
+        # Compute chaos value using cached divine rate
+        chaos_value = None
+        divine_row = pdb.get_price("Divine Orb", league, "currency")
+        if divine_row and divine_row.get("chaos_value") and divine_value:
+            chaos_value = round(divine_value * float(divine_row["chaos_value"]), 4)
+
+        row = {
+            "name":          name,
+            "category":      cat,
+            "trade_id":      slug,
+            "divine_value":  divine_value,
+            "chaos_value":   chaos_value,
+            "listing_count": rate_data.get("volume", 0),
+            "fetched_at":    "",
+        }
+        # Cache for next time
+        try:
+            pdb.upsert_prices([{**row, "chaos_value": chaos_value}], league)
+        except Exception:
+            pass
+        return row
+
+    return None
+
+
 def cmd_general(args: argparse.Namespace) -> int:
     from poe2_crafting_mcp.data.price_db import PriceDatabase
 
@@ -431,10 +493,13 @@ def cmd_general(args: argparse.Namespace) -> int:
         results = pdb.search_prices(name, league, limit=8)
         currency_results = [r for r in results if r["category"] in _GENERAL_CATS]
         if not currency_results:
-            print(f"{_RED}'{name}' not found in price cache.{_RESET}")
-            print(f"{_DIM}Run: poe2-price refresh{_RESET}")
-            return 1
-        if len(currency_results) == 1:
+            # Try live API fallback — convert name to slug and probe each exchange type
+            row = _general_live_lookup(name, league, pdb)
+            if not row:
+                print(f"{_RED}'{name}' not found in price cache or live API.{_RESET}")
+                print(f"{_DIM}Run: poe2-price refresh{_RESET}")
+                return 1
+        elif len(currency_results) == 1:
             row = currency_results[0]
         else:
             exalt_rate = _get_exalt_rate(pdb, league)

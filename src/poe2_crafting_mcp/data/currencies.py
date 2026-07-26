@@ -34,6 +34,7 @@ CURRENCIES: list[tuple[str, str, str, str, str]] = [
     ("Artificer's Orb",        "Quality", "Socketed","Adds or improves a socket on an item",                   "artificers-orb"),
 
     # ── Essences ──────────────────────────────────────────────────────────────
+    # Legacy names (poe.ninja still tracks some of these)
     ("Essence of Electricity", "Essence", "Elemental",  "Guarantees a lightning damage mod; upgrades Normal → Rare","essence-of-electricity"),
     ("Essence of Ice",         "Essence", "Elemental",  "Guarantees a cold damage mod; upgrades Normal → Rare",     "essence-of-ice"),
     ("Essence of Flames",      "Essence", "Elemental",  "Guarantees a fire damage mod; upgrades Normal → Rare",     "essence-of-flames"),
@@ -55,6 +56,21 @@ CURRENCIES: list[tuple[str, str, str, str, str]] = [
     ("Essence of Loathing",    "Essence", "Utility",    "Guarantees a movement speed mod (boots)",                  "essence-of-loathing"),
     ("Essence of Insanity",    "Essence", "Special",    "Guarantees an exotic proc mod",                            "essence-of-insanity"),
     ("Essence of Delirium",    "Essence", "Special",    "Guarantees a complex proc/threshold mod",                  "essence-of-delirium"),
+    # PoE2 current-league variants — Lesser/Greater tiers (confirmed via poe.ninja)
+    ("Lesser Essence of Electricity", "Essence", "Elemental", "Lesser: guarantees a lightning damage mod",          "lesser-essence-of-electricity"),
+    ("Greater Essence of Electricity","Essence", "Elemental", "Greater: guarantees a stronger lightning mod",       "greater-essence-of-electricity"),
+    ("Lesser Essence of Ice",          "Essence", "Elemental", "Lesser: guarantees a cold damage mod",              "lesser-essence-of-ice"),
+    ("Greater Essence of Ice",         "Essence", "Elemental", "Greater: guarantees a stronger cold mod",           "greater-essence-of-ice"),
+    ("Lesser Essence of Flames",       "Essence", "Elemental", "Lesser: guarantees a fire damage mod",              "lesser-essence-of-flames"),
+    ("Greater Essence of Flames",      "Essence", "Elemental", "Greater: guarantees a stronger fire mod",           "greater-essence-of-flames"),
+    ("Lesser Essence of Haste",        "Essence", "Speed",     "Lesser: guarantees an attack/cast speed mod",       "lesser-essence-of-haste"),
+    ("Greater Essence of Haste",       "Essence", "Speed",     "Greater: guarantees a stronger speed mod",          "greater-essence-of-haste"),
+    ("Lesser Essence of the Body",     "Essence", "Life",      "Lesser: guarantees a life/energy shield mod",       "lesser-essence-of-the-body"),
+    ("Greater Essence of the Body",    "Essence", "Life",      "Greater: guarantees a stronger life/ES mod",        "greater-essence-of-the-body"),
+    ("Lesser Essence of the Mind",     "Essence", "Mana",      "Lesser: guarantees a mana mod",                     "lesser-essence-of-the-mind"),
+    ("Greater Essence of the Mind",    "Essence", "Mana",      "Greater: guarantees a stronger mana mod",           "greater-essence-of-the-mind"),
+    ("Lesser Essence of Ruin",         "Essence", "Physical",  "Lesser: guarantees a physical damage mod",          "lesser-essence-of-ruin"),
+    ("Greater Essence of Ruin",        "Essence", "Physical",  "Greater: guarantees a stronger physical mod",       "greater-essence-of-ruin"),
 
     # ── Runes (socketables) ───────────────────────────────────────────────────
     ("Iron Rune",              "Rune", "Armour",       "Grants armour to the socketed item",                "iron-rune"),
