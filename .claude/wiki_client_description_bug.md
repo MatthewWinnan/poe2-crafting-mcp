@@ -8,15 +8,20 @@ description in the DB — currently "Breach Tablet is a precursor tablet base ty
 
 **Desired behaviour** (priority order):
 1. `augment_stat_text` / `description` from `{{Item}}` template — already works for most currencies
-2. `==Mechanics==` section from the page body — e.g. for Breach Tablet:
+2. Resolve `implicit1` ID to actual modifier text — **primary goal for Breach Tablet**:
+   ```
+   Adds an Otherworldy Breach to a Map
+   10 uses remaining
+   Can be used in a personal Map Device to add modifiers to a Map.
+   ```
+   The `{{Item}}` template has `|implicit1 = TowerAddBreachToMapsImplicit` but stores
+   only the ID, not the text. Need to look up `/wiki/TowerAddBreachToMapsImplicit` (or
+   equivalent) to resolve the actual stat text.
+3. `==Mechanics==` section as fallback:
    > Using multiple Breach Tablets will add additional Unstable Breaches to the map.
    >
    > This will not add additional Unstable Breaches to Breach Hives... [Likely due to a bug]
-3. First prose paragraph as last resort ("Breach Tablet is a precursor tablet base type.")
-
-**Future nice-to-have**: resolve `implicit1 = TowerAddBreachToMapsImplicit` to the
-actual modifier text ("Adds an Otherworldy Breach to a Map / 10 uses remaining") —
-would need a separate wiki page fetch per implicit ID.
+4. First prose paragraph as last resort ("Breach Tablet is a precursor tablet base type.")
 
 ---
 
