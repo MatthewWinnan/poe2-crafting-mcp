@@ -745,7 +745,7 @@ def refresh_concepts() -> str:
     """
     pdb = _get_price_db()
     from poe2_crafting_mcp.data.concepts import CONCEPTS
-    seeded = pdb.upsert_concepts_bulk(CONCEPTS)
+    seeded = pdb.upsert_concepts_bulk(CONCEPTS, overwrite=False)
     status = pdb.concept_status()
     return _to_json({"seeded": seeded, **status})
 

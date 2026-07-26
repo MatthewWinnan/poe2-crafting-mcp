@@ -462,13 +462,19 @@ class PriceDatabase:
         self._conn.execute("INSERT INTO concepts_fts(concepts_fts) VALUES('rebuild')")
         self._conn.commit()
 
-    def upsert_concepts_bulk(self, concepts: list[dict]) -> int:
+    def upsert_concepts_bulk(self, concepts: list[dict], overwrite: bool = True) -> int:
         """
         Bulk insert/replace concept entries from a list of dicts.
 
         Each dict must have: name, category, summary, mechanics.
         Optional: formula, see_also (list), source, league_version.
         Also records concepts_seeded_at in economy_meta.
+
+        Args:
+            concepts: list of concept dicts
+            overwrite: if True (default for ETL), replaces all rows including
+                       wiki-sourced ones. If False (used by concept-refresh CLI),
+                       only inserts missing rows — wiki-sourced data is preserved.
         Returns number of rows written.
         """
         import json as _json
@@ -485,13 +491,24 @@ class PriceDatabase:
             )
             for c in concepts
         ]
-        self._conn.executemany(
-            """INSERT OR REPLACE INTO concepts
-               (name, category, summary, mechanics, formula, see_also,
-                source, league_version, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            rows,
-        )
+        if overwrite:
+            sql = """INSERT OR REPLACE INTO concepts
+                     (name, category, summary, mechanics, formula, see_also,
+                      source, league_version, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        else:
+            # Preserve wiki-sourced rows; only overwrite manual/PoB-sourced ones
+            sql = """INSERT INTO concepts
+                     (name, category, summary, mechanics, formula, see_also,
+                      source, league_version, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(name) DO UPDATE SET
+                       category=excluded.category, summary=excluded.summary,
+                       mechanics=excluded.mechanics, formula=excluded.formula,
+                       see_also=excluded.see_also, source=excluded.source,
+                       league_version=excluded.league_version, updated_at=excluded.updated_at
+                     WHERE source != 'poe2wiki'"""
+        self._conn.executemany(sql, rows)
         self._conn.execute("INSERT INTO concepts_fts(concepts_fts) VALUES('rebuild')")
         self._conn.commit()
         self.set_meta("concepts_seeded_at", now)

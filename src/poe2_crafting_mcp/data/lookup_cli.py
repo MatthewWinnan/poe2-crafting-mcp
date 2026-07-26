@@ -206,7 +206,8 @@ def _fmt_node(n: dict) -> None:
 
 def _fmt_concept(c: dict) -> None:
     cat = f"  {_DIM}[{c.get('category','')}]{_RESET}"
-    print(f"  {_BOLD}{c['name']}{_RESET}{cat}")
+    src = f" {_DIM}{c.get('source','')}{_RESET}" if c.get("source") and c["source"] != "manual" else ""
+    print(f"  {_BOLD}{c['name']}{_RESET}{cat}{src}")
     print(f"    {c.get('summary','')}")
     mechanics = c.get("mechanics", "").strip()
     if mechanics:
@@ -379,10 +380,45 @@ def _cmd_concept_delete(argv: list[str]) -> int:
 def _cmd_concept_refresh(argv: list[str]) -> int:
     from poe2_crafting_mcp.data.concepts import CONCEPTS
     pdb = _get_pdb()
-    n = pdb.upsert_concepts_bulk(CONCEPTS)
+    # overwrite=False preserves wiki-sourced entries; only fills missing / manual
+    n = pdb.upsert_concepts_bulk(CONCEPTS, overwrite=False)
     cs = pdb.concept_status()
-    print(f"{_GREEN}✓ Seeded {n} concepts from built-in definitions.{_RESET}")
+    print(f"{_GREEN}✓ Re-seeded {n} built-in concepts (wiki-sourced entries preserved).{_RESET}")
     print(f"  {_BOLD}Total in DB:{_RESET} {cs.get('total', 0)}")
+    return 0
+
+
+def _cmd_concept_seed(argv: list[str]) -> int:
+    """Fetch concept data from poe2wiki.net for all concepts in the DB.
+
+    Concepts with source='manual' are preserved (manual overrides).
+    All others are updated from wiki body prose / status infobox data.
+    """
+    p = argparse.ArgumentParser(prog="poe2-lookup concept-seed")
+    p.add_argument("--dry-run", action="store_true", help="Show what would be seeded without writing")
+    args = p.parse_args(argv)
+
+    from poe2_crafting_mcp.data.wiki_client import Poe2WikiClient
+    pdb = _get_pdb()
+    wiki = Poe2WikiClient()
+
+    if args.dry_run:
+        rows = pdb.search_concepts(keyword='', limit=10000)
+        print(f"{_BOLD}Would seed {len(rows)} concepts from poe2wiki.net{_RESET}")
+        print(f"  (wiki data overwrites manual entries; concepts not on wiki are unchanged)")
+        return 0
+
+    print(f"{_DIM}Fetching concepts from poe2wiki.net…{_RESET}", flush=True)
+    fetched, skipped = wiki.seed_concepts_from_db(pdb)
+    # Rebuild FTS after bulk updates
+    try:
+        pdb._conn.execute("INSERT INTO concepts_fts(concepts_fts) VALUES('rebuild')")
+        pdb._conn.commit()
+    except Exception:
+        pass
+    total = pdb.concept_status().get('total', 0)
+    print(f"{_GREEN}✓ Wiki seeded {fetched} concepts ({skipped} skipped/manual).{_RESET}")
+    print(f"  {_BOLD}Total in DB:{_RESET} {total}")
     return 0
 
 
@@ -394,6 +430,7 @@ _CONCEPT_CMDS = {
     "concept-add":     _cmd_concept_add,
     "concept-delete":  _cmd_concept_delete,
     "concept-refresh": _cmd_concept_refresh,
+    "concept-seed":    _cmd_concept_seed,
 }
 
 
@@ -646,8 +683,8 @@ def main() -> None:
             "Search PoE2 game data: bases, mods, gems, uniques, passive nodes, "
             "currencies, concepts/keywords, and item descriptions.\n\n"
             "Also supports management subcommands (run without query):\n"
-            "  concept-status/list/search/get/add/delete/refresh\n"
-            "  item-desc-status/list/get/add/delete/refresh"
+            "  concept-status/list/search/get/add/delete/refresh/seed\n"
+            "  item-desc-status/list/get/add/delete/refresh/seed"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(

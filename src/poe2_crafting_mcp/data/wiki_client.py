@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import urllib.parse
 import urllib.request
 from typing import Iterator
@@ -61,11 +62,21 @@ def _strip_wiki(text: str) -> str:
 class Poe2WikiClient:
     """Fetch item data from the poe2wiki.net MediaWiki API."""
 
-    def _get(self, params: dict) -> dict:
+    def _get(self, params: dict, _retries: int = 3) -> dict:
         url = WIKI_API + "?" + urllib.parse.urlencode(params)
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
+        for attempt in range(_retries):
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    return json.loads(resp.read().decode())
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt < _retries - 1:
+                    wait = 10 * (attempt + 1)  # 10s, 20s
+                    log.warning('rate limited (429), waiting %ds…', wait)
+                    time.sleep(wait)
+                else:
+                    raise
+        raise RuntimeError('unreachable')
 
     def _parse_template(self, wikitext: str) -> dict | None:
         """Extract {{Item}} template key=value fields from raw wikitext.
@@ -199,6 +210,7 @@ class Poe2WikiClient:
                     'titles': titles,
                     'prop': 'revisions',
                     'rvprop': 'content',
+                    'redirects': '1',
                     'format': 'json',
                     'formatversion': '2',
                 })
@@ -222,6 +234,245 @@ class Poe2WikiClient:
         """Fetch a single item. Returns item_desc dict or None if not on wiki."""
         items = self.fetch_items([name])
         return items[0] if items else None
+
+    def _parse_status_infobox(self, wikitext: str) -> tuple[str, str]:
+        """Extract category and description from {{status}} infobox (ailments/buffs).
+
+        Returns (category, description) or ("", "") if not a status page.
+        """
+        start = wikitext.lower().find('{{status')
+        if start == -1:
+            return "", ""
+        pos = start + 2
+        depth = 1
+        body_end = -1
+        while pos < len(wikitext) - 1:
+            if wikitext[pos:pos + 2] == '{{':
+                depth += 1
+                pos += 2
+            elif wikitext[pos:pos + 2] == '}}':
+                depth -= 1
+                if depth == 0:
+                    body_end = pos
+                    break
+                pos += 2
+            else:
+                pos += 1
+        if body_end == -1:
+            return "", ""
+
+        body = wikitext[start + 8:body_end]  # skip '{{status'
+        fields: dict[str, str] = {}
+        for line in body.split('\n'):
+            line = line.strip().lstrip('|')
+            if '=' in line:
+                k, _, v = line.partition('=')
+                fields[k.strip().lower()] = v.strip()
+
+        # type field → concept category
+        status_type = fields.get('type', '').lower()
+        _STATUS_CAT = {
+            'ailment': 'ailment',
+            'buff': 'buff',
+            'debuff': 'debuff',
+            'keyword': 'keyword',
+        }
+        category = _STATUS_CAT.get(status_type, 'mechanic')
+        description = _strip_wiki(fields.get('description', ''))
+        return category, description
+
+    def _extract_body_prose(self, wikitext: str) -> list[str]:
+        """Strip all templates and markup, return body paragraphs."""
+        # Preserve text from {{c|colour|text}} before general template removal
+        wikitext = re.sub(r'\{\{c\|[^\|]+\|([^}]+)\}\}', r'\1', wikitext)
+        # Remove all {{...}} templates (depth-aware)
+        result = []
+        pos = 0
+        while pos < len(wikitext):
+            if wikitext[pos:pos + 2] == '{{':
+                depth = 1
+                pos += 2
+                while pos < len(wikitext) - 1 and depth > 0:
+                    if wikitext[pos:pos + 2] == '{{':
+                        depth += 1
+                        pos += 2
+                    elif wikitext[pos:pos + 2] == '}}':
+                        depth -= 1
+                        pos += 2
+                    else:
+                        pos += 1
+            else:
+                result.append(wikitext[pos])
+                pos += 1
+        clean = ''.join(result)
+
+        # Remove wiki section headers (==Foo==)
+        clean = re.sub(r'==+[^=]+=+\n?', '', clean)
+        # Strip remaining wiki markup
+        clean = _strip_wiki(clean)
+        # Split into paragraphs
+        paras = [p.strip() for p in re.split(r'\n{2,}', clean) if p.strip()]
+        # Filter out very short fragments and reference-like lines
+        return [p for p in paras if len(p) > 20]
+
+    def fetch_concept(self, name: str) -> dict | None:
+        """Fetch a wiki keyword/mechanic/ailment page as a concept dict.
+
+        Handles three page types:
+        - {{status}} pages (ailments: Shock, Freeze, Ignite…) — structured fields
+        - {{keyword infobox}} pages (mechanics) — body prose only
+        - General mechanic pages — body prose only
+
+        Returns a concepts-table dict or None if the page doesn't exist or has
+        no extractable content.
+        """
+        items = self._get_pages([name])
+        page = next(iter(items.values()), None)
+        if page is None or page.get('missing'):
+            return None
+        revisions = page.get('revisions', [])
+        if not revisions:
+            return None
+        wikitext = revisions[0].get('content', '')
+        if not wikitext:
+            return None
+
+        # Extract {{status}} fields for ailments/buffs
+        category, status_desc = self._parse_status_infobox(wikitext)
+
+        # Extract body prose (templates stripped)
+        paras = self._extract_body_prose(wikitext)
+        summary = paras[0] if paras else status_desc
+        mechanics = '\n'.join(paras[1:3]) if len(paras) > 1 else ''
+
+        # If status gave us a description but body prose is thin, use status desc
+        if status_desc and (not summary or len(summary) < 30):
+            summary = status_desc
+
+        # Category fallback
+        if not category:
+            category = 'mechanic'
+
+        if not summary:
+            return None
+
+        return {
+            'name': name,
+            'category': category,
+            'summary': summary,
+            'mechanics': mechanics,
+            'formula': '',
+            'see_also': [],
+            'source': 'poe2wiki',
+            'league_version': None,
+        }
+
+    def _get_pages(self, names: list[str]) -> dict:
+        """Fetch raw page data for a list of names. Returns page dict keyed by title.
+
+        Follows redirects automatically (redirects=1). Page dict is keyed by the
+        ORIGINAL requested title so callers can match results back to input names.
+        """
+        titles = '|'.join(n.replace(' ', '_') for n in names)
+        data = self._get({
+            'action': 'query',
+            'titles': titles,
+            'prop': 'revisions',
+            'rvprop': 'content',
+            'redirects': '1',
+            'format': 'json',
+            'formatversion': '2',
+        })
+        query = data.get('query', {})
+        pages = {p.get('title', ''): p for p in query.get('pages', [])}
+
+        # Build reverse redirect map: resolved_title → [original_title, ...]
+        # MediaWiki returns a 'redirects' list: [{from: original, to: resolved}]
+        redirect_map: dict[str, str] = {}
+        for redir in query.get('redirects', []):
+            redirect_map[redir.get('to', '')] = redir.get('from', '')
+
+        # Re-key pages by original requested name where possible
+        result: dict[str, dict] = {}
+        for title, page in pages.items():
+            original = redirect_map.get(title, title)
+            result[original] = page
+            result[title] = page  # also keep by resolved title
+        return result
+
+    def fetch_concepts(self, names: list[str]) -> list[dict]:
+        """Fetch concept data for a batch of names (batched, 50/request, with rate-limit delay).
+
+        Pages not on the wiki or without extractable content are silently skipped.
+        Returns list of concept dicts ready for upsert_concept().
+        """
+        results: list[dict] = []
+        for batch in self._batches(names):
+            try:
+                pages = self._get_pages(batch)
+                for name in batch:
+                    # MediaWiki normalises titles (spaces→underscores), try both
+                    page = pages.get(name) or pages.get(name.replace(' ', '_'))
+                    if page is None:
+                        # Also try by iterating values (title may differ in case)
+                        page = next(
+                            (p for p in pages.values()
+                             if p.get('title', '').replace('_', ' ').lower() == name.lower()),
+                            None,
+                        )
+                    if page is None or page.get('missing'):
+                        continue
+                    revisions = page.get('revisions', [])
+                    if not revisions:
+                        continue
+                    wikitext = revisions[0].get('content', '')
+                    if not wikitext:
+                        continue
+                    category, status_desc = self._parse_status_infobox(wikitext)
+                    paras = self._extract_body_prose(wikitext)
+                    summary = paras[0] if paras else status_desc
+                    mechanics = '\n'.join(paras[1:3]) if len(paras) > 1 else ''
+                    if status_desc and (not summary or len(summary) < 30):
+                        summary = status_desc
+                    if not category:
+                        category = 'mechanic'
+                    if not summary:
+                        continue
+                    # Use the wiki page title as name (may differ by capitalisation)
+                    results.append({
+                        'name': name,  # keep the DB name, not wiki title
+                        'category': category,
+                        'summary': summary,
+                        'mechanics': mechanics,
+                        'formula': '',
+                        'see_also': [],
+                        'source': 'poe2wiki',
+                        'league_version': None,
+                    })
+            except Exception as exc:
+                log.warning('concept batch error (starting %s): %s', batch[0], exc)
+            time.sleep(1.5)  # be polite to the wiki
+        return results
+
+    def seed_concepts_from_db(self, pdb) -> tuple[int, int]:
+        """Bulk-seed concepts table from wiki using names already in the concepts DB.
+
+        Fetches all concept names in batches, upserts those found on the wiki.
+        Concepts not found on the wiki are left unchanged.
+
+        Returns:
+            (fetched, skipped) counts
+        """
+        rows = pdb.search_concepts(keyword='', limit=10000)
+        names = [r['name'] for r in rows]
+        log.info('concept seed: %d names to look up', len(names))
+
+        concepts = self.fetch_concepts(names)
+        for concept in concepts:
+            pdb.upsert_concept(**concept)
+        fetched = len(concepts)
+        skipped = len(names) - fetched
+        return fetched, skipped
 
     def seed_from_db(self, pdb, db) -> tuple[int, int]:
         """Bulk-seed item_descriptions from wiki using names in the PoB DB.
