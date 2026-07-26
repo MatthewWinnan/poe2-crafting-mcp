@@ -1993,6 +1993,136 @@ CONCEPTS: list[dict] = [
         "formula": "",
         "see_also": ["Jewel", "Passive Tree", "Cluster Jewel", "Abyss Jewel"],
     },
+
+    # ── Item Rarity ────────────────────────────────────────────────────────────
+
+    {
+        "name": "Rarity",
+        "category": "mechanic",
+        "summary": "Items have one of four rarities: Normal, Magic, Rare, and Unique.",
+        "mechanics": (
+            "Normal items have no affixes. "
+            "Magic items have 1–2 affixes (1 prefix and/or 1 suffix). "
+            "Rare items have 3–6 affixes (up to 3 prefixes and 3 suffixes). "
+            "Unique items have fixed modifiers that cannot be rerolled (except their numeric values with Divine Orb). "
+            "Currency to change rarity: Orb of Transmutation (Normal→Magic), "
+            "Regal Orb (Magic→Rare), Chaos Orb (reroll Rare), "
+            "Orb of Alchemy (Normal→Rare). "
+            "Item rarity affects which mods can roll, crafting methods available, "
+            "and trade search filters (rarity: magic/rare/unique)."
+        ),
+        "formula": "Magic: ≤2 affixes (1P + 1S). Rare: ≤6 affixes (3P + 3S).",
+        "see_also": ["Normal", "Magic", "Rare", "Unique", "Affix", "Prefix", "Suffix"],
+    },
+    {
+        "name": "Normal",
+        "category": "mechanic",
+        "summary": "Base item rarity — no affixes, white item colour in-game.",
+        "mechanics": (
+            "Normal (white) items have no explicit modifiers. "
+            "They are the starting point for crafting: "
+            "Orb of Transmutation upgrades Normal→Magic (adds 1–2 affixes), "
+            "Orb of Alchemy upgrades Normal→Rare (adds 3–6 affixes). "
+            "Base item stats (armour, ES, evasion, damage) are at fixed values on Normal items. "
+            "An item level (ilvl) of 80+ on a Normal base is required for T1 mods when crafting."
+        ),
+        "formula": "0 explicit affixes.",
+        "see_also": ["Rarity", "Magic", "Rare", "Orb of Transmutation"],
+    },
+    {
+        "name": "Magic",
+        "category": "mechanic",
+        "summary": "Blue item rarity — 1–2 affixes (1 prefix + 1 suffix maximum).",
+        "mechanics": (
+            "Magic (blue) items have 1–2 explicit modifiers: at most 1 prefix and 1 suffix. "
+            "Magic items are the primary target for alteration-spam crafting: "
+            "use Orb of Alteration to reroll until target mod(s) appear, "
+            "then Regal Orb to upgrade to Rare and add a third mod. "
+            "Orb of Augmentation adds a missing affix (prefix or suffix) to a Magic item with only 1 mod. "
+            "Essences can be applied to Magic items (guarantees one mod, fills the other slot randomly). "
+            "The trade rarity filter for Magic is rarity=magic."
+        ),
+        "formula": "1–2 explicit affixes: ≤1 prefix + ≤1 suffix.",
+        "see_also": ["Rarity", "Rare", "Orb of Alteration", "Orb of Augmentation", "Regal Orb", "Affix"],
+    },
+    {
+        "name": "Rare",
+        "category": "mechanic",
+        "summary": "Yellow item rarity — 3–6 affixes (up to 3 prefixes + 3 suffixes).",
+        "mechanics": (
+            "Rare (yellow) items have 3–6 explicit modifiers: up to 3 prefixes and 3 suffixes. "
+            "The most powerful endgame crafting target. "
+            "Key crafting methods for Rare items: "
+            "Chaos Orb rerolls all affixes randomly; "
+            "Alteration-spam → Regal is cheaper for targeting 1–2 specific mods; "
+            "Essence guarantees one mod on a Rare item (Chaos-equivalent); "
+            "Exalted Orb adds a new affix to an item with fewer than 6 (open prefix or suffix required); "
+            "Annulment Orb removes a random affix; "
+            "Divine Orb re-rolls the numeric values of existing mods. "
+            "Rare items on the trade site show as rarity=rare."
+        ),
+        "formula": "3–6 explicit affixes: ≤3 prefixes + ≤3 suffixes.",
+        "see_also": ["Rarity", "Magic", "Affix", "Prefix", "Suffix", "Chaos Orb", "Exalted Orb", "Divine Orb"],
+    },
+    {
+        "name": "Unique",
+        "category": "mechanic",
+        "summary": "Orange item rarity — fixed predefined modifiers, not craftable with standard orbs.",
+        "mechanics": (
+            "Unique (orange) items have fixed modifiers defined by the game — they cannot be rerolled "
+            "with Chaos Orb or Alteration. "
+            "Divine Orb re-rolls the NUMERIC VALUES of Unique item mods within their allowed ranges. "
+            "Fractured Unique items are not a thing (fracts only apply to Rares). "
+            "Unique items are found by name on the trade site (search by name, not by mods). "
+            "Key uniques for ES builds: Voll's Devotion, Kaom's Heart. "
+            "Some uniques have variants or alternative art versions. "
+            "Unique items identified on the ground have a fixed name shown in orange."
+        ),
+        "formula": "Fixed mods. Divine Orb re-rolls values within allowed ranges.",
+        "see_also": ["Rarity", "Divine Orb", "Unique Items"],
+    },
+
+    # ── Flask ──────────────────────────────────────────────────────────────────
+
+    {
+        "name": "Flask",
+        "category": "mechanic",
+        "summary": "Consumable items that recover life or mana, activated manually, fuelled by charges gained from killing monsters.",
+        "mechanics": (
+            "Each player can equip one Life Flask and one Mana Flask. "
+            "Flasks have a charge pool; using the flask expends charges and begins the recovery. "
+            "Charges are gained by killing monsters (amount scales with pack size) or from checkpoints/wells. "
+            "Flask mods affect charge gain rate, recovery speed, added effects (movement speed, resistance), "
+            "and conditions (on critical hit, on stun, etc.). "
+            "Charms are separate slot items that auto-trigger on specific conditions (stun, freeze, etc.). "
+            "Flask quality increases recovery amount. "
+            "Key flask suffixes: of the Tortoise (reduced charges used), of the Ibex (increased recovery), "
+            "of the Warding (curse removal), of Grounding (shock removal). "
+            "Use poe2-lookup mods --category Flask to see all flask mod options."
+        ),
+        "formula": "Charge recovery: charges gained per kill × pack size bonus.",
+        "see_also": ["Life Flask", "Mana Flask", "Charm", "Charges", "Flask Mods"],
+    },
+
+    # ── Desecrate ─────────────────────────────────────────────────────────────
+
+    {
+        "name": "Desecrate",
+        "category": "item_mod",
+        "summary": "The action of socketing an Abyss Jewel into a Bone Socket, adding an Unrevealed Desecrated modifier. Also called Desecrating an item.",
+        "mechanics": (
+            "To desecrate an item: socket an Abyss Jewel (Rib, Jawbone, Collarbone, Cranium, Vertebra) "
+            "into a matching Bone Socket. The jewel is consumed. "
+            "The item gains an Unrevealed Desecrated modifier — the mod remains hidden until revealed "
+            "at the Well of Souls (found in Abyss encounters in maps). "
+            "If all modifier slots are full, a random existing modifier is removed to make room. "
+            "An item can only be desecrated once. "
+            "Desecrated mods use the stat type 'desecrated.' on the trade site. "
+            "Searches: poe2-lookup 'desecrated' --type mods --category Desecrated"
+        ),
+        "formula": "One Unrevealed Desecrated mod per item. Replaces a random mod if item is full.",
+        "see_also": ["Desecrated Mod", "Abyss Jewel", "Bone Socket", "Well of Souls", "Desecrated Ground"],
+    },
 ]
 
 _NAME_INDEX: dict[str, dict] | None = None

@@ -533,7 +533,29 @@ class PriceDatabase:
                 ).fetchall()
             return [_row_to_dict(r) for r in rows]
 
+        # FTS5 with prefix matching — "desecrat*" finds "desecrated", "desecrates" etc.
+        # We try exact phrase first, then prefix, then LIKE stem fallback.
         safe_kw = keyword.replace('"', '""')
+        fts_kw = safe_kw + "*"  # prefix match
+
+        def _like_fallback() -> list:
+            # Truncate to a common stem (drop up to 3 trailing chars) for LIKE
+            stem = keyword[:max(4, len(keyword) - 2)] if len(keyword) > 4 else keyword
+            pat = f"%{stem}%"
+            if category:
+                return self._conn.execute(
+                    "SELECT * FROM concepts"
+                    " WHERE (name LIKE ? OR summary LIKE ? OR mechanics LIKE ?)"
+                    " AND category = ? LIMIT ?",
+                    (pat, pat, pat, category, limit),
+                ).fetchall()
+            return self._conn.execute(
+                "SELECT * FROM concepts"
+                " WHERE name LIKE ? OR summary LIKE ? OR mechanics LIKE ?"
+                " LIMIT ?",
+                (pat, pat, pat, limit),
+            ).fetchall()
+
         try:
             if category:
                 rows = self._conn.execute(
@@ -541,7 +563,7 @@ class PriceDatabase:
                     " JOIN concepts c ON c.name = f.name"
                     " WHERE f.concepts_fts MATCH ? AND c.category = ?"
                     " ORDER BY rank LIMIT ?",
-                    (safe_kw, category, limit),
+                    (fts_kw, category, limit),
                 ).fetchall()
             else:
                 rows = self._conn.execute(
@@ -549,25 +571,13 @@ class PriceDatabase:
                     " JOIN concepts c ON c.name = f.name"
                     " WHERE f.concepts_fts MATCH ?"
                     " ORDER BY rank LIMIT ?",
-                    (safe_kw, limit),
+                    (fts_kw, limit),
                 ).fetchall()
         except Exception:
-            # FTS not yet populated — fall back to LIKE
-            pat = f"%{keyword}%"
-            if category:
-                rows = self._conn.execute(
-                    "SELECT * FROM concepts"
-                    " WHERE (name LIKE ? OR summary LIKE ? OR mechanics LIKE ?)"
-                    " AND category = ? LIMIT ?",
-                    (pat, pat, pat, category, limit),
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT * FROM concepts"
-                    " WHERE name LIKE ? OR summary LIKE ? OR mechanics LIKE ?"
-                    " LIMIT ?",
-                    (pat, pat, pat, limit),
-                ).fetchall()
+            rows = []
+
+        if not rows:
+            rows = _like_fallback()
 
         return [_row_to_dict(r) for r in rows]
 
@@ -735,6 +745,25 @@ class PriceDatabase:
             return [_row_to_dict(r) for r in rows]
 
         safe_kw = keyword.replace('"', '""')
+        fts_kw = safe_kw + "*"  # prefix match handles verb forms (desecrates→desecrated)
+
+        def _like_fallback() -> list:
+            stem = keyword[:max(4, len(keyword) - 2)] if len(keyword) > 4 else keyword
+            pat = f"%{stem}%"
+            if category:
+                return self._conn.execute(
+                    "SELECT * FROM item_descriptions"
+                    " WHERE (name LIKE ? OR description LIKE ? OR crafting_notes LIKE ?)"
+                    " AND category = ? LIMIT ?",
+                    (pat, pat, pat, category, limit),
+                ).fetchall()
+            return self._conn.execute(
+                "SELECT * FROM item_descriptions"
+                " WHERE name LIKE ? OR description LIKE ? OR crafting_notes LIKE ?"
+                " LIMIT ?",
+                (pat, pat, pat, limit),
+            ).fetchall()
+
         try:
             if category:
                 rows = self._conn.execute(
@@ -742,7 +771,7 @@ class PriceDatabase:
                     " JOIN item_descriptions d ON d.name = f.name"
                     " WHERE f.item_descriptions_fts MATCH ? AND d.category = ?"
                     " ORDER BY rank LIMIT ?",
-                    (safe_kw, category, limit),
+                    (fts_kw, category, limit),
                 ).fetchall()
             else:
                 rows = self._conn.execute(
@@ -750,24 +779,13 @@ class PriceDatabase:
                     " JOIN item_descriptions d ON d.name = f.name"
                     " WHERE f.item_descriptions_fts MATCH ?"
                     " ORDER BY rank LIMIT ?",
-                    (safe_kw, limit),
+                    (fts_kw, limit),
                 ).fetchall()
         except Exception:
-            pat = f"%{keyword}%"
-            if category:
-                rows = self._conn.execute(
-                    "SELECT * FROM item_descriptions"
-                    " WHERE (name LIKE ? OR description LIKE ? OR crafting_notes LIKE ?)"
-                    " AND category = ? LIMIT ?",
-                    (pat, pat, pat, category, limit),
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT * FROM item_descriptions"
-                    " WHERE name LIKE ? OR description LIKE ? OR crafting_notes LIKE ?"
-                    " LIMIT ?",
-                    (pat, pat, pat, limit),
-                ).fetchall()
+            rows = []
+
+        if not rows:
+            rows = _like_fallback()
 
         return [_row_to_dict(r) for r in rows]
 
