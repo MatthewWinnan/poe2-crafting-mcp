@@ -174,155 +174,68 @@ EXCHANGE_SLUGS: dict[str, list[tuple[str, str]]] = {
     "Verisium": _by_cat("Verisium"),
 }
 
-# ── Exchange item descriptions ─────────────────────────────────────────────────
-# Maps trade_slug → human-readable description for items NOT already in CURRENCIES.
-# Items from _by_cat() (Runes, Essences, SoulCores, Fragments) inherit their
-# effect strings from CURRENCIES; only list extras here.
+# ── Exchange item descriptions (legacy fallback) ───────────────────────────────
+# These were manually maintained descriptions before poe2wiki seeding was
+# implemented. Kept only for items whose wiki page is a mechanic page rather
+# than an {{Item}} page (e.g. Simulacrum is an encounter, not a currency item).
+# All other items are now sourced from item_descriptions via _slug_to_description.
 EXCHANGE_DESCRIPTIONS: dict[str, str] = {
 
-    # ── Breach Splinters & Stones ──────────────────────────────────────────
-    "breach-splinter":   "Combine 100 Breach Splinters to create a Breachstone",
-    "breachstone":       "Opens a portal to a Breach domain map containing a Breachlord encounter",
-
-    # ── Wombgifts (Breach domain keys, PoE2 Breachstone equivalents) ───────
-    "banded-wombgift":       "Opens a portal to a Banded Breach domain (lowest tier)",
-    "ornate-wombgift":       "Opens a portal to an Ornate Breach domain",
-    "signet-wombgift":       "Opens a portal to a Signet Breach domain",
-    "lavish-wombgift":       "Opens a portal to a Lavish Breach domain",
-    "revelatory-wombgift":   "Opens a portal to a Revelatory Breach domain (highest tier)",
-
-    # ── Catalysts (add quality to rings/amulets, quality improves specific mods) ─
-    "adaptive-catalyst":     "Adds quality to a ring or amulet; quality improves all modifier types",
-    "carapace-catalyst":     "Adds quality to a ring or amulet; quality improves armour, evasion, and energy shield modifiers",
-    "chayulas-catalyst":     "Adds quality to a ring or amulet; quality improves chaos damage modifiers",
-    "eshs-catalyst":         "Adds quality to a ring or amulet; quality improves lightning damage modifiers",
-    "flesh-catalyst":        "Adds quality to a ring or amulet; quality improves life and flask modifiers",
-    "necrotic-catalyst":     "Adds quality to a ring or amulet; quality improves minion modifiers",
-    "neural-catalyst":       "Adds quality to a ring or amulet; quality improves mana modifiers",
-    "reaver-catalyst":       "Adds quality to a ring or amulet; quality improves physical and attack modifiers",
-    "sibilant-catalyst":     "Adds quality to a ring or amulet; quality improves cold and chaos modifiers",
-    "skittering-catalyst":   "Adds quality to a ring or amulet; quality improves dexterity and movement modifiers",
-    "tuls-catalyst":         "Adds quality to a ring or amulet; quality improves cold damage modifiers",
-    "uul-netols-catalyst":   "Adds quality to a ring or amulet; quality improves physical damage modifiers",
-    "xophs-catalyst":        "Adds quality to a ring or amulet; quality improves fire damage modifiers",
-
-    # ── Refined Catalysts (add quality to jewels) ──────────────────────────
-    "refined-adaptive-catalyst":    "Adds quality to a jewel; quality improves all modifier types",
-    "refined-carapace-catalyst":    "Adds quality to a jewel; quality improves armour, evasion, and energy shield modifiers",
-    "refined-chayulas-catalyst":    "Adds quality to a jewel; quality improves chaos damage modifiers",
-    "refined-eshs-catalyst":        "Adds quality to a jewel; quality improves lightning damage modifiers",
-    "refined-flesh-catalyst":       "Adds quality to a jewel; quality improves life and flask modifiers",
-    "refined-necrotic-catalyst":    "Adds quality to a jewel; quality improves minion modifiers",
-    "refined-neural-catalyst":      "Adds quality to a jewel; quality improves mana modifiers",
-    "refined-reaver-catalyst":      "Adds quality to a jewel; quality improves physical and attack modifiers",
-    "refined-sibilant-catalyst":    "Adds quality to a jewel; quality improves cold and chaos modifiers",
-    "refined-skittering-catalyst":  "Adds quality to a jewel; quality improves dexterity and movement modifiers",
-    "refined-tuls-catalyst":        "Adds quality to a jewel; quality improves cold damage modifiers",
-    "refined-uul-netols-catalyst":  "Adds quality to a jewel; quality improves physical damage modifiers",
-    "refined-xophs-catalyst":       "Adds quality to a jewel; quality improves fire damage modifiers",
-
-    # ── Liquid Emotions (Delirium currency — apply Delirium to maps) ────────
-    # Ancient prefix variants enchant Time-Lost Jewels (atlas passive jewel slots).
-    "diluted-liquid-greed":      "Applies a weak Greed (more items) Delirium effect to a map",
-    "diluted-liquid-guilt":      "Applies a weak Guilt (more currency) Delirium effect to a map",
-    "diluted-liquid-ire":        "Applies a weak Ire (more monsters) Delirium effect to a map",
-    "liquid-despair":            "Applies a Despair Delirium effect to a map",
-    "liquid-disgust":            "Applies a Disgust Delirium effect to a map",
-    "liquid-envy":               "Applies an Envy (more rare monsters) Delirium effect to a map",
-    "liquid-paranoia":           "Applies a Paranoia Delirium effect to a map",
-    "concentrated-liquid-fear":      "Applies a potent Fear Delirium effect to a map",
-    "concentrated-liquid-isolation": "Applies a potent Isolation Delirium effect to a map",
-    "concentrated-liquid-suffering": "Applies a potent Suffering Delirium effect to a map",
-    "potent-liquid-contempt":        "Applies a powerful Contempt Delirium effect to a map",
-    "potent-liquid-ferocity":        "Applies a powerful Ferocity (stronger monsters) Delirium effect to a map",
-    "potent-liquid-melancholy":      "Applies a powerful Melancholy Delirium effect to a map",
-    # Ancient variants → enchant Time-Lost Jewels
-    "ancient-diluted-liquid-greed":          "Enchants a Time-Lost Jewel with a weak Greed Delirium effect",
-    "ancient-diluted-liquid-guilt":          "Enchants a Time-Lost Jewel with a weak Guilt Delirium effect",
-    "ancient-diluted-liquid-ire":            "Enchants a Time-Lost Jewel with a weak Ire Delirium effect",
-    "ancient-liquid-despair":                "Enchants a Time-Lost Jewel with a Despair Delirium effect",
-    "ancient-liquid-disgust":                "Enchants a Time-Lost Jewel with a Disgust Delirium effect",
-    "ancient-liquid-envy":                   "Enchants a Time-Lost Jewel with an Envy Delirium effect",
-    "ancient-liquid-paranoia":               "Enchants a Time-Lost Jewel with a Paranoia Delirium effect",
-    "ancient-concentrated-liquid-fear":      "Enchants a Time-Lost Jewel with a potent Fear Delirium effect",
-    "ancient-concentrated-liquid-isolation": "Enchants a Time-Lost Jewel with a potent Isolation Delirium effect",
-    "ancient-concentrated-liquid-suffering": "Enchants a Time-Lost Jewel with a potent Suffering Delirium effect",
-    "ancient-potent-liquid-contempt":        "Enchants a Time-Lost Jewel with a powerful Contempt Delirium effect",
-    "ancient-potent-liquid-ferocity":        "Enchants a Time-Lost Jewel with a powerful Ferocity Delirium effect",
-    "ancient-potent-liquid-melancholy":      "Enchants a Time-Lost Jewel with a powerful Melancholy Delirium effect",
-
-    # ── Abyss Bones (socket into items to add Abyss mods via desecration) ──
-    # Gnawed < Ancient < Preserved quality tiers; Altered = special variant
-    "gnawed-rib":          "Socket into armour to add an Abyss (bone) modifier (lowest tier rib)",
-    "ancient-rib":         "Socket into armour to add an Abyss modifier (mid tier rib)",
-    "preserved-rib":       "Socket into armour to add an Abyss modifier (highest tier rib)",
-    "gnawed-jawbone":      "Socket into a weapon or quiver to add an Abyss modifier (lowest tier)",
-    "ancient-jawbone":     "Socket into a weapon or quiver to add an Abyss modifier (mid tier)",
-    "preserved-jawbone":   "Socket into a weapon or quiver to add an Abyss modifier (highest tier)",
-    "gnawed-collarbone":   "Socket into an amulet, ring, or belt to add an Abyss modifier (lowest tier)",
-    "ancient-collarbone":  "Socket into an amulet, ring, or belt to add an Abyss modifier (mid tier)",
-    "altered-collarbone":  "Socket into an amulet, ring, or belt to add a special Abyss modifier (altered variant)",
-    "preserved-collarbone":"Socket into an amulet, ring, or belt to add an Abyss modifier (highest tier)",
-    "preserved-cranium":   "Socket into a helmet to add an Abyss modifier (highest tier cranium)",
-    "preserved-vertebrae": "Socket into a body armour to add an Abyss modifier (highest tier vertebrae)",
-    # Unique Abyss Gaze jewels
-    "amanamus-gaze":  "Unique Abyss jewel: Amanamu's Gaze — grants special Abyss-themed bonuses",
-    "kurgals-gaze":   "Unique Abyss jewel: Kurgal's Gaze — grants special Abyss-themed bonuses",
-    "tecrods-gaze":   "Unique Abyss jewel: Tecrod's Gaze — grants special Abyss-themed bonuses",
-    "ulamans-gaze":   "Unique Abyss jewel: Ulaman's Gaze — grants special Abyss-themed bonuses",
-
-    # ── Uncut Gems ──────────────────────────────────────────────────────────
-    **{f"uncut-skill-gem-level-{lvl}":   f"Cut to create a level {lvl} active skill gem of your choice"
-       for lvl in range(14, 21)},
-    **{f"uncut-spirit-gem-level-{lvl}":  f"Cut to create a level {lvl} spirit (trigger/reserve) gem of your choice"
-       for lvl in range(14, 21)},
-
-    # ── Idols ────────────────────────────────────────────────────────────────
-    "fox-idol":  "Socket in an Atlas tower to apply a fox spirit tower modifier",
-    "bear-idol": "Socket in an Atlas tower to apply a bear spirit tower modifier",
-    "wolf-idol": "Socket in an Atlas tower to apply a wolf spirit tower modifier",
-    "stag-idol": "Socket in an Atlas tower to apply a stag spirit tower modifier",
-    "boar-idol": "Socket in an Atlas tower to apply a boar spirit tower modifier",
-    "owl-idol":  "Socket in an Atlas tower to apply an owl spirit tower modifier",
-
-    # ── Omens ────────────────────────────────────────────────────────────────
-    "omen-of-whittling":         "Single-use crafting item: reforges a modifier on an item",
-    "omen-of-sinistral-erasure": "Single-use crafting item: removes a prefix modifier from an item",
-    "omen-of-dextral-erasure":   "Single-use crafting item: removes a suffix modifier from an item",
-    "omen-of-amelioration":      "Single-use crafting item: upgrades a modifier to a higher tier",
-    "omen-of-resurgence":        "Single-use item: restores life and mana to full during combat",
-
-    # ── Lineage Support Gems ─────────────────────────────────────────────────
-    "seraphs-heart": "Lineage support gem from the Runes of Aldur league mechanic",
-
-    # ── Expedition Artifacts ─────────────────────────────────────────────────
-    "chilling-flux": "Expedition reagent: adds cold-related modifiers to excavated items",
-
-    # ── Verisium ─────────────────────────────────────────────────────────────
-    "runic-alloy": "Verisium crafting material used to upgrade runes to Perfect quality",
-
-    # ── Fragments ────────────────────────────────────────────────────────────
-    "kulemaks-invitation": "Opens access to the Kulemak pinnacle boss encounter",
-    "simulacrum":          "Opens a Simulacrum encounter (crafted from 300 Simulacrum Splinters)",
+    # Simulacrum: wiki page is an encounter page, not an {{Item}} page
+    # The map fragment "Simulacrum (map fragment)" has a separate page
+    "simulacrum": "Opens a Simulacrum encounter (crafted from 300 splinters)",
 }
 
 
-def _slug_to_description(slug: str) -> str | None:
+# slug → display name — built at import time from EXCHANGE_SLUGS
+_SLUG_TO_DISPLAY = {
+    slug: name
+    for items in EXCHANGE_SLUGS.values()
+    for name, slug in items
+}
+
+
+def _slug_to_description(slug: str, pdb=None) -> str | None:
     """Look up description for any exchange item slug.
 
-    Checks EXCHANGE_DESCRIPTIONS first, then falls back to CURRENCIES effect field.
+    Priority:
+    1. item_descriptions DB (wiki-sourced, if pdb provided)
+    2. CURRENCIES effect field (for Runes, Essences, SoulCores already there)
+    3. EXCHANGE_DESCRIPTIONS fallback dict (manual, legacy)
     """
-    if slug in EXCHANGE_DESCRIPTIONS:
-        return EXCHANGE_DESCRIPTIONS[slug]
-    # Fall back to CURRENCIES for Runes, Essences, SoulCores, Fragments
+    # 1. Wiki-sourced item_descriptions via display name
+    if pdb is not None:
+        display_name = _SLUG_TO_DISPLAY.get(slug)
+        if display_name:
+            d = pdb.get_item_desc(display_name)
+            if d:
+                desc = d.get('description', '').strip()
+                if desc:
+                    return desc
+                notes = d.get('crafting_notes', '').strip()
+                if notes:
+                    return notes
+
+    # 2. CURRENCIES effect field
     for entry in CURRENCIES:
         if entry[4] == slug:
             return entry[3]
+
+    # 3. Legacy fallback
+    if slug in EXCHANGE_DESCRIPTIONS:
+        return EXCHANGE_DESCRIPTIONS[slug]
+
     return None
 
 
-def search_exchange_items(keyword: str = "", limit: int = 20) -> list[dict]:
+def search_exchange_items(keyword: str = "", limit: int = 20, pdb=None) -> list[dict]:
     """Search all exchange items by keyword.
+
+    Args:
+        keyword: filter term (searches name, description, category)
+        limit:   max results
+        pdb:     optional PriceDatabase — enables wiki-sourced descriptions
+                 from item_descriptions table (preferred over manual fallback)
 
     Returns dicts with keys: name, slug, item_type, category, description.
     """
@@ -335,7 +248,7 @@ def search_exchange_items(keyword: str = "", limit: int = 20) -> list[dict]:
         for name, slug in items:
             if slug in seen:
                 continue
-            desc = _slug_to_description(slug) or ""
+            desc = _slug_to_description(slug, pdb=pdb) or ""
             if kw:
                 if kw not in name.lower() and kw not in desc.lower() and kw not in cat.lower():
                     continue
@@ -351,6 +264,21 @@ def search_exchange_items(keyword: str = "", limit: int = 20) -> list[dict]:
                 return results
 
     return results
+
+
+def all_exchange_item_names() -> list[str]:
+    """Return all unique display names across all exchange item categories.
+
+    Used by item-desc-seed to bulk-fetch from poe2wiki.
+    """
+    seen: set[str] = set()
+    names: list[str] = []
+    for items in EXCHANGE_SLUGS.values():
+        for name, _slug in items:
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
 
 
 # Internal category names for each poe.ninja type (mirrors economy._ITEM_TYPE_TO_CATEGORY)

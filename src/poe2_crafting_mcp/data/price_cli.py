@@ -511,12 +511,12 @@ def cmd_general(args: argparse.Namespace) -> int:
     exalt_rate = _get_exalt_rate(pdb, league)
     print(_h("General Price"))
     _fmt_price_row(row, exalt_rate=exalt_rate)
-    # Show description if available (from CURRENCIES effect or EXCHANGE_DESCRIPTIONS)
+    # Show description if available (wiki item_descriptions preferred, then fallback)
     trade_id = row.get("trade_id") or ""
     if trade_id:
         try:
             from poe2_crafting_mcp.data.general_items import _slug_to_description
-            desc = _slug_to_description(trade_id)
+            desc = _slug_to_description(trade_id, pdb=pdb)
             if desc:
                 print(f"  {_DIM}{desc}{_RESET}")
         except Exception:

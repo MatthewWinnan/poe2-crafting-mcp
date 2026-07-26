@@ -608,27 +608,44 @@ def _cmd_item_desc_seed(argv: list[str]) -> int:
     n_concepts = pdb.upsert_item_descs_bulk(ITEM_DESCRIPTIONS)
     print(f"  {n_concepts} mechanic concept entries seeded from built-ins.")
 
-    print("Collecting item names from PoB DB…")
+    from poe2_crafting_mcp.data.general_items import all_exchange_item_names
+
+    print("Collecting item names from PoB DB and exchange lists…")
     currency_rows = db.search_currencies(limit=5000)
     base_rows = db.search_bases(limit=5000)
-    names: list[str] = []
     seen: set[str] = set()
+    names: list[str] = []
     for r in list(currency_rows) + list(base_rows):
         n = r['name']
         if n not in seen:
             seen.add(n)
             names.append(n)
-    print(f"  {len(names)} unique names ({len(currency_rows)} currencies, {len(base_rows)} bases)")
+    # Also include exchange item display names (catalysts, abyss jewels, wombgifts, etc.)
+    for n in all_exchange_item_names():
+        if n not in seen:
+            seen.add(n)
+            names.append(n)
+    print(f"  {len(names)} unique names "
+          f"({len(currency_rows)} currencies + {len(base_rows)} bases + exchange items)")
 
     if args.dry_run:
         print(f"{_YELLOW}Dry run — no DB writes.{_RESET}")
         return 0
 
     print(f"Fetching from poe2wiki.net in batches of 50…")
-    fetched, skipped = wiki.seed_from_db(pdb, db)
+    items = wiki.fetch_items(names)
+    fetched = 0
+    for item in items:
+        pdb.upsert_item_desc(**item)
+        fetched += 1
+    try:
+        pdb._conn.execute("INSERT INTO item_descriptions_fts(item_descriptions_fts) VALUES('rebuild')")
+        pdb._conn.commit()
+    except Exception:
+        pass
     ds = pdb.item_desc_status()
     print(f"\n{_GREEN}✓ Seeded {fetched} items from poe2wiki.net "
-          f"({skipped} not found on wiki).{_RESET}")
+          f"({len(names) - fetched} not found on wiki).{_RESET}")
     print(f"  {_BOLD}Total in DB:{_RESET} {ds.get('total', 0)}")
     return 0
 
@@ -917,7 +934,7 @@ def main() -> None:
 
     if "exchange" in types_to_search:
         from poe2_crafting_mcp.data.general_items import search_exchange_items
-        results = search_exchange_items(keyword=query, limit=args.limit)
+        results = search_exchange_items(keyword=query, limit=args.limit, pdb=_get_pdb())
         results = [e for e in results if e["name"].lower() not in currency_names_shown]
         if results:
             found_any = True
