@@ -1138,6 +1138,107 @@ def _cmd_craft_compare(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_craft_item(argv: list[str]) -> int:
+    """Analyze a found/traded item and show crafting options."""
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup craft-item",
+        description=(
+            "Analyze an item's current mods and show what can still be crafted.\n"
+            "Pass mod texts as they appear on the item (from trade or in-game)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("target", help="Base name or item class slug")
+    p.add_argument("--ilvl", type=int, default=82)
+    p.add_argument("--mods", nargs="+", required=True,
+                   help='Mod texts on the item (e.g. "+120 to maximum Life" "42%% to Fire Res")')
+    p.add_argument("--want", default="",
+                   help="Mod family you want to add (shows probability)")
+    p.add_argument("--currency", default="exalted",
+                   help="Currency to use for probability (default: exalted)")
+    args = p.parse_args(argv)
+
+    pdb = _get_pdb()
+    item_class = _resolve_item_class(args.target)
+
+    mod_pool = pdb.get_craftable_mods(item_class, args.ilvl, "normal")
+
+    from poe2_crafting_mcp.crafting.simulator import CraftingSimulator
+    sim = CraftingSimulator(item_class, args.ilvl, mod_pool)
+
+    # Identify the mods
+    identified = sim.identify_mods_from_text(args.mods)
+
+    print(_h(f"Item Analysis: {item_class} (ilvl {args.ilvl})"))
+    print()
+    print(f"  {_BOLD}Current Mods:{_RESET}")
+    prefixes = []
+    suffixes = []
+    unknown = []
+    for m in identified:
+        fam = m['family']
+        atype = m['affix_type']
+        if fam == "(unknown)":
+            unknown.append(m)
+            print(f"    {_RED}? {m['text']}{_RESET}")
+        elif atype == 'prefix':
+            prefixes.append(fam)
+            print(f"    {_CYAN}P{_RESET} {m['text']}  {_DIM}→ {fam}{_RESET}")
+        else:
+            suffixes.append(fam)
+            print(f"    {_YELLOW}S{_RESET} {m['text']}  {_DIM}→ {fam}{_RESET}")
+
+    print()
+    print(f"  {_BOLD}Slots:{_RESET} {len(prefixes)}/3 prefixes, {len(suffixes)}/3 suffixes")
+    open_p = 3 - len(prefixes)
+    open_s = 3 - len(suffixes)
+    print(f"  {_BOLD}Open:{_RESET}  {open_p} prefix, {open_s} suffix")
+
+    # Set the item state
+    all_families = prefixes + suffixes
+    sim.set_item_mods(all_families)
+
+    if unknown:
+        print(f"\n  {_YELLOW}⚠ {len(unknown)} mod(s) not identified — pool may be inaccurate{_RESET}")
+
+    # Show available pool summary
+    pool = sim.get_available_pool(min_mod_level=0)
+    pool_prefixes = [m for m in pool if m['affix_type'] == 'prefix']
+    pool_suffixes = [m for m in pool if m['affix_type'] == 'suffix']
+    total_weight = sum(m['weight'] for m in pool)
+
+    print(f"\n  {_BOLD}Available pool:{_RESET} {len(pool)} tiers "
+          f"({len(pool_prefixes)} prefix, {len(pool_suffixes)} suffix)")
+
+    # If --want specified, show probability
+    if args.want:
+        result = sim.probability_of(args.want, args.currency)
+        if result.get("probability", 0) > 0:
+            print(f"\n  {_BOLD}Chance to hit '{args.want}':{_RESET}")
+            print(f"    {_CYAN}{result['probability_pct']}%{_RESET} per {args.currency} "
+                  f"({result['expected_attempts']:.1f} expected attempts)")
+        else:
+            print(f"\n  {_RED}'{args.want}' not available (already on item or wrong ilvl){_RESET}")
+    else:
+        # Show top 5 most likely mods to hit
+        print(f"\n  {_BOLD}Most likely mods to hit (exalted):{_RESET}")
+        # Group by family
+        from collections import defaultdict
+        family_weights: dict[str, int] = defaultdict(int)
+        family_type: dict[str, str] = {}
+        for m in pool:
+            family_weights[m['family']] += m['weight']
+            family_type[m['family']] = m['affix_type']
+        sorted_families = sorted(family_weights.items(), key=lambda x: -x[1])
+        for fam, w in sorted_families[:8]:
+            pct = w / total_weight * 100 if total_weight else 0
+            atype = family_type[fam]
+            marker = f"{_CYAN}P{_RESET}" if atype == 'prefix' else f"{_YELLOW}S{_RESET}"
+            print(f"    {marker} {pct:5.1f}%  {fam}")
+
+    return 0
+
+
 _MOD_POOL_CMDS = {
     "mod-pool-status":  _cmd_mod_pool_status,
     "mod-pool-seed":    _cmd_mod_pool_seed,
@@ -1147,6 +1248,7 @@ _MOD_POOL_CMDS = {
     "influence-mods":   _cmd_influence_mods,
     "craft-cost":       _cmd_craft_cost,
     "craft-compare":    _cmd_craft_compare,
+    "craft-item":       _cmd_craft_item,
 }
 
 

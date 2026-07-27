@@ -417,6 +417,84 @@ class CraftingSimulator:
         """Set item rarity (affects max prefix/suffix slots)."""
         self.item.rarity = rarity
 
+    def identify_mod_family(self, mod_text: str) -> str | None:
+        """Match a mod stat text to its family name.
+
+        Useful for converting trade listing mods into family names for blocking.
+        Uses fuzzy matching: strips numbers from both sides and compares templates.
+
+        Args:
+            mod_text: stat text from a trade listing (e.g. "+120 to maximum Life")
+
+        Returns:
+            Family name (e.g. "IncreasedLife") or None if no match.
+        """
+        import re
+
+        # Normalize: replace all numbers (including ranges like "120-149") with #
+        def _normalize(text: str) -> str:
+            # Handle ranges like (120-149) or (1-4)
+            text = re.sub(r'\(?\d+\.?\d*\s*[-–—]\s*\d+\.?\d*\)?', '#', text)
+            # Handle single numbers with optional +/-
+            text = re.sub(r'[+-]?\d+\.?\d*', '#', text)
+            # Collapse multiple # into one
+            text = re.sub(r'#+', '#', text)
+            # Normalize +# to just # for matching
+            text = text.replace('+#', '#')
+            return text.lower().strip()
+
+        target = _normalize(mod_text)
+        best_match = None
+        best_score = 0
+
+        # Build a set of unique (normalized_text → family) from all mods
+        seen: dict[str, str] = {}
+        for mod in self._all_mods:
+            norm = _normalize(mod['stat_text'])
+            if norm not in seen:
+                seen[norm] = mod['family']
+
+        # Try exact match first
+        if target in seen:
+            return seen[target]
+
+        # Fuzzy: find SHORTEST containing match (most specific)
+        for norm, family in seen.items():
+            if target in norm or norm in target:
+                # Prefer shorter matches (more specific)
+                # "# to maximum life" matching "# to maximum life" (len=18) is better
+                # than matching "#% increased energy shield # to maximum life" (len=48)
+                if target == norm:
+                    return family
+                # For substring: prefer the one closest in length to target
+                score = 1.0 / (1 + abs(len(norm) - len(target)))
+                if score > best_score:
+                    best_score = score
+                    best_match = family
+
+        return best_match
+
+    def identify_mods_from_text(self, mod_texts: list[str]) -> list[dict]:
+        """Identify multiple mod texts → family names.
+
+        Returns list of {text, family, affix_type} for each matched mod.
+        """
+        results = []
+        for text in mod_texts:
+            family = self.identify_mod_family(text)
+            affix_type = ""
+            if family:
+                for mod in self._all_mods:
+                    if mod['family'] == family:
+                        affix_type = mod['affix_type']
+                        break
+            results.append({
+                "text": text,
+                "family": family or "(unknown)",
+                "affix_type": affix_type or "?",
+            })
+        return results
+
     def roll_mod(self, min_mod_level: int = 0, gentype_only: int = 0) -> ModInstance | None:
         """Roll a random mod from the available pool (for simulation)."""
         pool = self.get_available_pool(min_mod_level=min_mod_level, gentype_only=gentype_only)
