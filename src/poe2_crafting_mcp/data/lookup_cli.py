@@ -941,6 +941,144 @@ def _cmd_influence_mods(argv: list[str]) -> int:
     return _cmd_mod_pool_query([args.target, '--ilvl', str(args.ilvl), '--pool', args.influence])
 
 
+def _cmd_craft_cost(argv: list[str]) -> int:
+    """Estimate crafting cost for a target mod."""
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup craft-cost",
+        description="Estimate expected cost to hit a target mod on an item.",
+    )
+    p.add_argument("target", help="Base name or item class slug")
+    p.add_argument("mod_family", help="Mod family (e.g. IncreasedLife, LocalIncreasedEnergyShield)")
+    p.add_argument("--currency", default="exalted", help="Currency to use (default: exalted)")
+    p.add_argument("--ilvl", type=int, default=82)
+    p.add_argument("--tier", type=int, default=0, help="Target specific tier (0=any)")
+    p.add_argument("--omen", default="", help="Omen to use (e.g. sinistral_exaltation)")
+    p.add_argument("--price", type=float, default=1.0, help="Currency price in chaos (default: 1)")
+    args = p.parse_args(argv)
+
+    pdb = _get_pdb()
+
+    # Resolve item class
+    target = args.target
+    item_class = None
+    from poe2_crafting_mcp.data.poe2db_client import ALL_ITEM_CLASSES, base_tags_to_item_class
+    if target in ALL_ITEM_CLASSES:
+        item_class = target
+    else:
+        from poe2_crafting_mcp.data.database import PoBDatabase
+        try:
+            db = PoBDatabase()
+            bases = db.search_bases(keyword=target, limit=1)
+            if bases:
+                item_class = base_tags_to_item_class(bases[0]['slot'], bases[0].get('tags', []))
+                print(f"  {_DIM}Resolved: {bases[0]['name']} → {item_class}{_RESET}")
+        except FileNotFoundError:
+            pass
+    if not item_class:
+        item_class = target.replace(' ', '_')
+
+    mod_pool = pdb.get_craftable_mods(item_class, args.ilvl, "normal")
+
+    from poe2_crafting_mcp.crafting.simulator import CraftingSimulator
+    sim = CraftingSimulator(item_class, args.ilvl, mod_pool)
+    result = sim.estimate_cost(
+        target_family=args.mod_family,
+        currency=args.currency,
+        omen=args.omen,
+        target_tier=args.tier,
+        currency_price=args.price,
+    )
+
+    if result.get("error"):
+        print(f"  {_RED}{result['error']}{_RESET}")
+        return 1
+
+    if result.get("probability", 0) == 0:
+        print(f"  {_RED}Target '{args.mod_family}' not in available pool.{_RESET}")
+        note = result.get("note", "")
+        if note:
+            print(f"  {_DIM}{note}{_RESET}")
+        return 1
+
+    print(_h(f"Craft Cost: {args.mod_family} on {item_class}"))
+    print(f"  {_BOLD}Currency:{_RESET}    {args.currency}"
+          + (f" + {args.omen}" if args.omen else ""))
+    print(f"  {_BOLD}Probability:{_RESET} {_CYAN}{result['probability_pct']}%{_RESET}"
+          f"  (weight {result['target_weight']}/{result['total_weight']})")
+    print(f"  {_BOLD}Pool size:{_RESET}   {result['available_pool_size']} eligible tiers")
+    print(f"  {_BOLD}Expected:{_RESET}    {_YELLOW}{result['expected_attempts']}{_RESET} attempts")
+    print(f"  {_BOLD}Cost/try:{_RESET}    {result['cost_per_attempt']:.1f}c")
+    print(f"  {_BOLD}Total cost:{_RESET}  {_GREEN}{result['expected_cost']:.1f}c{_RESET} expected")
+    return 0
+
+
+def _cmd_craft_compare(argv: list[str]) -> int:
+    """Compare crafting methods for a target mod."""
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup craft-compare",
+        description="Compare crafting methods to find cheapest path to a target mod.",
+    )
+    p.add_argument("target", help="Base name or item class slug")
+    p.add_argument("mod_family", help="Mod family (e.g. IncreasedLife)")
+    p.add_argument("--ilvl", type=int, default=82)
+    p.add_argument("--tier", type=int, default=0, help="Target specific tier (0=any)")
+    args = p.parse_args(argv)
+
+    pdb = _get_pdb()
+
+    # Resolve item class
+    target = args.target
+    item_class = None
+    from poe2_crafting_mcp.data.poe2db_client import ALL_ITEM_CLASSES, base_tags_to_item_class
+    if target in ALL_ITEM_CLASSES:
+        item_class = target
+    else:
+        from poe2_crafting_mcp.data.database import PoBDatabase
+        try:
+            db = PoBDatabase()
+            bases = db.search_bases(keyword=target, limit=1)
+            if bases:
+                item_class = base_tags_to_item_class(bases[0]['slot'], bases[0].get('tags', []))
+                print(f"  {_DIM}Resolved: {bases[0]['name']} → {item_class}{_RESET}")
+        except FileNotFoundError:
+            pass
+    if not item_class:
+        item_class = target.replace(' ', '_')
+
+    mod_pool = pdb.get_craftable_mods(item_class, args.ilvl, "normal")
+
+    from poe2_crafting_mcp.crafting.simulator import CraftingSimulator
+    sim = CraftingSimulator(item_class, args.ilvl, mod_pool)
+    results = sim.compare_methods(
+        target_family=args.mod_family,
+        target_tier=args.tier,
+    )
+
+    if not results:
+        print(f"  {_RED}Target '{args.mod_family}' not achievable with any method.{_RESET}")
+        return 1
+
+    print(_h(f"Method Comparison: {args.mod_family} on {item_class}"))
+    print(f"  {_DIM}ilvl={args.ilvl}, tier={'any' if args.tier == 0 else args.tier}{_RESET}")
+    print()
+    print(f"  {'Currency':<22} {'Prob%':>6} {'Attempts':>8} {'Cost/try':>8} {'Total':>8}")
+    print(f"  {'─'*22} {'─'*6} {'─'*8} {'─'*8} {'─'*8}")
+    for r in results:
+        cur = r.get('currency', '?')
+        prob = r.get('probability_pct', 0)
+        att = r.get('expected_attempts', 0)
+        cpa = r.get('cost_per_attempt', 0)
+        total = r.get('expected_cost', 0)
+        color = _GREEN if r == results[0] else _RESET
+        print(f"  {color}{cur:<22} {prob:>5.1f}% {att:>7.1f}x  {cpa:>7.1f}c {total:>7.1f}c{_RESET}")
+
+    print()
+    best = results[0]
+    print(f"  {_GREEN}→ Best: {best['currency']} at {best['expected_cost']:.1f}c "
+          f"({best['probability_pct']}% per attempt){_RESET}")
+    return 0
+
+
 _MOD_POOL_CMDS = {
     "mod-pool-status":  _cmd_mod_pool_status,
     "mod-pool-seed":    _cmd_mod_pool_seed,
@@ -948,6 +1086,8 @@ _MOD_POOL_CMDS = {
     "essence-mods":     _cmd_essence_mods,
     "desecrated-mods":  _cmd_desecrated_mods,
     "influence-mods":   _cmd_influence_mods,
+    "craft-cost":       _cmd_craft_cost,
+    "craft-compare":    _cmd_craft_compare,
 }
 
 

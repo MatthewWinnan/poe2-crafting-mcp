@@ -654,6 +654,136 @@ def get_influence_mods(base_name: str, influence: str, ilvl: int = 100) -> str:
 
 
 @mcp.tool()
+def estimate_craft_cost(
+    base_name: str,
+    target_mod: str,
+    currency: str = "exalted",
+    ilvl: int = 82,
+    target_tier: int = 0,
+    omen: str = "",
+    currency_price: float = 0,
+    omen_price: float = 0,
+) -> str:
+    """
+    Estimate the expected cost to hit a target mod on an item.
+
+    Calculates probability, expected attempts, and cost for a specific
+    crafting currency applied to a base item targeting a specific mod family.
+
+    Args:
+        base_name: Base item name or poe2db slug (e.g. "Gold Gloves", "Boots_int")
+        target_mod: Mod family to target (e.g. "IncreasedLife", "LocalIncreasedEnergyShield").
+                    Use get_craftable_mods() to find available family names.
+        currency: Currency to use — "transmute", "augment", "regal", "exalted", "chaos",
+                  "greater_transmute", "greater_exalted", "perfect_transmute", etc.
+        ilvl: Item level (default 82 — unlocks all tiers for most mods)
+        target_tier: 0 = any tier in family (default), N = specific tier only
+        omen: Optional omen — "sinistral_exaltation", "dextral_coronation", etc.
+        currency_price: Price per currency use in chaos equivalent (0 = use default)
+        omen_price: Price of omen in chaos (0 = not used)
+
+    Returns:
+        JSON with: probability, probability_pct, expected_attempts, expected_cost,
+        target_weight, total_weight, available_pool_size, currency, omen
+    """
+    from poe2_crafting_mcp.data.poe2db_client import base_tags_to_item_class, ALL_ITEM_CLASSES
+    from poe2_crafting_mcp.data.price_db import PriceDatabase
+    from poe2_crafting_mcp.crafting.simulator import CraftingSimulator
+
+    pdb = PriceDatabase()
+
+    # Resolve item class
+    item_class = None
+    if base_name in ALL_ITEM_CLASSES:
+        item_class = base_name
+    else:
+        try:
+            db = _get_db()
+            bases = db.search_bases(keyword=base_name, limit=1)
+            if bases:
+                item_class = base_tags_to_item_class(
+                    bases[0]['slot'], bases[0].get('tags', []))
+        except Exception:
+            pass
+    if not item_class:
+        item_class = base_name.replace(' ', '_')
+
+    # Get mod pool
+    mod_pool = pdb.get_craftable_mods(item_class, ilvl, "normal")
+
+    # Create simulator and calculate
+    sim = CraftingSimulator(item_class, ilvl, mod_pool)
+    result = sim.estimate_cost(
+        target_family=target_mod,
+        currency=currency,
+        omen=omen,
+        target_tier=target_tier,
+        currency_price=currency_price or 1.0,
+        omen_price=omen_price,
+    )
+    result['item_class'] = item_class
+    result['ilvl'] = ilvl
+    result['target_mod'] = target_mod
+    return _to_json(result)
+
+
+@mcp.tool()
+def compare_craft_methods(
+    base_name: str,
+    target_mod: str,
+    ilvl: int = 82,
+    target_tier: int = 0,
+) -> str:
+    """
+    Compare multiple crafting methods for hitting a target mod.
+
+    Shows which currency/method is cheapest to hit the desired mod,
+    accounting for pool narrowing with Greater/Perfect currencies.
+
+    Args:
+        base_name: Base item name or poe2db slug
+        target_mod: Mod family to target (e.g. "IncreasedLife")
+        ilvl: Item level (default 82)
+        target_tier: 0 = any tier, N = specific tier
+
+    Returns:
+        JSON list of methods sorted by expected_cost (cheapest first),
+        each with: currency, probability_pct, expected_attempts, expected_cost
+    """
+    from poe2_crafting_mcp.data.poe2db_client import base_tags_to_item_class, ALL_ITEM_CLASSES
+    from poe2_crafting_mcp.data.price_db import PriceDatabase
+    from poe2_crafting_mcp.crafting.simulator import CraftingSimulator
+
+    pdb = PriceDatabase()
+
+    # Resolve item class
+    item_class = None
+    if base_name in ALL_ITEM_CLASSES:
+        item_class = base_name
+    else:
+        try:
+            db = _get_db()
+            bases = db.search_bases(keyword=base_name, limit=1)
+            if bases:
+                item_class = base_tags_to_item_class(
+                    bases[0]['slot'], bases[0].get('tags', []))
+        except Exception:
+            pass
+    if not item_class:
+        item_class = base_name.replace(' ', '_')
+
+    mod_pool = pdb.get_craftable_mods(item_class, ilvl, "normal")
+    sim = CraftingSimulator(item_class, ilvl, mod_pool)
+
+    results = sim.compare_methods(
+        target_family=target_mod,
+        target_tier=target_tier,
+    )
+    return _to_json({"item_class": item_class, "target_mod": target_mod,
+                     "ilvl": ilvl, "methods": results})
+
+
+@mcp.tool()
 def get_gem_info(name: str) -> str:
     """
     Get details for a specific gem by exact name.

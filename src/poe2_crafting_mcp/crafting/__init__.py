@@ -1,1 +1,1 @@
-"""Crafting probability engine — mod weights, recipes, simulations."""
+"""Crafting simulator package."""
