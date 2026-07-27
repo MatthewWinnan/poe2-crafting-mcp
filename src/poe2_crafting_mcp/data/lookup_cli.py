@@ -986,32 +986,62 @@ def _get_live_prices() -> dict[str, float]:
         league = pdb.get_meta("active_league") or ""
         if not league:
             return {}
-        # Map currency keys to search terms
-        _CURRENCY_NAMES = {
-            "transmute": "Orb of Transmutation",
-            "augment": "Orb of Augmentation",
+
+        prices: dict[str, float] = {}
+
+        # Currency prices (category='currency' in poe.ninja data)
+        _CURRENCY_LOOKUP = {
+            "transmute": "Orb Of Transmutation",
+            "augment": "Orb Of Augmentation",
             "regal": "Regal Orb",
-            "alchemy": "Orb of Alchemy",
+            "alchemy": "Orb Of Alchemy",
             "chaos": "Chaos Orb",
             "exalted": "Exalted Orb",
-            "annulment": "Orb of Annulment",
+            "annulment": "Orb Of Annulment",
             "divine": "Divine Orb",
-            "greater_transmute": "Greater Orb of Transmutation",
-            "greater_augment": "Greater Orb of Augmentation",
-            "greater_regal": "Greater Regal Orb",
-            "greater_chaos": "Greater Chaos Orb",
-            "greater_exalted": "Greater Exalted Orb",
-            "perfect_transmute": "Perfect Orb of Transmutation",
-            "perfect_augment": "Perfect Orb of Augmentation",
-            "perfect_regal": "Perfect Regal Orb",
-            "perfect_chaos": "Perfect Chaos Orb",
-            "perfect_exalted": "Perfect Exalted Orb",
+            "fracturing": "Fracturing Orb",
         }
-        prices = {}
-        for key, name in _CURRENCY_NAMES.items():
-            rows = pdb.search_prices(name, league, category="Currency", limit=1)
+        for key, name in _CURRENCY_LOOKUP.items():
+            rows = pdb.search_prices(name, league, limit=1)
             if rows and rows[0].get("chaos_value"):
                 prices[key] = rows[0]["chaos_value"]
+
+        # Omen prices (category='omen')
+        _OMEN_LOOKUP = {
+            "omen_sinistral_exaltation": "Omen of Sinistral Exaltation",
+            "omen_dextral_exaltation": "Omen of Dextral Exaltation",
+            "omen_sinistral_coronation": "Omen of Sinistral Coronation",
+            "omen_dextral_coronation": "Omen of Dextral Coronation",
+            "omen_sinistral_erasure": "Omen of Sinistral Erasure",
+            "omen_dextral_erasure": "Omen of Dextral Erasure",
+            "omen_sinistral_annulment": "Omen of Sinistral Annulment",
+            "omen_dextral_annulment": "Omen of Dextral Annulment",
+            "omen_greater_exaltation": "Omen of Greater Exaltation",
+            "omen_whittling": "Omen of Whittling",
+        }
+        for key, name in _OMEN_LOOKUP.items():
+            rows = pdb.search_prices(name, league, limit=1)
+            if rows and rows[0].get("chaos_value"):
+                prices[key] = rows[0]["chaos_value"]
+
+        # Greater/Perfect orbs aren't on poe.ninja directly — estimate from
+        # base orb ratios (Greater ~5-10x, Perfect ~50-100x base)
+        if "transmute" in prices:
+            prices.setdefault("greater_transmute", prices["transmute"] * 10)
+            prices.setdefault("perfect_transmute", prices["transmute"] * 100)
+        if "augment" in prices:
+            prices.setdefault("greater_augment", prices["augment"] * 10)
+            prices.setdefault("perfect_augment", prices["augment"] * 100)
+        if "regal" in prices:
+            prices.setdefault("greater_regal", prices["regal"] * 10)
+            prices.setdefault("perfect_regal", prices["regal"] * 100)
+        if "chaos" in prices:
+            prices.setdefault("greater_chaos", prices["chaos"] * 5)
+            prices.setdefault("perfect_chaos", prices["chaos"] * 25)
+        if "exalted" in prices:
+            prices.setdefault("greater_exalted", prices["exalted"] * 10)
+            prices.setdefault("perfect_exalted", prices["exalted"] * 50)
+
         return prices
     except Exception:
         return {}
