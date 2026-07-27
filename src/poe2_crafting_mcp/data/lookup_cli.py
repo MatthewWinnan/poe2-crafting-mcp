@@ -664,6 +664,211 @@ _ITEM_DESC_CMDS = {
 }
 
 
+# ── Mod pool subcommands ──────────────────────────────────────────────────────
+
+
+def _cmd_mod_pool_status(argv: list[str]) -> int:
+    """Show mod_weights table freshness."""
+    ms = _get_pdb().mod_weight_status()
+    status = ms.get("status", "unknown")
+    icons = {
+        "fresh":        f"{_GREEN}✓ fresh{_RESET}",
+        "stale":        f"{_YELLOW}⚠ stale (>14 days){_RESET}",
+        "never_seeded": f"{_RED}✗ never seeded{_RESET}",
+    }
+    print(_h("Mod Pool Status"))
+    print(f"  {_BOLD}Status:{_RESET}       {icons.get(status, status)}")
+    print(f"  {_BOLD}Total mods:{_RESET}   {ms.get('total', 0)}")
+    print(f"  {_BOLD}Item classes:{_RESET} {ms.get('item_classes', 0)}")
+    seeded_at = ms.get("seeded_at")
+    age_days = ms.get("age_days")
+    if seeded_at:
+        age_str = f"  {_DIM}({age_days:.1f}d ago){_RESET}" if age_days is not None else ""
+        print(f"  {_BOLD}Seeded:{_RESET}      {seeded_at}{age_str}")
+    if status != "fresh":
+        print(f"\n  {_YELLOW}→ Run: poe2-lookup mod-pool-seed{_RESET}")
+    return 0
+
+
+def _cmd_mod_pool_seed(argv: list[str]) -> int:
+    """Fetch mod spawn weights from poe2db.tw for all item classes."""
+    import time as _time
+
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup mod-pool-seed",
+        description="Fetch modifier spawn weights from poe2db.tw for all item classes.",
+    )
+    p.add_argument("--class", dest="item_class", default="",
+                   help="Seed a single item class (e.g. Gloves_int)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Show what would be fetched without writing")
+    p.add_argument("--delay", type=float, default=3.0,
+                   help="Seconds between requests (default: 3)")
+    args = p.parse_args(argv)
+
+    from poe2_crafting_mcp.data.poe2db_client import Poe2DbClient, ALL_ITEM_CLASSES
+
+    targets = [args.item_class] if args.item_class else ALL_ITEM_CLASSES
+
+    if args.dry_run:
+        print(f"{_BOLD}Would fetch mod weights for {len(targets)} item classes:{_RESET}")
+        for t in targets:
+            print(f"  {t}")
+        est = len(targets) * args.delay
+        print(f"\n  {_DIM}Estimated time: ~{est:.0f}s{_RESET}")
+        return 0
+
+    pdb = _get_pdb()
+    client = Poe2DbClient()
+    start = _time.time()
+
+    print(f"{_DIM}Fetching mod weights from poe2db.tw "
+          f"({len(targets)} classes, ~{len(targets) * args.delay:.0f}s)…{_RESET}",
+          flush=True)
+
+    total_mods = 0
+    failed: list[str] = []
+    for i, item_class in enumerate(targets):
+        if i > 0:
+            _time.sleep(args.delay)
+        try:
+            mods = client.fetch_item_class(item_class)
+            if mods:
+                pdb.clear_mod_weights(item_class)
+                pdb.upsert_mod_weights(mods)
+                total_mods += len(mods)
+                print(f"  {_DIM}[{i+1}/{len(targets)}] {item_class}: "
+                      f"{len(mods)} mods{_RESET}", flush=True)
+            else:
+                print(f"  {_YELLOW}[{i+1}/{len(targets)}] {item_class}: "
+                      f"no data{_RESET}", flush=True)
+        except Exception as exc:
+            failed.append(item_class)
+            print(f"  {_RED}[{i+1}/{len(targets)}] {item_class}: "
+                  f"ERROR {exc}{_RESET}", flush=True)
+
+    from datetime import datetime, timezone
+    pdb.set_meta("mod_weights_seeded_at",
+                 datetime.now(timezone.utc).isoformat())
+
+    elapsed = _time.time() - start
+    print(f"\n{_GREEN}✓ Seeded {total_mods} mods from {len(targets)} classes "
+          f"in {elapsed:.1f}s{_RESET}")
+    if failed:
+        print(f"  {_YELLOW}Failed: {', '.join(failed)}{_RESET}")
+    return 0
+
+
+def _fmt_craftable_mods(result: dict) -> None:
+    """Print craftable mods result in a readable format."""
+    ilvl = result['ilvl']
+    pool = result['pool']
+    item_class = result['item_class']
+
+    print(_h(f"Craftable Mods: {item_class} (ilvl {ilvl}, {pool})"))
+    print()
+
+    # Prefixes
+    prefixes = result['prefixes']
+    total_pw = result['total_prefix_weight']
+    print(f"  {_BOLD}Prefixes{_RESET} ({len(prefixes)} families, "
+          f"total weight {total_pw})")
+    for g in prefixes:
+        pct = g['weight'] / total_pw * 100 if total_pw else 0
+        top_tier = g['tiers'][0]  # highest tier (sorted by req_level DESC)
+        print(f"    {_CYAN}w={g['weight']:4d}{_RESET} "
+              f"{_DIM}({pct:4.1f}%){_RESET}  "
+              f"{top_tier['stat_text'][:55]}")
+        if len(g['tiers']) > 1:
+            print(f"           {_DIM}{len(g['tiers'])} tiers "
+                  f"(T1 ilvl≥{top_tier['req_level']}){_RESET}")
+
+    print()
+
+    # Suffixes
+    suffixes = result['suffixes']
+    total_sw = result['total_suffix_weight']
+    print(f"  {_BOLD}Suffixes{_RESET} ({len(suffixes)} families, "
+          f"total weight {total_sw})")
+    for g in suffixes:
+        pct = g['weight'] / total_sw * 100 if total_sw else 0
+        top_tier = g['tiers'][0]
+        print(f"    {_CYAN}w={g['weight']:4d}{_RESET} "
+              f"{_DIM}({pct:4.1f}%){_RESET}  "
+              f"{top_tier['stat_text'][:55]}")
+        if len(g['tiers']) > 1:
+            print(f"           {_DIM}{len(g['tiers'])} tiers "
+                  f"(T1 ilvl≥{top_tier['req_level']}){_RESET}")
+
+
+def _cmd_mod_pool_query(argv: list[str]) -> int:
+    """Query craftable mods for an item class or base name."""
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup mod-pool",
+        description="Query craftable mod pool for an item class or base item.",
+    )
+    p.add_argument("target", help="Item class slug (Gloves_int) or base name (Gold Gloves)")
+    p.add_argument("--ilvl", type=int, default=100, help="Item level (default: 100)")
+    p.add_argument("--pool", default="normal", help="Mod pool (default: normal)")
+    p.add_argument("--prefix", action="store_true", help="Show prefixes only")
+    p.add_argument("--suffix", action="store_true", help="Show suffixes only")
+    args = p.parse_args(argv)
+
+    pdb = _get_pdb()
+
+    # Determine item_class — either directly or by resolving a base name
+    target = args.target
+    item_class = None
+
+    # Check if it looks like a poe2db slug (contains underscore or is a known class)
+    from poe2_crafting_mcp.data.poe2db_client import ALL_ITEM_CLASSES
+    if target in ALL_ITEM_CLASSES:
+        item_class = target
+    else:
+        # Try to resolve as a base item name
+        from poe2_crafting_mcp.data.database import PoBDatabase
+        try:
+            db = PoBDatabase()
+            bases = db.search_bases(keyword=target, limit=1)
+            if bases:
+                base = bases[0]
+                from poe2_crafting_mcp.data.poe2db_client import base_tags_to_item_class
+                item_class = base_tags_to_item_class(
+                    base['slot'], base.get('tags', []))
+                if item_class:
+                    print(f"  {_DIM}Resolved: {base['name']} → {item_class}{_RESET}")
+        except FileNotFoundError:
+            pass
+
+    if not item_class:
+        # Last resort: try the target as-is
+        item_class = target.replace(' ', '_')
+
+    affix_type = ""
+    if args.prefix:
+        affix_type = "prefix"
+    elif args.suffix:
+        affix_type = "suffix"
+
+    result = pdb.get_craftable_mods(item_class, args.ilvl, args.pool, affix_type)
+
+    if not result['prefixes'] and not result['suffixes']:
+        print(f"  {_RED}No mods found for {item_class} (pool={args.pool}, "
+              f"ilvl={args.ilvl}).{_RESET}")
+        print(f"  {_DIM}Run 'poe2-lookup mod-pool-seed' if not yet seeded.{_RESET}")
+        return 1
+
+    _fmt_craftable_mods(result)
+    return 0
+
+
+_MOD_POOL_CMDS = {
+    "mod-pool-status": _cmd_mod_pool_status,
+    "mod-pool-seed":   _cmd_mod_pool_seed,
+    "mod-pool":        _cmd_mod_pool_query,
+}
+
+
 # ── Global status & seed-all ──────────────────────────────────────────────────
 
 
@@ -738,6 +943,18 @@ def _cmd_status(argv: list[str]) -> int:
         age_str = f"  {_DIM}({age:.1f}d ago){_RESET}" if age is not None else ""
         print(f"  {_BOLD}Seeded:{_RESET}  {ds['seeded_at']}{age_str}")
 
+    # ── Mod Weights ───────────────────────────────────────────────────────────
+    print()
+    ms = pdb.mod_weight_status()
+    print(_h("Mod Pool (poe2db weights)"))
+    print(f"  {_BOLD}Status:{_RESET}  {icons.get(ms.get('status', ''), ms.get('status', ''))}")
+    print(f"  {_BOLD}Total:{_RESET}   {ms.get('total', 0)} mods across "
+          f"{ms.get('item_classes', 0)} item classes")
+    if ms.get("seeded_at"):
+        age = ms.get("age_days")
+        age_str = f"  {_DIM}({age:.1f}d ago){_RESET}" if age is not None else ""
+        print(f"  {_BOLD}Seeded:{_RESET}  {ms['seeded_at']}{age_str}")
+
     # ── Summary hint ──────────────────────────────────────────────────────────
     needs_work = []
     if not etl_row:
@@ -746,6 +963,8 @@ def _cmd_status(argv: list[str]) -> int:
         needs_work.append("concepts")
     if ds.get("status") != "fresh":
         needs_work.append("item-descriptions")
+    if ms.get("status") != "fresh":
+        needs_work.append("mod-pool")
     if needs_work:
         print(f"\n  {_YELLOW}→ Run 'poe2-lookup seed-all' to populate: "
               f"{', '.join(needs_work)}{_RESET}")
@@ -971,7 +1190,7 @@ def main() -> None:
     # Pre-dispatch: management subcommands bypass the query parser
     if len(sys.argv) > 1:
         _cmd = sys.argv[1]
-        _dispatch = {**_GLOBAL_CMDS, **_CONCEPT_CMDS, **_ITEM_DESC_CMDS}
+        _dispatch = {**_GLOBAL_CMDS, **_CONCEPT_CMDS, **_ITEM_DESC_CMDS, **_MOD_POOL_CMDS}
         if _cmd in _dispatch:
             sys.exit(_dispatch[_cmd](sys.argv[2:]) or 0)
 
@@ -1051,6 +1270,10 @@ def main() -> None:
                         help="Maximum ilvl for bases (default 100)")
     parser.add_argument("--limit", "-l", type=int, default=10,
                         help="Max results per section (default 10)")
+    parser.add_argument("--craftable", action="store_true",
+                        help="Show craftable mod pool for a base item (with weights)")
+    parser.add_argument("--ilvl", type=int, default=100,
+                        help="Item level for --craftable (default 100)")
     parser.add_argument("--no-color", action="store_true",
                         help="Disable ANSI colour output")
 
@@ -1114,6 +1337,24 @@ def main() -> None:
                 desc = pdb.get_item_desc(b["name"])
                 _fmt_base(b, desc=desc)
                 print()
+
+            # If --craftable flag is set, show craftable mod pool for the first result
+            if args.craftable and results:
+                base = results[0]
+                from poe2_crafting_mcp.data.poe2db_client import base_tags_to_item_class
+                item_class = base_tags_to_item_class(
+                    base['slot'], base.get('tags', []))
+                if item_class:
+                    craft_result = pdb.get_craftable_mods(
+                        item_class, args.ilvl, "normal")
+                    if craft_result['prefixes'] or craft_result['suffixes']:
+                        _fmt_craftable_mods(craft_result)
+                    else:
+                        print(f"  {_YELLOW}No mod pool data for {item_class}. "
+                              f"Run: poe2-lookup mod-pool-seed{_RESET}")
+                else:
+                    print(f"  {_YELLOW}Cannot resolve item class for "
+                          f"{base['name']}{_RESET}")
 
     if "mods" in types_to_search:
         cat = args.category or "Item"

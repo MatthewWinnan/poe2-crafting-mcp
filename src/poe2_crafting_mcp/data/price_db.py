@@ -106,6 +106,26 @@ class PriceDatabase:
                 content='item_descriptions',
                 tokenize='unicode61'
             );
+            CREATE TABLE IF NOT EXISTS mod_weights (
+                item_class   TEXT NOT NULL,
+                pool         TEXT NOT NULL,
+                mod_code     TEXT NOT NULL,
+                affix_type   TEXT NOT NULL,
+                mod_family   TEXT NOT NULL,
+                mod_name     TEXT NOT NULL DEFAULT '',
+                stat_text    TEXT NOT NULL,
+                weight       INTEGER NOT NULL,
+                req_level    INTEGER NOT NULL,
+                tags         TEXT NOT NULL DEFAULT '[]',
+                updated_at   TEXT NOT NULL,
+                PRIMARY KEY (item_class, pool, mod_code)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mod_weights_class_pool
+                ON mod_weights(item_class, pool);
+            CREATE INDEX IF NOT EXISTS idx_mod_weights_family
+                ON mod_weights(mod_family);
+            CREATE INDEX IF NOT EXISTS idx_mod_weights_affix
+                ON mod_weights(item_class, pool, affix_type);
         """)
         self._conn.commit()
 
@@ -895,4 +915,176 @@ class PriceDatabase:
             "total":     total,
             "manual":    manual,
             "age_days":  age_days,
+        }
+
+    # ── Mod Weights (poe2db spawn weights) ────────────────────────────────────
+
+    def upsert_mod_weights(self, mods: list[dict]) -> int:
+        """Bulk upsert mod weight entries from poe2db scraper.
+
+        Each dict should have: item_class, pool, mod_code, affix_type,
+        mod_family, stat_text, weight, req_level, tags, name.
+
+        Returns number of rows upserted.
+        """
+        import json as _json
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        rows = []
+        for m in mods:
+            tags_json = _json.dumps(m.get('tags', []))
+            rows.append((
+                m['item_class'], m['pool'], m['mod_code'],
+                m['affix_type'], m['mod_family'], m.get('name', ''),
+                m['stat_text'], m['weight'], m['req_level'],
+                tags_json, now,
+            ))
+        self._conn.executemany("""
+            INSERT OR REPLACE INTO mod_weights
+                (item_class, pool, mod_code, affix_type, mod_family, mod_name,
+                 stat_text, weight, req_level, tags, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+        self._conn.commit()
+        return len(rows)
+
+    def clear_mod_weights(self, item_class: str | None = None) -> int:
+        """Delete mod weights, optionally for a single item class."""
+        if item_class:
+            cur = self._conn.execute(
+                "DELETE FROM mod_weights WHERE item_class = ?", (item_class,))
+        else:
+            cur = self._conn.execute("DELETE FROM mod_weights")
+        self._conn.commit()
+        return cur.rowcount
+
+    def get_craftable_mods(
+        self,
+        item_class: str,
+        ilvl: int = 100,
+        pool: str = "normal",
+        affix_type: str = "",
+    ) -> dict:
+        """Get all craftable mods for an item class at a given ilvl.
+
+        Returns a dict with:
+        - prefixes: list of mod groups with tiers, sorted by weight desc
+        - suffixes: same
+        - total_prefix_weight: sum of all prefix weights at this ilvl
+        - total_suffix_weight: sum of all suffix weights at this ilvl
+        - item_class: the queried class
+        - ilvl: the queried ilvl
+        - pool: the queried pool
+
+        Each mod group is:
+        {family, tiers: [{mod_code, name, stat_text, weight, req_level, tags}]}
+        The "active tier" at the given ilvl is the highest req_level <= ilvl.
+        """
+        import json as _json
+
+        q = """
+            SELECT * FROM mod_weights
+            WHERE item_class = ? AND pool = ? AND req_level <= ?
+        """
+        params: list = [item_class, pool, ilvl]
+        if affix_type:
+            q += " AND affix_type = ?"
+            params.append(affix_type)
+        q += " ORDER BY mod_family, req_level DESC"
+
+        rows = self._conn.execute(q, params).fetchall()
+
+        # Group by family + affix_type
+        # For probability: only the highest tier per family contributes weight
+        from collections import defaultdict
+        families: dict[str, dict] = {}  # key = family+affix_type
+
+        for row in rows:
+            r = dict(row)
+            r['tags'] = _json.loads(r['tags']) if r['tags'] else []
+            key = f"{r['affix_type']}:{r['mod_family']}"
+
+            if key not in families:
+                families[key] = {
+                    'family': r['mod_family'],
+                    'affix_type': r['affix_type'],
+                    'name': r['mod_name'],
+                    'weight': r['weight'],  # highest tier weight (first due to ORDER BY)
+                    'tiers': [],
+                }
+            families[key]['tiers'].append({
+                'mod_code': r['mod_code'],
+                'name': r['mod_name'],
+                'stat_text': r['stat_text'],
+                'weight': r['weight'],
+                'req_level': r['req_level'],
+                'tags': r['tags'],
+            })
+
+        # Split into prefix/suffix and calculate totals
+        prefixes = []
+        suffixes = []
+        total_prefix_weight = 0
+        total_suffix_weight = 0
+
+        for group in families.values():
+            # The weight that contributes to the pool is the weight of the
+            # highest tier (they all have the same weight per family typically,
+            # but take the first/highest to be safe)
+            w = group['weight']
+            if group['affix_type'] == 'prefix':
+                prefixes.append(group)
+                total_prefix_weight += w
+            elif group['affix_type'] == 'suffix':
+                suffixes.append(group)
+                total_suffix_weight += w
+
+        # Sort by weight descending
+        prefixes.sort(key=lambda g: -g['weight'])
+        suffixes.sort(key=lambda g: -g['weight'])
+
+        return {
+            'item_class': item_class,
+            'ilvl': ilvl,
+            'pool': pool,
+            'prefixes': prefixes,
+            'suffixes': suffixes,
+            'total_prefix_weight': total_prefix_weight,
+            'total_suffix_weight': total_suffix_weight,
+            'prefix_count': len(prefixes),
+            'suffix_count': len(suffixes),
+        }
+
+    def mod_weight_status(self) -> dict:
+        """Return freshness info for the mod_weights table."""
+        _STALE_DAYS = 14
+        seeded_at = self.get_meta("mod_weights_seeded_at")
+        try:
+            total = self._conn.execute(
+                "SELECT COUNT(*) FROM mod_weights"
+            ).fetchone()[0]
+            classes = self._conn.execute(
+                "SELECT COUNT(DISTINCT item_class) FROM mod_weights"
+            ).fetchone()[0]
+        except Exception:
+            total = 0
+            classes = 0
+
+        age_days: float | None = None
+        if seeded_at:
+            age_days = round(self._age_seconds(seeded_at) / 86400, 1)
+
+        if not seeded_at or total == 0:
+            status = "never_seeded"
+        elif age_days is not None and age_days > _STALE_DAYS:
+            status = "stale"
+        else:
+            status = "fresh"
+
+        return {
+            "status": status,
+            "seeded_at": seeded_at,
+            "total": total,
+            "item_classes": classes,
+            "age_days": age_days,
         }

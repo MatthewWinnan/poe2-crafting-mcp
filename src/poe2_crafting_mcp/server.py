@@ -506,6 +506,61 @@ def search_mods(keyword: str = "", item_tag: str = "",
 
 
 @mcp.tool()
+def get_craftable_mods(base_name: str, ilvl: int = 100,
+                       pool: str = "normal") -> str:
+    """
+    Get all mods that can roll on a base item with real spawn weights.
+
+    Shows the full mod pool with probabilities for crafting planning.
+    Use this to determine: what mods are available, how likely each is,
+    and whether alt-spamming vs essence vs trade is better value.
+
+    Args:
+        base_name: Base item name (e.g. "Gold Gloves", "Vaal Regalia")
+                   or poe2db item class slug (e.g. "Gloves_int", "Amulets").
+        ilvl:      Item level — determines which mod tiers are available.
+                   Higher ilvl = more/better tiers eligible. Default 100.
+        pool:      Mod pool — "normal" (default, standard crafting),
+                   "marksman" (Kolr's Hunt influence),
+                   "decay" (Katla's Gloom influence),
+                   "essence" (essence-guaranteed mods),
+                   "desecrated" (abyss desecrated mods).
+
+    Returns:
+        JSON with: item_class, ilvl, pool,
+        prefixes (list of {family, weight, name, tiers: [{stat_text, weight, req_level}]}),
+        suffixes (same structure),
+        total_prefix_weight, total_suffix_weight, prefix_count, suffix_count.
+
+        Probability of hitting a mod family = family_weight / total_weight_for_that_affix_type.
+    """
+    from poe2_crafting_mcp.data.poe2db_client import base_tags_to_item_class, ALL_ITEM_CLASSES
+    from poe2_crafting_mcp.data.price_db import PriceDatabase
+
+    pdb = PriceDatabase()
+
+    # Resolve base_name to item_class
+    item_class = None
+    if base_name in ALL_ITEM_CLASSES:
+        item_class = base_name
+    else:
+        try:
+            db = _get_db()
+            bases = db.search_bases(keyword=base_name, limit=1)
+            if bases:
+                item_class = base_tags_to_item_class(
+                    bases[0]['slot'], bases[0].get('tags', []))
+        except Exception:
+            pass
+
+    if not item_class:
+        item_class = base_name.replace(' ', '_')
+
+    result = pdb.get_craftable_mods(item_class, ilvl, pool)
+    return _to_json(result)
+
+
+@mcp.tool()
 def get_gem_info(name: str) -> str:
     """
     Get details for a specific gem by exact name.
