@@ -561,6 +561,63 @@ def get_craftable_mods(base_name: str, ilvl: int = 100,
 
 
 @mcp.tool()
+def get_desecrated_mods(base_name: str, ilvl: int = 100) -> str:
+    """
+    Get abyss desecrated mods available for an item base.
+
+    These are the special mods added by Altered Collarbone (and other abyss
+    jewels) via the desecration mechanic. Different from normal crafting mods.
+
+    Args:
+        base_name: Base item name or poe2db item class slug.
+        ilvl:      Item level (default 100).
+
+    Returns:
+        Same structure as get_craftable_mods with pool="desecrated".
+    """
+    return get_craftable_mods(base_name, ilvl, pool="desecrated")
+
+
+@mcp.tool()
+def get_essence_mods(base_name: str, ilvl: int = 100) -> str:
+    """
+    Get essence-guaranteed mods for an item base.
+
+    When using an Essence on an item, one mod slot is guaranteed to be
+    the essence mod. These are the available essence mods for this base.
+
+    Args:
+        base_name: Base item name or poe2db item class slug.
+        ilvl:      Item level (default 100).
+
+    Returns:
+        Same structure as get_craftable_mods with pool="essence".
+    """
+    return get_craftable_mods(base_name, ilvl, pool="essence")
+
+
+@mcp.tool()
+def get_influence_mods(base_name: str, influence: str, ilvl: int = 100) -> str:
+    """
+    Get influence-specific mods for an item base (Kolr's Hunt, Katla's Gloom, etc.).
+
+    These mods only roll when the corresponding Game Warp Rune is socketed.
+
+    Args:
+        base_name: Base item name or poe2db item class slug.
+        influence: Influence type — "marksman" (Kolr's Hunt),
+                   "decay" (Katla's Gloom), "chronomancy" (Uhtred's Sidereus),
+                   "destruction" (Thrud's Might), "berserking" (Vorana's Carnage),
+                   "soul" (Medved's Tending).
+        ilvl:      Item level (default 100).
+
+    Returns:
+        Same structure as get_craftable_mods with the specified influence pool.
+    """
+    return get_craftable_mods(base_name, ilvl, pool=influence)
+
+
+@mcp.tool()
 def get_gem_info(name: str) -> str:
     """
     Get details for a specific gem by exact name.

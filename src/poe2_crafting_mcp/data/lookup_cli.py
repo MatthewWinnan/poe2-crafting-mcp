@@ -862,10 +862,51 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_essence_mods(argv: list[str]) -> int:
+    """Query essence-guaranteed mods for an item class or base."""
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup essence-mods",
+        description="Show essence-guaranteed mods for an item base.",
+    )
+    p.add_argument("target", help="Base name or item class slug")
+    p.add_argument("--ilvl", type=int, default=100)
+    args = p.parse_args(argv)
+    # Reuse mod-pool with pool=essence
+    return _cmd_mod_pool_query([args.target, '--ilvl', str(args.ilvl), '--pool', 'essence'])
+
+
+def _cmd_desecrated_mods(argv: list[str]) -> int:
+    """Query abyss desecrated mods for an item class or base."""
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup desecrated-mods",
+        description="Show abyss desecrated mods for an item base.",
+    )
+    p.add_argument("target", help="Base name or item class slug")
+    p.add_argument("--ilvl", type=int, default=100)
+    args = p.parse_args(argv)
+    return _cmd_mod_pool_query([args.target, '--ilvl', str(args.ilvl), '--pool', 'desecrated'])
+
+
+def _cmd_influence_mods(argv: list[str]) -> int:
+    """Query influence mods (marksman, decay, etc.) for an item class or base."""
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup influence-mods",
+        description="Show influence-specific mods for an item base.",
+    )
+    p.add_argument("target", help="Base name or item class slug")
+    p.add_argument("influence", help="marksman, decay, chronomancy, destruction, berserking, soul")
+    p.add_argument("--ilvl", type=int, default=100)
+    args = p.parse_args(argv)
+    return _cmd_mod_pool_query([args.target, '--ilvl', str(args.ilvl), '--pool', args.influence])
+
+
 _MOD_POOL_CMDS = {
-    "mod-pool-status": _cmd_mod_pool_status,
-    "mod-pool-seed":   _cmd_mod_pool_seed,
-    "mod-pool":        _cmd_mod_pool_query,
+    "mod-pool-status":  _cmd_mod_pool_status,
+    "mod-pool-seed":    _cmd_mod_pool_seed,
+    "mod-pool":         _cmd_mod_pool_query,
+    "essence-mods":     _cmd_essence_mods,
+    "desecrated-mods":  _cmd_desecrated_mods,
+    "influence-mods":   _cmd_influence_mods,
 }
 
 

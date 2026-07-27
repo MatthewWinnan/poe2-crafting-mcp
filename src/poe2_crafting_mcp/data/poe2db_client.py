@@ -213,11 +213,9 @@ class Poe2DbClient:
         """
         drop_chance = entry.get('DropChance')
 
-        # Skip entries with no weight
-        if not drop_chance:
-            return None
-
         # Convert DropChance to int (it may be a string or int)
+        if drop_chance is None:
+            return None
         try:
             weight = int(drop_chance)
         except (ValueError, TypeError):
@@ -226,7 +224,10 @@ class Poe2DbClient:
             except (ValueError, TypeError):
                 return None
 
-        if weight <= 0:
+        # For the "normal" pool, skip 0-weight mods (not rollable).
+        # For special pools (essence, desecrated, corrupted, etc.), keep
+        # 0-weight entries — they represent guaranteed/selectable mods.
+        if weight <= 0 and pool == "normal":
             return None
 
         # Determine prefix/suffix from ModGenerationTypeID
