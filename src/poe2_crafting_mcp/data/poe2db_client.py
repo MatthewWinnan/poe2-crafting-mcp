@@ -147,6 +147,24 @@ def _strip_html_tags(text: str) -> str:
     return ' '.join(text.split()).strip()
 
 
+def _parse_stat_range(text: str) -> tuple[float | None, float | None]:
+    """Extract (min, max) numeric values from stat text like '+(30-39) to maximum Life'."""
+    # Range in parens: (30-39) or (30—39)
+    m = re.search(r"\((-?[\d.]+)[—\-–](-?[\d.]+)\)", text)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    # "Adds X to Y" pattern: Adds (4-6) to (7-11) — take overall min/max
+    ranges = re.findall(r"\((-?[\d.]+)[—\-–](-?[\d.]+)\)", text)
+    if len(ranges) >= 2:
+        return float(ranges[0][0]), float(ranges[-1][1])
+    # Single number
+    m = re.search(r"[+]?(-?[\d.]+)%?", text)
+    if m:
+        v = float(m.group(1))
+        return v, v
+    return None, None
+
+
 class Poe2DbClient:
     """Scrape modifier spawn weights from poe2db.tw item class pages."""
 
@@ -340,3 +358,145 @@ class Poe2DbClient:
         log.info('Total: %d mods from %d item classes (%d requests)',
                  len(all_mods), len(targets), self._request_count)
         return all_mods
+
+    # ── Essence scraping ─────────────────────────────────────────────────────
+
+    def fetch_essences(self) -> list[dict]:
+        """Fetch all essences from poe2db.tw/us/Essence.
+
+        Returns list of dicts ready for DB insertion:
+        [{name, tier, base_name, effect_type, item_slots, stat_text, stat_min, stat_max}]
+        """
+        log.info('Fetching essences from poe2db…')
+        html = self._get_html('Essence')
+        return self._parse_essences_html(html)
+
+    def _parse_essences_html(self, html: str) -> list[dict]:
+        """Parse the Essence page HTML into structured essence data.
+
+        Each essence is in a <div class="col"> block containing:
+        - <a class="item_currency ...">Name</a>
+        - <div class="explicitMod"> blocks for effect + slot-specific mods
+        """
+        results: list[dict] = []
+
+        # Split on each essence entry (anchored by the currency link pattern)
+        # Each essence starts with: href="Essence_Name">...Name...</a>
+        # We extract blocks between item_currency anchors
+        essence_blocks = re.split(
+            r'<a\s+class="item_currency[^"]*"[^>]*href="([^"]*)"[^>]*>',
+            html
+        )
+
+        # essence_blocks alternates: [pre, href1, content1, href2, content2, ...]
+        i = 1
+        while i < len(essence_blocks) - 1:
+            href = essence_blocks[i]
+            content = essence_blocks[i + 1]
+            i += 2
+
+            # Extract name from the content (text before first </a>)
+            name_match = re.search(r'(?:<[^>]*>)*\s*([^<]+?)\s*</a>', content)
+            if not name_match:
+                continue
+            # Sometimes the name has embedded HTML; clean it
+            raw_name = name_match.group(1).strip()
+            if not raw_name:
+                # Try extracting from alt attr in img
+                alt_match = re.search(r'alt="([^"]+)"', content)
+                if alt_match:
+                    raw_name = alt_match.group(1)
+                else:
+                    continue
+
+            # Validate this is an essence (not a nav link or other item)
+            if 'Essence of' not in raw_name and 'Alloy' not in raw_name:
+                continue
+
+            # Determine effect type from explicitMod divs
+            effect_type = 'upgrade'
+            if 'Removes a random modifier' in content:
+                effect_type = 'swap'
+
+            tier = _classify_essence_tier(raw_name)
+            base_name = _extract_base_name(raw_name)
+
+            # Extract slot: stat lines from explicitMod divs
+            # Pattern: <div class="explicitMod">SlotText: StatText</div>
+            mod_divs = re.findall(
+                r'<div\s+class="explicitMod">(.*?)</div>',
+                content, re.DOTALL
+            )
+
+            for div_html in mod_divs:
+                # Skip the "Upgrades a Magic..." / "Removes a random..." line
+                if 'Upgrades a' in div_html or 'Removes a random' in div_html:
+                    continue
+
+                # Strip HTML tags to get clean text
+                clean = _strip_html_tags(div_html)
+                # Normalize dashes in stat ranges
+                clean = clean.replace('—', '-').replace('–', '-')
+
+                # Parse "Slots: stat text"
+                colon_idx = clean.find(':')
+                if colon_idx < 0:
+                    continue
+                item_slots = clean[:colon_idx].strip()
+                stat_text = clean[colon_idx + 1:].strip()
+
+                if not stat_text or not item_slots:
+                    continue
+                # Skip stack size lines
+                if item_slots.startswith('Stack'):
+                    continue
+
+                stat_min, stat_max = _parse_stat_range(stat_text)
+
+                results.append({
+                    'name': raw_name,
+                    'tier': tier,
+                    'base_name': base_name,
+                    'effect_type': effect_type,
+                    'item_slots': item_slots,
+                    'stat_text': stat_text,
+                    'stat_min': stat_min,
+                    'stat_max': stat_max,
+                })
+
+        log.info('Parsed %d essence effects from %d unique essences',
+                 len(results), len({r['name'] for r in results}))
+        return results
+
+
+def _classify_essence_tier(name: str) -> str:
+    """Determine tier from essence name."""
+    if name.startswith('Lesser '):
+        return 'Lesser'
+    if name.startswith('Greater '):
+        return 'Greater'
+    if name.startswith('Perfect '):
+        return 'Perfect'
+    if name.endswith(' Alloy'):
+        return 'Alloy'
+    # Check for corrupted essences (Hysteria, Delirium, Horror, Insanity, Abyss, Breach)
+    corrupted_names = {'Hysteria', 'Delirium', 'Horror', 'Insanity', 'the Abyss', 'the Breach'}
+    for cn in corrupted_names:
+        if f'of {cn}' in name:
+            return 'Corrupted'
+    return 'Normal'
+
+
+def _extract_base_name(name: str) -> str:
+    """Extract the base essence type from full name.
+
+    'Lesser Essence of the Body' → 'Body'
+    'Greater Essence of Flames' → 'Flames'
+    'Runic Alloy' → 'Runic'
+    """
+    if name.endswith(' Alloy'):
+        return name.replace(' Alloy', '')
+    m = re.match(r'(?:Lesser |Greater |Perfect )?Essence of (?:the )?(.+)', name)
+    if m:
+        return m.group(1).strip()
+    return name

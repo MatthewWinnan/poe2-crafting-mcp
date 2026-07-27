@@ -145,6 +145,31 @@ CREATE TABLE IF NOT EXISTS currencies (
 
 CREATE INDEX IF NOT EXISTS idx_currencies_category ON currencies(category);
 
+-- ── Essences ────────────────────────────────────────────────────────────────
+-- Scraped from poe2db.tw/us/Essence. Each row = one essence + one item slot effect.
+-- An essence may have multiple rows (one per applicable item slot).
+
+CREATE TABLE IF NOT EXISTS essences (
+    name        TEXT NOT NULL,       -- "Lesser Essence of the Body"
+    tier        TEXT NOT NULL,       -- "Lesser", "Normal", "Greater", "Perfect", "Corrupted", "Alloy"
+    base_name   TEXT NOT NULL,       -- "Body", "Mind", "Flames", etc.
+    effect_type TEXT NOT NULL,       -- "upgrade" (Magic→Rare) or "swap" (remove+add on Rare)
+    item_slots  TEXT NOT NULL,       -- applicable slots, e.g. "Armour or Belt"
+    stat_text   TEXT NOT NULL,       -- mod text, e.g. "+(30-39) to maximum Life"
+    stat_min    REAL,
+    stat_max    REAL,
+    PRIMARY KEY (name, item_slots)
+);
+
+CREATE INDEX IF NOT EXISTS idx_essences_tier      ON essences(tier);
+CREATE INDEX IF NOT EXISTS idx_essences_base_name ON essences(base_name);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS essences_fts USING fts5(
+    name, base_name, stat_text, item_slots,
+    content='essences',
+    tokenize='unicode61'
+);
+
 -- ── Prices (poe.ninja cache) ──────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS prices (

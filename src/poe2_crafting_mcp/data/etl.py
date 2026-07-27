@@ -77,11 +77,11 @@ def _init_db(conn: sqlite3.Connection) -> None:
 
 def _clear_tables(conn: sqlite3.Connection) -> None:
     for tbl in ("item_bases", "item_mods", "gems", "uniques", "passive_nodes",
-                "currencies", "concepts", "item_descriptions"):
+                "currencies", "concepts", "item_descriptions", "essences"):
         conn.execute(f"DELETE FROM {tbl}")
     # FTS tables need rebuilding
     for fts in ("item_mods_fts", "gems_fts", "uniques_fts", "passive_nodes_fts",
-                "concepts_fts", "item_descriptions_fts"):
+                "concepts_fts", "item_descriptions_fts", "essences_fts"):
         conn.execute(f"DELETE FROM {fts}")
     conn.commit()
 
@@ -426,6 +426,29 @@ def _load_item_descriptions(conn: sqlite3.Connection, db_path: Path | None = Non
     return pdb.upsert_item_descs_bulk(ITEM_DESCRIPTIONS)
 
 
+# ── Essences (poe2db scrape) ──────────────────────────────────────────────
+
+def _load_essences(conn: sqlite3.Connection) -> int:
+    """Scrape essences from poe2db.tw and insert into DB."""
+    from .poe2db_client import Poe2DbClient
+    client = Poe2DbClient()
+    essences = client.fetch_essences()
+    if not essences:
+        log.warning('No essences scraped — page structure may have changed')
+        return 0
+    rows = [
+        (e['name'], e['tier'], e['base_name'], e['effect_type'],
+         e['item_slots'], e['stat_text'], e.get('stat_min'), e.get('stat_max'))
+        for e in essences
+    ]
+    conn.executemany(
+        "INSERT OR REPLACE INTO essences VALUES (?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
 # ── FTS Rebuild ───────────────────────────────────────────────────────────────
 
 def _rebuild_fts(conn: sqlite3.Connection) -> None:
@@ -435,6 +458,7 @@ def _rebuild_fts(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT INTO passive_nodes_fts(passive_nodes_fts) VALUES ('rebuild')")
     conn.execute("INSERT INTO concepts_fts(concepts_fts) VALUES ('rebuild')")
     conn.execute("INSERT INTO item_descriptions_fts(item_descriptions_fts) VALUES ('rebuild')")
+    conn.execute("INSERT INTO essences_fts(essences_fts) VALUES ('rebuild')")
     conn.commit()
 
 
@@ -509,6 +533,10 @@ def run(pob_path: Path | None = None, db_path: Path | None = None,
     log.info("Loading item descriptions…")
     counts["item_descriptions"] = _load_item_descriptions(conn, db_path)
     log.info("  %d rows", counts["item_descriptions"])
+
+    log.info("Loading essences from poe2db…")
+    counts["essences"] = _load_essences(conn)
+    log.info("  %d rows", counts["essences"])
 
     log.info("Rebuilding FTS indexes…")
     _rebuild_fts(conn)

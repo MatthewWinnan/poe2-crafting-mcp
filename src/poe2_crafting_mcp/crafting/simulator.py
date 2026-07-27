@@ -36,6 +36,7 @@ class ItemState:
     rarity: str = "Normal"  # Normal/Magic/Rare
     mods: list[ModInstance] = field(default_factory=list)
     corrupted: bool = False
+    essence_mod_family: str | None = None  # tracks which family is the essence mod (one per item)
 
     @property
     def prefixes(self) -> list[ModInstance]:
@@ -90,6 +91,7 @@ class ItemState:
             rarity=self.rarity,
             mods=[ModInstance(**m.__dict__) for m in self.mods],
             corrupted=self.corrupted,
+            essence_mod_family=self.essence_mod_family,
         )
 
 
@@ -106,6 +108,8 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     "annulment":         {"op": "del", "qty": 1, "min_lv": 0,  "from_rarity": ["Magic", "Rare"]},
     "divine":            {"op": "divine", "min_lv": 0, "from_rarity": ["Magic", "Rare"]},
     "fracturing":        {"op": "fracture", "min_lv": 0, "from_rarity": ["Rare"], "min_mods": 4},
+    "scour":             {"op": "scour", "min_lv": 0, "from_rarity": ["Magic", "Rare"]},
+    "alteration":        {"op": "reroll", "qty": 2, "min_lv": 0, "to_rarity": "Magic", "from_rarity": ["Magic"]},
     # Greater
     "greater_transmute": {"op": "add", "qty": 1, "min_lv": 44, "to_rarity": "Magic", "from_rarity": ["Normal"]},
     "greater_augment":   {"op": "add", "qty": 1, "min_lv": 44, "from_rarity": ["Magic"]},
@@ -118,6 +122,13 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     "perfect_regal":     {"op": "add", "qty": 1, "min_lv": 50, "to_rarity": "Rare", "from_rarity": ["Magic"]},
     "perfect_chaos":     {"op": "del_add", "qty": 1, "min_lv": 50, "from_rarity": ["Rare"]},
     "perfect_exalted":   {"op": "add", "qty": 1, "min_lv": 50, "from_rarity": ["Rare"]},
+    # Essences — special ops, not standard currency
+    "lesser_essence":    {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Magic", "from_rarity": ["Normal"]},
+    "normal_essence":    {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Magic", "from_rarity": ["Normal"]},
+    "greater_essence":   {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Magic"]},
+    "perfect_essence":   {"op": "essence_swap", "min_lv": 0, "from_rarity": ["Rare"]},
+    # Reforging bench — 3-to-1 recycling, modeled as cost-equivalent alchemy
+    "reforge":           {"op": "reroll", "qty": 4, "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Normal", "Magic", "Rare"]},
 }
 
 # Omen gentype_only: 1=prefix, 2=suffix
@@ -132,6 +143,15 @@ OMENS: dict[str, dict[str, Any]] = {
     "dextral_annulment":    {"applies_to": ["annulment"], "del_gentype_only": 2},
     "sinistral_alchemy":    {"applies_to": ["alchemy"], "gentype_only": 1},  # maximize prefixes
     "dextral_alchemy":      {"applies_to": ["alchemy"], "gentype_only": 2},  # maximize suffixes
+    # Greater Exaltation: next exalt adds 2 mods instead of 1
+    "greater_exaltation":   {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "qty_override": 2},
+    # Whittling: next chaos removes lowest req_level mod (deterministic)
+    "whittling":            {"applies_to": ["chaos", "greater_chaos", "perfect_chaos"], "del_target": "lowest_req_level"},
+    # Homogenising: next exalt adds mod matching existing type tags
+    "homogenising_exaltation": {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "homogenise": True},
+    # Crystallisation: controls which affix type is removed by perfect essence
+    "sinistral_crystallisation": {"applies_to": ["perfect_essence"], "del_gentype_only": 1},
+    "dextral_crystallisation":   {"applies_to": ["perfect_essence"], "del_gentype_only": 2},
 }
 
 
@@ -517,68 +537,112 @@ class CraftingSimulator:
                 )
         return None  # shouldn't reach here
 
-    def apply_currency(self, currency: str, omen: str = "") -> ItemState:
-        """Apply a currency to the item, mutating state. Returns new state."""
+    def apply_currency(
+        self,
+        currency: str,
+        omen: str = "",
+        essence_family: str = "",
+    ) -> ItemState:
+        """Apply a currency to the item, mutating state. Returns new state.
+
+        Args:
+            currency: currency key from CURRENCIES dict
+            omen: optional omen key from OMENS dict
+            essence_family: for essence operations, the guaranteed mod family
+        """
         cur = CURRENCIES.get(currency)
         if not cur:
             raise ValueError(f"Unknown currency: {currency}")
+
+        # Validate: corrupted items can't be modified
+        if self.item.corrupted:
+            raise ValueError("Cannot apply currency to corrupted item")
+
+        # Validate: rarity constraint
+        from_rarity = cur.get("from_rarity")
+        if from_rarity and self.item.rarity not in from_rarity:
+            raise ValueError(
+                f"{currency} requires rarity {from_rarity}, item is {self.item.rarity}"
+            )
+
+        # Validate: min_mods constraint (e.g. fracturing orb needs 4+ mods)
+        min_mods = cur.get("min_mods", 0)
+        if min_mods and len(self.item.mods) < min_mods:
+            raise ValueError(
+                f"{currency} requires at least {min_mods} mods, item has {len(self.item.mods)}"
+            )
 
         op = cur["op"]
         min_lv = cur.get("min_lv", 0)
         gentype_only = 0
         del_gentype_only = 0
+        qty = cur.get("qty", 1)
+        del_target = ""
 
         if omen:
             omen_def = OMENS.get(omen, {})
             gentype_only = omen_def.get("gentype_only", 0)
             del_gentype_only = omen_def.get("del_gentype_only", 0)
+            del_target = omen_def.get("del_target", "")
+            if "qty_override" in omen_def:
+                qty = omen_def["qty_override"]
 
         # Rarity change
         if "to_rarity" in cur:
             self.item.rarity = cur["to_rarity"]
 
         if op == "add":
-            for _ in range(cur.get("qty", 1)):
+            for _ in range(qty):
                 mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
                 if mod:
                     self.item.mods.append(mod)
 
         elif op == "del_add":
             # Remove step
-            removable = self.item.removable_mods
-            if del_gentype_only == 1:
-                removable = [m for m in removable if m.affix_type == "prefix"]
-            elif del_gentype_only == 2:
-                removable = [m for m in removable if m.affix_type == "suffix"]
+            removable = self._get_removable(del_gentype_only, del_target)
             if removable:
-                to_remove = random.choice(removable)
+                to_remove = self._pick_removal_target(removable, del_target)
                 self.item.mods.remove(to_remove)
+                if to_remove.family == self.item.essence_mod_family:
+                    self.item.essence_mod_family = None
             # Add step
             mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
             if mod:
                 self.item.mods.append(mod)
 
         elif op == "del":
-            removable = self.item.removable_mods
-            if del_gentype_only == 1:
-                removable = [m for m in removable if m.affix_type == "prefix"]
-            elif del_gentype_only == 2:
-                removable = [m for m in removable if m.affix_type == "suffix"]
-            for _ in range(cur.get("qty", 1)):
+            removable = self._get_removable(del_gentype_only)
+            for _ in range(qty):
                 if removable:
                     to_remove = random.choice(removable)
                     self.item.mods.remove(to_remove)
-                    removable = self.item.removable_mods
+                    if to_remove.family == self.item.essence_mod_family:
+                        self.item.essence_mod_family = None
+                    removable = self._get_removable(del_gentype_only)
 
         elif op == "reroll":
-            # Remove all non-fractured mods
+            # Remove all non-fractured mods, clear essence tracking
             self.item.mods = [m for m in self.item.mods if m.fractured]
+            self.item.essence_mod_family = None
             # Add N mods
             for _ in range(cur.get("qty", 4)):
                 if self.item.open_affixes > 0:
                     mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
                     if mod:
                         self.item.mods.append(mod)
+
+        elif op == "scour":
+            self.item.mods = [m for m in self.item.mods if m.fractured]
+            self.item.rarity = "Normal"
+            self.item.essence_mod_family = None
+
+        elif op == "essence_upgrade":
+            # Greater Essence: Magic → Rare with guaranteed mod + random fill
+            self._apply_essence_upgrade(essence_family, min_lv, gentype_only)
+
+        elif op == "essence_swap":
+            # Perfect Essence: remove 1, add 1 guaranteed (NOT a reroll)
+            self._apply_essence_swap(essence_family, del_gentype_only)
 
         elif op == "fracture":
             non_fractured = [m for m in self.item.mods if not m.fractured]
@@ -590,6 +654,128 @@ class CraftingSimulator:
             pass  # Values reroll within tier — doesn't change mod structure
 
         return self.item
+
+    def _get_removable(
+        self, del_gentype_only: int = 0, del_target: str = ""
+    ) -> list[ModInstance]:
+        """Get removable mods filtered by omen targeting."""
+        removable = self.item.removable_mods
+        if del_gentype_only == 1:
+            removable = [m for m in removable if m.affix_type == "prefix"]
+        elif del_gentype_only == 2:
+            removable = [m for m in removable if m.affix_type == "suffix"]
+        return removable
+
+    def _pick_removal_target(
+        self, removable: list[ModInstance], del_target: str = ""
+    ) -> ModInstance:
+        """Pick which mod to remove. Deterministic for whittling, random otherwise."""
+        if del_target == "lowest_req_level" and removable:
+            return min(removable, key=lambda m: m.req_level)
+        return random.choice(removable)
+
+    def _apply_essence_upgrade(
+        self, essence_family: str, min_lv: int = 0, gentype_only: int = 0
+    ) -> None:
+        """Essence upgrade: Normal→Magic (lesser/normal) or Magic→Rare (greater).
+
+        Lesser/Normal: gives 1 guaranteed mod on Magic item.
+        Greater: gives 1 guaranteed mod + random fill to 4 mods on Rare item.
+        """
+        if not essence_family:
+            raise ValueError("essence_family required for essence operations")
+
+        # If item already has an essence mod, remove it (one per item rule)
+        if self.item.essence_mod_family:
+            self.item.mods = [
+                m for m in self.item.mods
+                if m.family != self.item.essence_mod_family or m.fractured
+            ]
+
+        # Add the guaranteed essence mod
+        essence_mod = self._find_essence_mod(essence_family)
+        if essence_mod:
+            self.item.mods.append(essence_mod)
+            self.item.essence_mod_family = essence_family
+
+        # Fill remaining slots randomly if upgrading to Rare (greater essence)
+        if self.item.rarity == "Rare":
+            target_count = 4
+            while len(self.item.mods) < target_count and self.item.open_affixes > 0:
+                mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
+                if mod:
+                    self.item.mods.append(mod)
+                else:
+                    break
+
+    def _apply_essence_swap(
+        self, essence_family: str, del_gentype_only: int = 0
+    ) -> None:
+        """Perfect Essence: remove 1 mod, add 1 guaranteed. NOT a reroll.
+
+        Slot-forcing: if the essence mod's affix type is full,
+        removal is forced to target that type (making room).
+        Crystallisation omen overrides: del_gentype_only controls removal type.
+        """
+        if not essence_family:
+            raise ValueError("essence_family required for perfect_essence")
+
+        # If item already has an essence mod, that mod is removed first (one per item)
+        if self.item.essence_mod_family:
+            old_essence = [
+                m for m in self.item.mods
+                if m.family == self.item.essence_mod_family and not m.fractured
+            ]
+            if old_essence:
+                self.item.mods.remove(old_essence[0])
+                self.item.essence_mod_family = None
+            # The essence mod counts as the "remove 1" step
+        else:
+            # Determine affix type of the essence mod for slot-forcing
+            essence_affix_type = self._get_family_affix_type(essence_family)
+
+            # Slot-forcing: if essence is suffix and all suffixes full, force suffix removal
+            # Crystallisation omen overrides this with explicit targeting
+            effective_del_gentype = del_gentype_only
+            if effective_del_gentype == 0 and essence_affix_type:
+                if essence_affix_type == "prefix" and self.item.open_prefixes == 0:
+                    effective_del_gentype = 1  # force prefix removal
+                elif essence_affix_type == "suffix" and self.item.open_suffixes == 0:
+                    effective_del_gentype = 2  # force suffix removal
+
+            removable = self._get_removable(effective_del_gentype)
+            if removable:
+                to_remove = random.choice(removable)
+                self.item.mods.remove(to_remove)
+
+        # Add guaranteed essence mod
+        essence_mod = self._find_essence_mod(essence_family)
+        if essence_mod:
+            self.item.mods.append(essence_mod)
+            self.item.essence_mod_family = essence_family
+
+    def _find_essence_mod(self, family: str) -> ModInstance | None:
+        """Find the best tier of a family in the pool and return as ModInstance."""
+        candidates = [m for m in self._all_mods if m['family'] == family and m['req_level'] <= self.ilvl]
+        if not candidates:
+            return None
+        # Essence guarantees best available tier (tier 1 = best)
+        best = min(candidates, key=lambda m: m['tier'])
+        return ModInstance(
+            family=best['family'],
+            affix_type=best['affix_type'],
+            tier=best['tier'],
+            req_level=best['req_level'],
+            weight=best['weight'],
+            stat_text=best['stat_text'],
+        )
+
+    def _get_family_affix_type(self, family: str) -> str:
+        """Look up whether a family is prefix or suffix."""
+        for mod in self._all_mods:
+            if mod['family'] == family:
+                return mod['affix_type']
+        return ""
 
     def simulate_craft(
         self,

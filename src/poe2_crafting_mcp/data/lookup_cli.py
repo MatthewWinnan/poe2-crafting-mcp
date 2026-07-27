@@ -234,6 +234,13 @@ def _fmt_currency(c: dict) -> None:
         print(f"    {c['effect']}")
 
 
+def _fmt_essence(e: dict) -> None:
+    tier = f"  {_DIM}[{e.get('tier','')}]{_RESET}"
+    slots = f"  {_DIM}{e.get('item_slots','')}{_RESET}"
+    print(f"  {_BOLD}{e['name']}{_RESET}{tier}")
+    print(f"    {e.get('item_slots','')}: {e.get('stat_text','')}")
+
+
 def _fmt_exchange(e: dict) -> None:
     cat = f"  {_DIM}[{e.get('category','')}]{_RESET}"
     print(f"  {_BOLD}{e['name']}{_RESET}{cat}")
@@ -821,6 +828,10 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
     p.add_argument("--prefix", action="store_true", help="Show prefixes only")
     p.add_argument("--suffix", action="store_true", help="Show suffixes only")
     p.add_argument("--tiers", action="store_true", help="Expand all tiers with individual weights")
+    p.add_argument("--essences", action="store_true", default=None,
+                   help="Include essence-guaranteed mods (default: on for normal pool)")
+    p.add_argument("--no-essences", action="store_true",
+                   help="Hide essence-guaranteed mods")
     p.add_argument("--mod", default="",
                    help="Filter to mods matching this text (e.g. 'Energy Shield', 'Life')")
     p.add_argument("--currency", default="",
@@ -836,6 +847,7 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
     # Determine item_class — either directly or by resolving a base name
     target = args.target
     item_class = None
+    item_slot = None  # for essence resolver
 
     # Check if it looks like a poe2db slug (contains underscore or is a known class)
     from poe2_crafting_mcp.data.poe2db_client import ALL_ITEM_CLASSES
@@ -849,11 +861,12 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
             bases = db.search_bases(keyword=target, limit=1)
             if bases:
                 base = bases[0]
+                item_slot = base['slot']
                 from poe2_crafting_mcp.data.poe2db_client import base_tags_to_item_class
                 item_class = base_tags_to_item_class(
                     base['slot'], base.get('tags', []))
                 if item_class:
-                    print(f"  {_DIM}Resolved: {base['name']} → {item_class}{_RESET}")
+                    print(f"  {_DIM}Resolved: {base['name']} → {item_class} (slot={item_slot}){_RESET}")
         except FileNotFoundError:
             pass
 
@@ -919,20 +932,114 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
             return 1
 
     _fmt_craftable_mods(result, show_tiers=args.tiers)
+
+    # Show essence-guaranteed mods if we know the slot
+    show_essences = (args.essences is True or
+                     (args.essences is None and not args.no_essences
+                      and args.pool == "normal"))
+    if show_essences and item_slot:
+        try:
+            from poe2_crafting_mcp.crafting.essence_resolver import EssenceResolver
+            resolver = EssenceResolver()
+            ess_mods = resolver.list_for_slot(item_slot)
+            if ess_mods:
+                # Filter by --mod if given
+                if args.mod:
+                    mod_filter = args.mod.lower()
+                    ess_mods = [e for e in ess_mods
+                                if mod_filter in e.stat_text.lower()
+                                or mod_filter in e.essence_name.lower()]
+                if ess_mods:
+                    print()
+                    print(f"  {_BOLD}Essence-Guaranteed Mods{_RESET} "
+                          f"({len(ess_mods)} for {item_slot})")
+                    current_tier = ""
+                    for m in sorted(ess_mods, key=lambda x: (
+                        {"Lesser": 0, "Normal": 1, "Greater": 2,
+                         "Perfect": 3, "Corrupted": 4, "Alloy": 5}.get(x.tier, 9),
+                        x.essence_name)):
+                        if m.tier != current_tier:
+                            current_tier = m.tier
+                            print(f"    {_YELLOW}{current_tier}{_RESET}")
+                        range_str = ""
+                        if m.stat_min is not None:
+                            range_str = f"({m.stat_min:.0f}-{m.stat_max:.0f})"
+                        slots_note = ""
+                        if m.item_slots != item_slot:
+                            slots_note = f" {_DIM}[{m.item_slots}]{_RESET}"
+                        print(f"      {m.essence_name:<36} "
+                              f"{_GREEN}{m.stat_text:<45}{_RESET} "
+                              f"{_DIM}{range_str}{_RESET}{slots_note}")
+        except Exception:
+            pass  # essence resolver not available, skip silently
+
     return 0
 
 
 def _cmd_essence_mods(argv: list[str]) -> int:
-    """Query essence-guaranteed mods for an item class or base."""
+    """Show what essences give on a specific item slot."""
     p = argparse.ArgumentParser(
         prog="poe2-lookup essence-mods",
-        description="Show essence-guaranteed mods for an item base.",
+        description="Show essence-guaranteed mods for an item slot or resolve a specific essence.",
     )
-    p.add_argument("target", help="Base name or item class slug")
-    p.add_argument("--ilvl", type=int, default=100)
+    p.add_argument("target", help="Item slot (Gloves, Bow) or essence name (Greater Essence of the Body)")
+    p.add_argument("--slot", default="", help="Item slot when target is an essence name")
+    p.add_argument("--tier", default="", help="Filter by tier: Lesser, Normal, Greater, Perfect")
     args = p.parse_args(argv)
-    # Reuse mod-pool with pool=essence
-    return _cmd_mod_pool_query([args.target, '--ilvl', str(args.ilvl), '--pool', 'essence'])
+
+    from poe2_crafting_mcp.crafting.essence_resolver import EssenceResolver
+    resolver = EssenceResolver()
+
+    # If target looks like an essence name (contains "Essence")
+    if "essence" in args.target.lower() or "alloy" in args.target.lower():
+        slot = args.slot
+        if not slot:
+            print(f"  {_RED}Provide --slot (e.g. --slot Gloves) when resolving a specific essence.{_RESET}")
+            return 1
+        mod = resolver.resolve(args.target, slot)
+        if not mod:
+            print(f"  {_RED}'{args.target}' does not apply to slot '{slot}'.{_RESET}")
+            return 1
+        print(f"  {_BOLD}{mod.essence_name}{_RESET}  {_DIM}[{mod.tier}]{_RESET}")
+        print(f"  Slot:  {mod.item_slots}")
+        print(f"  Mod:   {_GREEN}{mod.stat_text}{_RESET}")
+        if mod.stat_min is not None:
+            print(f"  Range: {mod.stat_min} – {mod.stat_max}")
+        print(f"  Type:  {mod.effect_type}")
+        return 0
+
+    # Otherwise treat target as an item slot — list all essences for it
+    # Try to resolve base name → slot
+    slot = args.target
+    from poe2_crafting_mcp.data.database import PoBDatabase
+    try:
+        db = PoBDatabase()
+        bases = db.search_bases(keyword=args.target, limit=1)
+        if bases:
+            slot = bases[0]['slot']
+            print(f"  {_DIM}Resolved: {bases[0]['name']} → slot={slot}{_RESET}")
+    except FileNotFoundError:
+        pass
+
+    mods = resolver.list_for_slot(slot, args.tier)
+    if not mods:
+        print(f"  {_RED}No essences found for slot '{slot}'.{_RESET}")
+        return 1
+
+    current_tier = ""
+    for m in sorted(mods, key=lambda x: (x.tier, x.essence_name)):
+        if m.tier != current_tier:
+            current_tier = m.tier
+            print(f"\n  {_BOLD}{_YELLOW}── {current_tier} ──{_RESET}")
+        range_str = ""
+        if m.stat_min is not None:
+            range_str = f" {_DIM}({m.stat_min}-{m.stat_max}){_RESET}"
+        print(f"  {m.essence_name:<40} {_GREEN}{m.stat_text}{_RESET}{range_str}")
+        if m.item_slots != slot:
+            print(f"  {' ' * 40} {_DIM}[{m.item_slots}]{_RESET}")
+
+    print(f"\n  {_DIM}{len(mods)} essences for {slot}{_RESET}")
+    return 0
 
 
 def _cmd_desecrated_mods(argv: list[str]) -> int:
@@ -1792,7 +1899,7 @@ _GLOBAL_CMDS = {
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 _ALL_TYPES = ("bases", "mods", "gems", "uniques", "nodes", "currencies",
-              "concepts", "exchange", "descriptions")
+              "concepts", "exchange", "descriptions", "essences")
 
 _TYPE_ALIASES: dict[str, str] = {
     # ── Data section aliases ───────────────────────────────────────────────────
@@ -1820,9 +1927,11 @@ _TYPE_ALIASES: dict[str, str] = {
     # concepts: keyword/mechanic definitions
     "concept": "concepts", "keyword": "concepts", "keywords": "concepts",
     "mechanic": "concepts", "mechanics": "concepts", "definition": "concepts",
-    # exchange: poe.ninja exchange items (runes, essences, catalysts, fragments…)
+    # essences: essence crafting data (mods per slot, tiers)
+    "essence": "essences",
+    # exchange: poe.ninja exchange items (runes, catalysts, fragments…)
     # Use this to look up prices for these consumable/exchange items
-    "rune": "exchange", "essence": "exchange", "catalyst": "exchange",
+    "rune": "exchange", "catalyst": "exchange",
     "delirium": "exchange", "breach": "exchange", "abyss": "exchange",
     "liquid": "exchange", "wombgift": "exchange", "fragment": "exchange",
     "soulcore": "exchange", "soul_core": "exchange",
@@ -2072,6 +2181,20 @@ def main() -> None:
                 _fmt_currency(c)
                 currency_names_shown.add(c["name"].lower())
                 print()
+
+    if "essences" in types_to_search:
+        from poe2_crafting_mcp.data.database import PoBDatabase
+        try:
+            edb = PoBDatabase()
+            results = edb.search_essences(keyword=query, limit=args.limit)
+            if results:
+                found_any = True
+                print(_h("Essences"))
+                for e in results:
+                    _fmt_essence(e)
+                    print()
+        except Exception:
+            pass
 
     if "concepts" in types_to_search:
         results = _get_pdb().search_concepts(keyword=query, limit=args.limit)

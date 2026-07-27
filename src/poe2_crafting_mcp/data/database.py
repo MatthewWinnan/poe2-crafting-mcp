@@ -346,6 +346,51 @@ class PoBDatabase:
         params.append(limit)
         return [_row_to_dict(r) for r in self._conn.execute(q, params)]
 
+    # ── Essences ──────────────────────────────────────────────────────────────
+
+    def search_essences(
+        self,
+        keyword: str = "",
+        tier: str = "",
+        base_name: str = "",
+        item_slots: str = "",
+        limit: int = 50,
+    ) -> list[dict]:
+        """Search essences by keyword, tier, base name, or item slot.
+
+        Args:
+            keyword:    FTS search across name, stat_text, item_slots
+            tier:       "Lesser", "Normal", "Greater", "Perfect", "Corrupted", "Alloy"
+            base_name:  e.g. "Body", "Flames", "Seeking"
+            item_slots: substring match on applicable slots
+            limit:      max rows
+        """
+        if keyword and not tier and not base_name and not item_slots:
+            # Use FTS for keyword-only search
+            try:
+                q = "SELECT e.* FROM essences e JOIN essences_fts f ON e.rowid = f.rowid WHERE essences_fts MATCH ? LIMIT ?"
+                return [_row_to_dict(r) for r in self._conn.execute(q, (keyword, limit))]
+            except Exception:
+                pass  # FTS not built yet, fall through to LIKE
+
+        q = "SELECT * FROM essences WHERE 1=1"
+        params: list = []
+        if keyword:
+            q += " AND (name LIKE ? OR stat_text LIKE ? OR item_slots LIKE ?)"
+            params.extend([f"%{keyword}%"] * 3)
+        if tier:
+            q += " AND tier = ?"
+            params.append(tier)
+        if base_name:
+            q += " AND base_name = ?"
+            params.append(base_name)
+        if item_slots:
+            q += " AND item_slots LIKE ?"
+            params.append(f"%{item_slots}%")
+        q += " ORDER BY name LIMIT ?"
+        params.append(limit)
+        return [_row_to_dict(r) for r in self._conn.execute(q, params)]
+
     # ── Summary ───────────────────────────────────────────────────────────────
 
     def expand_mod_tiers(
@@ -411,7 +456,7 @@ class PoBDatabase:
 
     def get_summary(self) -> dict[str, int]:
         """Return row counts for all tables."""
-        tables = ["item_bases", "item_mods", "gems", "uniques", "passive_nodes", "currencies"]
+        tables = ["item_bases", "item_mods", "gems", "uniques", "passive_nodes", "currencies", "essences"]
         return {t: self._conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in tables}
 
 

@@ -576,6 +576,7 @@ def get_craftable_mods(base_name: str, ilvl: int = 100,
 
     # Resolve base_name to item_class
     item_class = None
+    item_slot = None
     if base_name in ALL_ITEM_CLASSES:
         item_class = base_name
     else:
@@ -583,6 +584,7 @@ def get_craftable_mods(base_name: str, ilvl: int = 100,
             db = _get_db()
             bases = db.search_bases(keyword=base_name, limit=1)
             if bases:
+                item_slot = bases[0]['slot']
                 item_class = base_tags_to_item_class(
                     bases[0]['slot'], bases[0].get('tags', []))
         except Exception:
@@ -593,6 +595,29 @@ def get_craftable_mods(base_name: str, ilvl: int = 100,
 
     result = pdb.get_craftable_mods(item_class, ilvl, pool,
                                     min_mod_level=min_mod_level)
+
+    # Include essence-guaranteed mods when showing normal pool
+    if pool == "normal" and item_slot:
+        try:
+            from poe2_crafting_mcp.crafting.essence_resolver import EssenceResolver
+            resolver = EssenceResolver(os.environ.get("POE2_DB", "data/poe2_craft.db"))
+            ess_mods = resolver.list_for_slot(item_slot)
+            result["essence_mods"] = [
+                {
+                    "essence_name": m.essence_name,
+                    "tier": m.tier,
+                    "base_name": m.base_name,
+                    "effect_type": m.effect_type,
+                    "item_slots": m.item_slots,
+                    "stat_text": m.stat_text,
+                    "stat_min": m.stat_min,
+                    "stat_max": m.stat_max,
+                }
+                for m in ess_mods
+            ]
+        except Exception:
+            pass
+
     return _to_json(result)
 
 
@@ -890,6 +915,100 @@ def search_currencies(category: str = "", keyword: str = "") -> str:
 
 
 @mcp.tool()
+def search_essences(
+    keyword: str = "",
+    tier: str = "",
+    base_name: str = "",
+    item_slots: str = "",
+    limit: int = 20,
+) -> str:
+    """
+    Search the essence database for crafting information.
+
+    Each essence guarantees a specific mod when applied to an item.
+    Results show the guaranteed mod per applicable item slot.
+
+    Tiers:
+      - Lesser/Normal: Normal → Magic with 1 guaranteed mod
+      - Greater: Magic → Rare with guaranteed mod + random fill
+      - Perfect: removes 1 random mod, adds 1 guaranteed (Rare only)
+      - Corrupted: special essence-only mods (Hysteria, Horror, etc.)
+      - Alloy: special mods (Runic Alloy, Prismatic Alloy, etc.)
+
+    Args:
+        keyword:    Search name, stat text, or item slots (e.g. "fire", "life", "attack speed")
+        tier:       Filter by tier: "Lesser", "Normal", "Greater", "Perfect", "Corrupted", "Alloy"
+        base_name:  Filter by essence base type: "Body", "Flames", "Seeking", etc.
+        item_slots: Filter by applicable slots (e.g. "Weapon", "Armour", "Belt")
+        limit:      Max results (default 20)
+
+    Returns:
+        JSON array of {name, tier, base_name, effect_type, item_slots, stat_text, stat_min, stat_max}
+    """
+    return _to_json(_get_db().search_essences(keyword, tier, base_name, item_slots, limit))
+
+
+@mcp.tool()
+def resolve_essence(
+    essence_name: str = "",
+    base_name: str = "",
+    tier: str = "",
+    item_slot: str = "",
+) -> str:
+    """
+    Resolve what mod an essence gives on a specific item slot.
+
+    Either provide essence_name (full name) OR base_name + tier.
+    Always provide item_slot.
+
+    Args:
+        essence_name: Full name like "Greater Essence of the Body"
+        base_name:    Base name like "Body", "Haste" (use with tier)
+        tier:         "Lesser", "Normal", "Greater", "Perfect" (use with base_name)
+        item_slot:    Item slot from item_bases: "Gloves", "Bow", "Body Armour", etc.
+
+    Returns:
+        JSON with essence mod details including stat_text, stat_min, stat_max,
+        or error if essence doesn't apply to this slot.
+    """
+    from poe2_crafting_mcp.crafting.essence_resolver import EssenceResolver
+    resolver = EssenceResolver(os.environ.get("POE2_DB", "data/poe2_craft.db"))
+
+    if essence_name and item_slot:
+        mod = resolver.resolve(essence_name, item_slot)
+    elif base_name and tier and item_slot:
+        mod = resolver.resolve_by_base(base_name, tier, item_slot)
+    else:
+        return _to_json({"error": "Provide (essence_name + item_slot) or (base_name + tier + item_slot)"})
+
+    if not mod:
+        return _to_json({"error": f"Essence does not apply to slot '{item_slot}'"})
+
+    return _to_json(dataclasses.asdict(mod))
+
+
+@mcp.tool()
+def list_essences_for_slot(
+    item_slot: str,
+    tier: str = "",
+) -> str:
+    """
+    List all essences available for a given item slot.
+
+    Args:
+        item_slot: Item slot: "Gloves", "Bow", "Body Armour", "Ring", etc.
+        tier:      Optional filter: "Lesser", "Normal", "Greater", "Perfect"
+
+    Returns:
+        JSON array of essence mods available for this slot.
+    """
+    from poe2_crafting_mcp.crafting.essence_resolver import EssenceResolver
+    resolver = EssenceResolver(os.environ.get("POE2_DB", "data/poe2_craft.db"))
+    mods = resolver.list_for_slot(item_slot, tier)
+    return _to_json([dataclasses.asdict(m) for m in mods])
+
+
+@mcp.tool()
 def get_db_summary() -> str:
     """
     Return row counts for all game data tables.
@@ -1166,6 +1285,7 @@ def get_data_status() -> str:
         result["etl"] = {"status": "unknown"}
     result["concepts"] = pdb.concept_status()
     result["item_descriptions"] = pdb.item_desc_status()
+    result["mod_weights"] = pdb.mod_weight_status()
     return _to_json(result)
 
 
