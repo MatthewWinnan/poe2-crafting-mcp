@@ -325,6 +325,7 @@ class CraftingSimulator:
         target_family: str,
         target_tier: int = 0,
         methods: list[dict] | None = None,
+        prices: dict[str, float] | None = None,
     ) -> list[dict]:
         """Compare multiple crafting methods for hitting a target.
 
@@ -332,24 +333,45 @@ class CraftingSimulator:
             target_family: mod family to target
             target_tier: 0 = any tier, N = specific tier
             methods: list of {"currency": str, "omen": str, "price": float, "omen_price": float}
-                     If None, uses default methods.
+                     If None, uses default methods with live or fallback prices.
+            prices: dict of currency_key → chaos_value. If provided, overrides defaults.
 
         Returns:
             List of cost estimates sorted by expected_cost (cheapest first).
         """
+        # Default prices (fallback if no live data)
+        default_prices: dict[str, float] = {
+            "transmute": 0.01,
+            "augment": 0.02,
+            "regal": 0.5,
+            "alchemy": 0.3,
+            "chaos": 1.0,
+            "exalted": 5.0,
+            "annulment": 8.0,
+            "divine": 50.0,
+            "greater_transmute": 0.1,
+            "greater_augment": 0.2,
+            "greater_regal": 2.0,
+            "greater_chaos": 3.0,
+            "greater_exalted": 15.0,
+            "perfect_transmute": 2.0,
+            "perfect_augment": 4.0,
+            "perfect_regal": 10.0,
+            "perfect_chaos": 15.0,
+            "perfect_exalted": 50.0,
+        }
+        if prices:
+            default_prices.update(prices)
+
         if methods is None:
-            # Default comparison set
-            methods = [
-                {"currency": "exalted", "price": 1.0},
-                {"currency": "greater_exalted", "price": 3.0},
-                {"currency": "perfect_exalted", "price": 15.0},
-                {"currency": "chaos", "price": 0.1},
-                {"currency": "greater_chaos", "price": 0.5},
-                {"currency": "perfect_chaos", "price": 5.0},
-                {"currency": "transmute", "price": 0.01},
-                {"currency": "greater_transmute", "price": 0.1},
-                {"currency": "perfect_transmute", "price": 1.0},
-            ]
+            # Build default comparison set from all currencies that do "add" or "del_add"
+            methods = []
+            for key, cur in CURRENCIES.items():
+                if cur["op"] in ("add", "del_add"):
+                    methods.append({
+                        "currency": key,
+                        "price": default_prices.get(key, 1.0),
+                    })
 
         results = []
         for m in methods:
@@ -358,7 +380,7 @@ class CraftingSimulator:
                 currency=m.get("currency", "exalted"),
                 omen=m.get("omen", ""),
                 target_tier=target_tier,
-                currency_price=m.get("price", 1.0),
+                currency_price=m.get("price", default_prices.get(m.get("currency", ""), 1.0)),
                 omen_price=m.get("omen_price", 0.0),
             )
             if not est.get("error") and est.get("probability", 0) > 0:
@@ -366,6 +388,34 @@ class CraftingSimulator:
 
         results.sort(key=lambda r: r.get("expected_cost", float('inf')))
         return results
+
+    def set_item_mods(self, mod_families: list[str]) -> None:
+        """Set existing mods on the item (for blocked-pool calculations).
+
+        Args:
+            mod_families: list of family names already on the item.
+                          These will be excluded from the rolling pool.
+        """
+        self.item.mods = []
+        for family in mod_families:
+            # Find this family in our pool to determine its affix type
+            affix_type = "prefix"  # default
+            for mod in self._all_mods:
+                if mod['family'] == family:
+                    affix_type = mod['affix_type']
+                    break
+            self.item.mods.append(ModInstance(
+                family=family,
+                affix_type=affix_type,
+                tier=1,
+                req_level=1,
+                weight=0,
+                stat_text=f"(existing: {family})",
+            ))
+
+    def set_item_rarity(self, rarity: str) -> None:
+        """Set item rarity (affects max prefix/suffix slots)."""
+        self.item.rarity = rarity
 
     def roll_mod(self, min_mod_level: int = 0, gentype_only: int = 0) -> ModInstance | None:
         """Roll a random mod from the available pool (for simulation)."""

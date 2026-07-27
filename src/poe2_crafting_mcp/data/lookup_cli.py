@@ -941,6 +941,63 @@ def _cmd_influence_mods(argv: list[str]) -> int:
     return _cmd_mod_pool_query([args.target, '--ilvl', str(args.ilvl), '--pool', args.influence])
 
 
+def _resolve_item_class(target: str) -> str | None:
+    """Resolve a base name or slug to an item class. Returns None if unresolvable."""
+    from poe2_crafting_mcp.data.poe2db_client import ALL_ITEM_CLASSES, base_tags_to_item_class
+    if target in ALL_ITEM_CLASSES:
+        return target
+    from poe2_crafting_mcp.data.database import PoBDatabase
+    try:
+        db = PoBDatabase()
+        bases = db.search_bases(keyword=target, limit=1)
+        if bases:
+            ic = base_tags_to_item_class(bases[0]['slot'], bases[0].get('tags', []))
+            if ic:
+                print(f"  {_DIM}Resolved: {bases[0]['name']} → {ic}{_RESET}")
+                return ic
+    except FileNotFoundError:
+        pass
+    return target.replace(' ', '_')
+
+
+def _get_live_prices() -> dict[str, float]:
+    """Try to get live currency prices from the economy cache."""
+    try:
+        pdb = _get_pdb()
+        league = pdb.get_meta("active_league") or ""
+        if not league:
+            return {}
+        # Map currency keys to search terms
+        _CURRENCY_NAMES = {
+            "transmute": "Orb of Transmutation",
+            "augment": "Orb of Augmentation",
+            "regal": "Regal Orb",
+            "alchemy": "Orb of Alchemy",
+            "chaos": "Chaos Orb",
+            "exalted": "Exalted Orb",
+            "annulment": "Orb of Annulment",
+            "divine": "Divine Orb",
+            "greater_transmute": "Greater Orb of Transmutation",
+            "greater_augment": "Greater Orb of Augmentation",
+            "greater_regal": "Greater Regal Orb",
+            "greater_chaos": "Greater Chaos Orb",
+            "greater_exalted": "Greater Exalted Orb",
+            "perfect_transmute": "Perfect Orb of Transmutation",
+            "perfect_augment": "Perfect Orb of Augmentation",
+            "perfect_regal": "Perfect Regal Orb",
+            "perfect_chaos": "Perfect Chaos Orb",
+            "perfect_exalted": "Perfect Exalted Orb",
+        }
+        prices = {}
+        for key, name in _CURRENCY_NAMES.items():
+            rows = pdb.search_prices(name, league, category="Currency", limit=1)
+            if rows and rows[0].get("chaos_value"):
+                prices[key] = rows[0]["chaos_value"]
+        return prices
+    except Exception:
+        return {}
+
+
 def _cmd_craft_cost(argv: list[str]) -> int:
     """Estimate crafting cost for a target mod."""
     p = argparse.ArgumentParser(
@@ -953,40 +1010,47 @@ def _cmd_craft_cost(argv: list[str]) -> int:
     p.add_argument("--ilvl", type=int, default=82)
     p.add_argument("--tier", type=int, default=0, help="Target specific tier (0=any)")
     p.add_argument("--omen", default="", help="Omen to use (e.g. sinistral_exaltation)")
-    p.add_argument("--price", type=float, default=1.0, help="Currency price in chaos (default: 1)")
+    p.add_argument("--price", type=float, default=0, help="Currency price in chaos (0=auto from economy)")
+    p.add_argument("--existing-mods", default="",
+                   help="Comma-separated mod families already on item (blocks them from pool)")
     args = p.parse_args(argv)
 
     pdb = _get_pdb()
-
-    # Resolve item class
-    target = args.target
-    item_class = None
-    from poe2_crafting_mcp.data.poe2db_client import ALL_ITEM_CLASSES, base_tags_to_item_class
-    if target in ALL_ITEM_CLASSES:
-        item_class = target
-    else:
-        from poe2_crafting_mcp.data.database import PoBDatabase
-        try:
-            db = PoBDatabase()
-            bases = db.search_bases(keyword=target, limit=1)
-            if bases:
-                item_class = base_tags_to_item_class(bases[0]['slot'], bases[0].get('tags', []))
-                print(f"  {_DIM}Resolved: {bases[0]['name']} → {item_class}{_RESET}")
-        except FileNotFoundError:
-            pass
-    if not item_class:
-        item_class = target.replace(' ', '_')
+    item_class = _resolve_item_class(args.target)
 
     mod_pool = pdb.get_craftable_mods(item_class, args.ilvl, "normal")
 
     from poe2_crafting_mcp.crafting.simulator import CraftingSimulator
     sim = CraftingSimulator(item_class, args.ilvl, mod_pool)
+
+    # Set existing mods if specified (blocks those families from pool)
+    if args.existing_mods:
+        existing = [f.strip() for f in args.existing_mods.split(",") if f.strip()]
+        sim.set_item_mods(existing)
+        print(f"  {_DIM}Existing mods blocked: {', '.join(existing)}{_RESET}")
+
+    # Get price — use provided, or try live, or fallback
+    currency_price = args.price
+    if currency_price <= 0:
+        live_prices = _get_live_prices()
+        currency_price = live_prices.get(args.currency, 0)
+        if currency_price <= 0:
+            # Fallback defaults
+            from poe2_crafting_mcp.crafting.simulator import CraftingSimulator as _CS
+            # Use the default prices from compare_methods
+            currency_price = 1.0  # generic fallback
+            _defaults = {"transmute": 0.01, "augment": 0.02, "chaos": 1.0,
+                         "exalted": 5.0, "greater_transmute": 0.1,
+                         "greater_exalted": 15.0, "perfect_transmute": 2.0,
+                         "perfect_exalted": 50.0}
+            currency_price = _defaults.get(args.currency, 1.0)
+
     result = sim.estimate_cost(
         target_family=args.mod_family,
         currency=args.currency,
         omen=args.omen,
         target_tier=args.tier,
-        currency_price=args.price,
+        currency_price=currency_price,
     )
 
     if result.get("error"):
@@ -1022,36 +1086,31 @@ def _cmd_craft_compare(argv: list[str]) -> int:
     p.add_argument("mod_family", help="Mod family (e.g. IncreasedLife)")
     p.add_argument("--ilvl", type=int, default=82)
     p.add_argument("--tier", type=int, default=0, help="Target specific tier (0=any)")
+    p.add_argument("--existing-mods", default="",
+                   help="Comma-separated mod families already on item")
     args = p.parse_args(argv)
 
     pdb = _get_pdb()
-
-    # Resolve item class
-    target = args.target
-    item_class = None
-    from poe2_crafting_mcp.data.poe2db_client import ALL_ITEM_CLASSES, base_tags_to_item_class
-    if target in ALL_ITEM_CLASSES:
-        item_class = target
-    else:
-        from poe2_crafting_mcp.data.database import PoBDatabase
-        try:
-            db = PoBDatabase()
-            bases = db.search_bases(keyword=target, limit=1)
-            if bases:
-                item_class = base_tags_to_item_class(bases[0]['slot'], bases[0].get('tags', []))
-                print(f"  {_DIM}Resolved: {bases[0]['name']} → {item_class}{_RESET}")
-        except FileNotFoundError:
-            pass
-    if not item_class:
-        item_class = target.replace(' ', '_')
+    item_class = _resolve_item_class(args.target)
 
     mod_pool = pdb.get_craftable_mods(item_class, args.ilvl, "normal")
 
     from poe2_crafting_mcp.crafting.simulator import CraftingSimulator
     sim = CraftingSimulator(item_class, args.ilvl, mod_pool)
+
+    # Set existing mods
+    if args.existing_mods:
+        existing = [f.strip() for f in args.existing_mods.split(",") if f.strip()]
+        sim.set_item_mods(existing)
+        print(f"  {_DIM}Existing mods blocked: {', '.join(existing)}{_RESET}")
+
+    # Try live prices
+    live_prices = _get_live_prices()
+
     results = sim.compare_methods(
         target_family=args.mod_family,
         target_tier=args.tier,
+        prices=live_prices if live_prices else None,
     )
 
     if not results:
