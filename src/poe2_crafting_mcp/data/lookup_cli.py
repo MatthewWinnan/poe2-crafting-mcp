@@ -759,7 +759,7 @@ def _cmd_mod_pool_seed(argv: list[str]) -> int:
     return 0
 
 
-def _fmt_craftable_mods(result: dict) -> None:
+def _fmt_craftable_mods(result: dict, show_tiers: bool = False) -> None:
     """Print craftable mods result in a readable format."""
     ilvl = result['ilvl']
     pool = result['pool']
@@ -779,7 +779,12 @@ def _fmt_craftable_mods(result: dict) -> None:
         print(f"    {_CYAN}w={g['weight']:4d}{_RESET} "
               f"{_DIM}({pct:4.1f}%){_RESET}  "
               f"{top_tier['stat_text'][:55]}")
-        if len(g['tiers']) > 1:
+        if show_tiers:
+            for i, t in enumerate(g['tiers']):
+                tier_num = i + 1
+                print(f"           {_DIM}T{tier_num} ilvl≥{t['req_level']:2d}  "
+                      f"w={t['weight']:4d}  {t['stat_text'][:50]}{_RESET}")
+        elif len(g['tiers']) > 1:
             print(f"           {_DIM}{len(g['tiers'])} tiers "
                   f"(T1 ilvl≥{top_tier['req_level']}){_RESET}")
 
@@ -796,7 +801,12 @@ def _fmt_craftable_mods(result: dict) -> None:
         print(f"    {_CYAN}w={g['weight']:4d}{_RESET} "
               f"{_DIM}({pct:4.1f}%){_RESET}  "
               f"{top_tier['stat_text'][:55]}")
-        if len(g['tiers']) > 1:
+        if show_tiers:
+            for i, t in enumerate(g['tiers']):
+                tier_num = i + 1
+                print(f"           {_DIM}T{tier_num} ilvl≥{t['req_level']:2d}  "
+                      f"w={t['weight']:4d}  {t['stat_text'][:50]}{_RESET}")
+        elif len(g['tiers']) > 1:
             print(f"           {_DIM}{len(g['tiers'])} tiers "
                   f"(T1 ilvl≥{top_tier['req_level']}){_RESET}")
 
@@ -812,6 +822,7 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
     p.add_argument("--pool", default="normal", help="Mod pool (default: normal)")
     p.add_argument("--prefix", action="store_true", help="Show prefixes only")
     p.add_argument("--suffix", action="store_true", help="Show suffixes only")
+    p.add_argument("--tiers", action="store_true", help="Expand all tiers with individual weights")
     args = p.parse_args(argv)
 
     pdb = _get_pdb()
@@ -858,7 +869,7 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
         print(f"  {_DIM}Run 'poe2-lookup mod-pool-seed' if not yet seeded.{_RESET}")
         return 1
 
-    _fmt_craftable_mods(result)
+    _fmt_craftable_mods(result, show_tiers=args.tiers)
     return 0
 
 
