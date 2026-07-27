@@ -773,32 +773,40 @@ def _fmt_craftable_mods(result: dict, show_tiers: bool = False) -> None:
     print(_h(header))
     print()
 
-    def _fmt_group_list(groups: list, total_weight: int, label: str) -> None:
+    def _fmt_group_list(groups: list, total_weight: int, label: str,
+                       grand_total_weight: int = 0) -> None:
         print(f"  {_BOLD}{label}{_RESET} ({len(groups)} families, "
               f"total pool weight {total_weight})")
         for g in groups:
             fw = g['family_weight']
-            pct = fw / total_weight * 100 if total_weight else 0
+            affix_pct = fw / total_weight * 100 if total_weight else 0
+            all_pct = fw / grand_total_weight * 100 if grand_total_weight else affix_pct
             top_tier = g['tiers'][0]  # highest tier (sorted by req_level DESC)
-            print(f"    {_CYAN}{pct:5.1f}%{_RESET} "
-                  f"{_DIM}(w={fw}){_RESET}  "
-                  f"{top_tier['stat_text'][:52]}")
+            print(f"    {_CYAN}{affix_pct:5.1f}%{_RESET} "
+                  f"{_DIM}({all_pct:4.1f}% all | w={fw}){_RESET}  "
+                  f"{top_tier['stat_text'][:48]}")
             if show_tiers:
                 for i, t in enumerate(g['tiers']):
                     tier_num = i + 1
-                    tier_pct = t['weight'] / total_weight * 100 if total_weight else 0
+                    tier_affix_pct = t['weight'] / total_weight * 100 if total_weight else 0
+                    tier_all_pct = t['weight'] / grand_total_weight * 100 if grand_total_weight else tier_affix_pct
                     print(f"           {_DIM}T{tier_num} ilvl≥{t['req_level']:2d}  "
-                          f"{tier_pct:4.1f}% (w={t['weight']})  "
-                          f"{t['stat_text'][:42]}{_RESET}")
+                          f"{tier_affix_pct:4.1f}% ({tier_all_pct:4.1f}% all | w={t['weight']})  "
+                          f"{t['stat_text'][:38]}{_RESET}")
             elif len(g['tiers']) > 1:
                 print(f"           {_DIM}{len(g['tiers'])} tiers "
                       f"(T1 ilvl≥{top_tier['req_level']}){_RESET}")
 
+    # Grand total = prefix + suffix combined (for "all%" column)
+    grand_total = result['total_prefix_weight'] + result['total_suffix_weight']
+
     # Prefixes
-    _fmt_group_list(result['prefixes'], result['total_prefix_weight'], "Prefixes")
+    _fmt_group_list(result['prefixes'], result['total_prefix_weight'],
+                    "Prefixes", grand_total)
     print()
     # Suffixes
-    _fmt_group_list(result['suffixes'], result['total_suffix_weight'], "Suffixes")
+    _fmt_group_list(result['suffixes'], result['total_suffix_weight'],
+                    "Suffixes", grand_total)
 
 
 def _cmd_mod_pool_query(argv: list[str]) -> int:
