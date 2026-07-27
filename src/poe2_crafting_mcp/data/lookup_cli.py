@@ -1288,6 +1288,222 @@ def _cmd_craft_item(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_craft_sim(argv: list[str]) -> int:
+    """Run Monte Carlo simulation for a crafting target."""
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup craft-sim",
+        description=(
+            "Monte Carlo simulation: how many currency uses to hit target mod(s).\n"
+            "Simulates thousands of attempts and reports statistics."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("target", help="Base name or item class slug")
+    p.add_argument("--mods", required=True, nargs="+",
+                   help="Target mod families (e.g. PhysicalDamage FireDamage ColdDamage)")
+    p.add_argument("--ilvl", type=int, default=82)
+    p.add_argument("--currency", default="transmute",
+                   help="Currency to spam (default: transmute)")
+    p.add_argument("--tier", type=int, default=0,
+                   help="Target specific tier (0=any)")
+    p.add_argument("--runs", type=int, default=10000,
+                   help="Number of simulations (default: 10000)")
+    p.add_argument("--all", action="store_true",
+                   help="Require ALL listed mods on same item (not just any one)")
+    p.add_argument("--existing-mods", default="",
+                   help="Mods already on item (comma-separated families)")
+    args = p.parse_args(argv)
+
+    pdb = _get_pdb()
+    item_class = _resolve_item_class(args.target)
+
+    mod_pool = pdb.get_craftable_mods(item_class, args.ilvl, "normal")
+
+    from poe2_crafting_mcp.crafting.simulator import CraftingSimulator, CURRENCIES
+    import random
+    import time as _time
+
+    sim = CraftingSimulator(item_class, args.ilvl, mod_pool)
+
+    cur = CURRENCIES.get(args.currency)
+    if not cur:
+        print(f"  {_RED}Unknown currency: {args.currency}{_RESET}")
+        return 1
+
+    min_lv = cur.get("min_lv", 0)
+    target_families = set(args.mods)
+    require_all = args.all
+
+    # Set existing mods if specified
+    existing = []
+    if args.existing_mods:
+        existing = [f.strip() for f in args.existing_mods.split(",") if f.strip()]
+
+    print(_h(f"Craft Simulation: {item_class} (ilvl {args.ilvl})"))
+    print(f"  {_BOLD}Currency:{_RESET}  {args.currency} (min_mod_lv={min_lv})")
+    print(f"  {_BOLD}Target:{_RESET}    {', '.join(target_families)}"
+          f"{'  (ALL required)' if require_all else '  (ANY one)'}")
+    if args.tier:
+        print(f"  {_BOLD}Tier:{_RESET}      T{args.tier} only")
+    print(f"  {_BOLD}Runs:{_RESET}      {args.runs:,}")
+    if existing:
+        print(f"  {_BOLD}Existing:{_RESET}  {', '.join(existing)}")
+    print()
+    print(f"  {_DIM}Simulating…{_RESET}", flush=True)
+
+    start = _time.time()
+    attempts_list = []
+    max_cap = 10000  # safety cap per run
+
+    for _ in range(args.runs):
+        attempts = 0
+        hit = False
+
+        if require_all:
+            # Need to hit ALL target families — multi-step simulation
+            # Each "attempt" is a full item craft from scratch
+            # For reroll (alchemy): one use gives 4 mods
+            # For add (transmute): one use gives 1 mod
+            found_families: set[str] = set()
+
+            if cur["op"] == "reroll":
+                # Alchemy-style: each attempt generates qty mods at once
+                while attempts < max_cap:
+                    attempts += 1
+                    # Build a simulated item with qty mods
+                    sim_item_families: set[str] = set(existing)
+                    item_mods_added = 0
+                    for _ in range(cur.get("qty", 4)):
+                        # Get available pool excluding already-added families
+                        pool = [m for m in sim._all_mods
+                                if m['req_level'] <= args.ilvl
+                                and m['req_level'] >= min_lv
+                                and m['family'] not in sim_item_families]
+                        if not pool:
+                            break
+                        total_w = sum(m['weight'] for m in pool)
+                        if total_w == 0:
+                            break
+                        roll = random.randint(1, total_w)
+                        cumul = 0
+                        for mod in pool:
+                            cumul += mod['weight']
+                            if roll <= cumul:
+                                sim_item_families.add(mod['family'])
+                                break
+                    # Check if all targets hit
+                    if target_families.issubset(sim_item_families):
+                        hit = True
+                        break
+            else:
+                # Transmute-style: spam single mods, restart each time
+                # Each "attempt" = one transmute/exalt use
+                # For "all on same item" with single-add currency,
+                # we model: keep spamming transmutes, checking if the roll is in targets
+                # This is really: "how many items until one has all targets via alchemy"
+                # Let's model it as: each attempt is a full item (transmute+aug+regal fill)
+                # Simplified: treat as alchemy with qty=3 for rare (3 prefixes)
+                while attempts < max_cap:
+                    attempts += 1
+                    sim_item_families_set: set[str] = set(existing)
+                    # Fill 3 prefix slots
+                    for _ in range(3):
+                        pool = [m for m in sim._all_mods
+                                if m['req_level'] <= args.ilvl
+                                and m['req_level'] >= min_lv
+                                and m['family'] not in sim_item_families_set
+                                and m['affix_type'] == 'prefix']
+                        if not pool:
+                            break
+                        total_w = sum(m['weight'] for m in pool)
+                        if total_w == 0:
+                            break
+                        roll = random.randint(1, total_w)
+                        cumul = 0
+                        for mod in pool:
+                            cumul += mod['weight']
+                            if roll <= cumul:
+                                sim_item_families_set.add(mod['family'])
+                                break
+                    if target_families.issubset(sim_item_families_set):
+                        hit = True
+                        break
+        else:
+            # Just need ANY one of the targets — simple spam
+            # Set up blocked families
+            blocked = set(existing)
+            pool = [m for m in sim._all_mods
+                    if m['req_level'] <= args.ilvl
+                    and m['req_level'] >= min_lv
+                    and m['family'] not in blocked]
+            if args.tier > 0:
+                pool = [m for m in pool if m['tier'] == args.tier]
+
+            target_mods_in_pool = [m for m in pool if m['family'] in target_families]
+            if not target_mods_in_pool:
+                print(f"  {_RED}Target families not in available pool!{_RESET}")
+                return 1
+
+            total_w = sum(m['weight'] for m in pool)
+            target_w = sum(m['weight'] for m in target_mods_in_pool)
+
+            # Geometric distribution — can calculate analytically but sim for validation
+            while attempts < max_cap:
+                attempts += 1
+                roll = random.randint(1, total_w)
+                cumul = 0
+                for mod in pool:
+                    cumul += mod['weight']
+                    if roll <= cumul:
+                        if mod['family'] in target_families:
+                            if args.tier == 0 or mod['tier'] == args.tier:
+                                hit = True
+                        break
+                if hit:
+                    break
+
+        attempts_list.append(attempts if hit else max_cap)
+
+    elapsed = _time.time() - start
+
+    # Statistics
+    attempts_list.sort()
+    hits = sum(1 for a in attempts_list if a < max_cap)
+    avg = sum(attempts_list) / len(attempts_list)
+    median = attempts_list[len(attempts_list) // 2]
+    p10 = attempts_list[int(len(attempts_list) * 0.1)]
+    p90 = attempts_list[int(len(attempts_list) * 0.9)]
+    p99 = attempts_list[int(len(attempts_list) * 0.99)]
+
+    # Get live price
+    live_prices = _get_live_prices()
+    currency_price = live_prices.get(args.currency, 0.01)
+
+    print(f"\r  {_GREEN}Done in {elapsed:.1f}s{_RESET}              ")
+    print()
+    print(f"  {_BOLD}Results ({hits}/{args.runs} hit):{_RESET}")
+    print(f"    Average:    {_YELLOW}{avg:.1f}{_RESET} attempts")
+    print(f"    Median:     {median} attempts")
+    print(f"    10th %ile:  {p10} (lucky)")
+    print(f"    90th %ile:  {p90} (unlucky)")
+    print(f"    99th %ile:  {p99} (very unlucky)")
+    print()
+    print(f"  {_BOLD}Expected Cost:{_RESET}")
+    avg_cost = avg * currency_price
+    med_cost = median * currency_price
+    p90_cost = p90 * currency_price
+    divine_p = live_prices.get('divine', 8.79)
+    print(f"    Average:    {avg_cost:.2f}c ({avg_cost/divine_p:.2f}d)")
+    print(f"    Median:     {med_cost:.2f}c ({med_cost/divine_p:.2f}d)")
+    print(f"    90th %ile:  {p90_cost:.2f}c ({p90_cost/divine_p:.2f}d) ← budget for bad luck")
+
+    if require_all:
+        print()
+        print(f"  {_DIM}(Each 'attempt' = one full item craft with {cur.get('qty', 3)} prefix slots){_RESET}")
+
+    return 0
+
+
 _MOD_POOL_CMDS = {
     "mod-pool-status":  _cmd_mod_pool_status,
     "mod-pool-seed":    _cmd_mod_pool_seed,
@@ -1298,6 +1514,7 @@ _MOD_POOL_CMDS = {
     "craft-cost":       _cmd_craft_cost,
     "craft-compare":    _cmd_craft_compare,
     "craft-item":       _cmd_craft_item,
+    "craft-sim":        _cmd_craft_sim,
 }
 
 
