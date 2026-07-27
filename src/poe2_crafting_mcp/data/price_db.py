@@ -964,6 +964,7 @@ class PriceDatabase:
         ilvl: int = 100,
         pool: str = "normal",
         affix_type: str = "",
+        min_mod_level: int = 0,
     ) -> dict:
         """Get all craftable mods for an item class at a given ilvl.
 
@@ -972,12 +973,21 @@ class PriceDatabase:
         P(hitting T1 +Life) = T1_life_weight / sum(ALL eligible tier weights).
         P(hitting any +Life) = sum(all_life_tier_weights) / sum(ALL eligible tier weights).
 
+        Args:
+            item_class: poe2db item class slug (e.g. "Gloves_int")
+            ilvl: item level — max req_level for eligible tiers
+            pool: mod pool name ("normal", "essence", "desecrated", etc.)
+            affix_type: "prefix", "suffix", or "" for both
+            min_mod_level: minimum mod tier level (used by Greater/Perfect currencies)
+                           Greater orbs use 35-44, Perfect orbs use 50-70.
+                           Default 0 = no minimum (regular crafting).
+
         Returns a dict with:
         - prefixes: list of mod groups with tiers, sorted by family_weight desc
         - suffixes: same
         - total_prefix_weight: sum of ALL prefix tier weights at this ilvl
         - total_suffix_weight: sum of ALL suffix tier weights at this ilvl
-        - item_class, ilvl, pool
+        - item_class, ilvl, pool, min_mod_level
 
         Each mod group is:
         {family, family_weight (sum of all tier weights), tiers: [{stat_text, weight, req_level, ...}]}
@@ -986,9 +996,9 @@ class PriceDatabase:
 
         q = """
             SELECT * FROM mod_weights
-            WHERE item_class = ? AND pool = ? AND req_level <= ?
+            WHERE item_class = ? AND pool = ? AND req_level <= ? AND req_level >= ?
         """
-        params: list = [item_class, pool, ilvl]
+        params: list = [item_class, pool, ilvl, min_mod_level]
         if affix_type:
             q += " AND affix_type = ?"
             params.append(affix_type)
@@ -1046,6 +1056,7 @@ class PriceDatabase:
             'item_class': item_class,
             'ilvl': ilvl,
             'pool': pool,
+            'min_mod_level': min_mod_level,
             'prefixes': prefixes,
             'suffixes': suffixes,
             'total_prefix_weight': total_prefix_weight,

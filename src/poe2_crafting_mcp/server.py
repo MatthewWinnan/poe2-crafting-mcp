@@ -507,7 +507,7 @@ def search_mods(keyword: str = "", item_tag: str = "",
 
 @mcp.tool()
 def get_craftable_mods(base_name: str, ilvl: int = 100,
-                       pool: str = "normal") -> str:
+                       pool: str = "normal", min_mod_level: int = 0) -> str:
     """
     Get all mods that can roll on a base item with real spawn weights.
 
@@ -525,14 +525,20 @@ def get_craftable_mods(base_name: str, ilvl: int = 100,
                    "decay" (Katla's Gloom influence),
                    "essence" (essence-guaranteed mods),
                    "desecrated" (abyss desecrated mods).
+        min_mod_level: Minimum mod tier level. Used by Greater/Perfect currencies:
+                   0 = regular orbs (all tiers), 35 = Greater Regal/Chaos/Exalted,
+                   44 = Greater Transmute/Augment, 50 = Perfect Regal/Chaos/Exalted,
+                   70 = Perfect Transmute/Augment.
 
     Returns:
-        JSON with: item_class, ilvl, pool,
-        prefixes (list of {family, weight, name, tiers: [{stat_text, weight, req_level}]}),
+        JSON with: item_class, ilvl, pool, min_mod_level,
+        prefixes (list of {family, family_weight, tiers: [{stat_text, weight, req_level}]}),
         suffixes (same structure),
         total_prefix_weight, total_suffix_weight, prefix_count, suffix_count.
 
-        Probability of hitting a mod family = family_weight / total_weight_for_that_affix_type.
+        Each tier competes independently in the pool.
+        P(specific tier) = tier_weight / total_pool_weight.
+        P(any tier in family) = family_weight / total_pool_weight.
     """
     from poe2_crafting_mcp.data.poe2db_client import base_tags_to_item_class, ALL_ITEM_CLASSES
     from poe2_crafting_mcp.data.price_db import PriceDatabase
@@ -556,7 +562,8 @@ def get_craftable_mods(base_name: str, ilvl: int = 100,
     if not item_class:
         item_class = base_name.replace(' ', '_')
 
-    result = pdb.get_craftable_mods(item_class, ilvl, pool)
+    result = pdb.get_craftable_mods(item_class, ilvl, pool,
+                                    min_mod_level=min_mod_level)
     return _to_json(result)
 
 

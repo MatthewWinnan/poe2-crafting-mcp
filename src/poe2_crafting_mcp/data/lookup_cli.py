@@ -764,8 +764,13 @@ def _fmt_craftable_mods(result: dict, show_tiers: bool = False) -> None:
     ilvl = result['ilvl']
     pool = result['pool']
     item_class = result['item_class']
+    min_lv = result.get('min_mod_level', 0)
 
-    print(_h(f"Craftable Mods: {item_class} (ilvl {ilvl}, {pool})"))
+    header = f"Craftable Mods: {item_class} (ilvl {ilvl}, {pool}"
+    if min_lv:
+        header += f", min_mod_lv≥{min_lv}"
+    header += ")"
+    print(_h(header))
     print()
 
     def _fmt_group_list(groups: list, total_weight: int, label: str) -> None:
@@ -808,6 +813,12 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
     p.add_argument("--prefix", action="store_true", help="Show prefixes only")
     p.add_argument("--suffix", action="store_true", help="Show suffixes only")
     p.add_argument("--tiers", action="store_true", help="Expand all tiers with individual weights")
+    p.add_argument("--currency", default="",
+                   help=("Currency to simulate pool filtering. "
+                         "Options: greater-transmute (ilvl≥44), perfect-transmute (≥70), "
+                         "greater-regal/chaos/exalted (≥35), perfect-regal/chaos/exalted (≥50), "
+                         "greater-augment (≥44), perfect-augment (≥70). "
+                         "Or pass a raw min-mod-level number."))
     args = p.parse_args(argv)
 
     pdb = _get_pdb()
@@ -846,11 +857,37 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
     elif args.suffix:
         affix_type = "suffix"
 
-    result = pdb.get_craftable_mods(item_class, args.ilvl, args.pool, affix_type)
+    # Resolve --currency to min_mod_level
+    _CURRENCY_MIN_MOD_LV: dict[str, int] = {
+        "greater-transmute": 44, "greater-transmutation": 44,
+        "perfect-transmute": 70, "perfect-transmutation": 70,
+        "greater-augment": 44, "greater-augmentation": 44,
+        "perfect-augment": 70, "perfect-augmentation": 70,
+        "greater-regal": 35, "perfect-regal": 50,
+        "greater-chaos": 35, "perfect-chaos": 50,
+        "greater-exalted": 35, "perfect-exalted": 50,
+    }
+    min_mod_level = 0
+    if args.currency:
+        cur = args.currency.lower().strip()
+        if cur in _CURRENCY_MIN_MOD_LV:
+            min_mod_level = _CURRENCY_MIN_MOD_LV[cur]
+        else:
+            try:
+                min_mod_level = int(cur)
+            except ValueError:
+                print(f"  {_RED}Unknown currency '{args.currency}'. "
+                      f"Use: greater-transmute, perfect-regal, etc. "
+                      f"or a raw number.{_RESET}")
+                return 1
+        print(f"  {_DIM}Currency filter: min mod level ≥ {min_mod_level}{_RESET}")
+
+    result = pdb.get_craftable_mods(item_class, args.ilvl, args.pool,
+                                    affix_type, min_mod_level)
 
     if not result['prefixes'] and not result['suffixes']:
         print(f"  {_RED}No mods found for {item_class} (pool={args.pool}, "
-              f"ilvl={args.ilvl}).{_RESET}")
+              f"ilvl={args.ilvl}, min_mod_lv={min_mod_level}).{_RESET}")
         print(f"  {_DIM}Run 'poe2-lookup mod-pool-seed' if not yet seeded.{_RESET}")
         return 1
 
