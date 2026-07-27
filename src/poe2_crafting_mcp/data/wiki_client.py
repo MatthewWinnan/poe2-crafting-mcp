@@ -67,6 +67,15 @@ def _strip_wiki(text: str) -> str:
     return text.strip()
 
 
+def _strip_html(text: str) -> str:
+    """Strip HTML tags, converting <br> to newlines."""
+    text = re.sub(r'\s*<br\s*/?>\s*', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', '', text)
+    # Collapse whitespace on each line
+    lines = [line.strip() for line in text.split('\n')]
+    return '\n'.join(lines).strip()
+
+
 def _first_prose(wikitext: str) -> str:
     """Extract first meaningful prose paragraph from item page wikitext.
 
@@ -92,17 +101,28 @@ def _first_prose(wikitext: str) -> str:
 class Poe2WikiClient:
     """Fetch item data from the poe2wiki.net MediaWiki API."""
 
-    def _get(self, params: dict, _retries: int = 3) -> dict:
+    def _get(self, params: dict, _retries: int = 5) -> dict:
         url = WIKI_API + "?" + urllib.parse.urlencode(params)
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
         for attempt in range(_retries):
             try:
-                with urllib.request.urlopen(req, timeout=15) as resp:
+                with urllib.request.urlopen(req, timeout=30) as resp:
                     return json.loads(resp.read().decode())
             except urllib.error.HTTPError as e:
                 if e.code == 429 and attempt < _retries - 1:
-                    wait = 10 * (attempt + 1)  # 10s, 20s
+                    wait = 30 * (attempt + 1)  # 30s, 60s, 90s, 120s
                     log.warning('rate limited (429), waiting %ds…', wait)
+                    time.sleep(wait)
+                elif e.code >= 500 and attempt < _retries - 1:
+                    wait = 15 * (attempt + 1)
+                    log.warning('server error (%d), retrying in %ds…', e.code, wait)
+                    time.sleep(wait)
+                else:
+                    raise
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                if attempt < _retries - 1:
+                    wait = 15 * (attempt + 1)
+                    log.warning('connection error (%s), retrying in %ds…', e, wait)
                     time.sleep(wait)
                 else:
                     raise
@@ -221,6 +241,39 @@ class Poe2WikiClient:
             'league_version': fields.get('release_version'),
         }
 
+    def _resolve_implicit_from_html(self, page_title: str) -> str:
+        """Resolve implicit modifier text by parsing the wiki's rendered HTML.
+
+        The {{Item}} template resolves implicit IDs (e.g. TowerAddBreachToMapsImplicit)
+        into actual stat text server-side via Lua modules.  We can't replicate that
+        from raw wikitext, so we call action=parse and extract the rendered mod text
+        from the infobox HTML.
+
+        Returns the implicit stat text (may be multi-line), or '' if not resolvable.
+        """
+        try:
+            data = self._get({
+                'action': 'parse',
+                'page': page_title.replace(' ', '_'),
+                'prop': 'text',
+                'section': '0',
+                'format': 'json',
+            })
+            html = data.get('parse', {}).get('text', {}).get('*', '')
+            if not html:
+                return ''
+            # The implicit stat text is in <span class="group tc -mod">...</span>
+            match = re.search(
+                r'<span class="group tc -mod">(.*?)</span>',
+                html, re.DOTALL,
+            )
+            if match:
+                return _strip_html(match.group(1))
+            return ''
+        except Exception as exc:
+            log.debug('implicit resolve failed for %s: %s', page_title, exc)
+            return ''
+
     def _batches(self, names: list[str]) -> Iterator[list[str]]:
         for i in range(0, len(names), _BATCH):
             yield names[i:i + _BATCH]
@@ -232,7 +285,13 @@ class Poe2WikiClient:
         Returns list of item_desc dicts ready for upsert_item_desc().
         """
         results: list[dict] = []
-        for batch in self._batches(names):
+        batches = list(self._batches(names))
+        for i, batch in enumerate(batches):
+            if i > 0:
+                time.sleep(3)  # polite inter-batch delay
+            if len(batches) > 2:
+                log.info('fetch_items batch %d/%d (%d results so far)',
+                         i + 1, len(batches), len(results))
             titles = '|'.join(n.replace(' ', '_') for n in batch)
             try:
                 data = self._get({
@@ -256,11 +315,31 @@ class Poe2WikiClient:
                         log.debug('no {{Item}} on %s', page.get('title'))
                         continue
                     item = self._to_item_desc(page.get('title', ''), fields)
+                    # If no description but implicit fields exist, resolve from
+                    # rendered HTML (the wiki's Lua resolves modifier IDs → text)
+                    if not item['description']:
+                        has_implicit = any(
+                            k.startswith('implicit') and k[8:].isdigit()
+                            for k in fields
+                        )
+                        if has_implicit:
+                            time.sleep(1)  # extra delay before parse call
+                            implicit_text = self._resolve_implicit_from_html(
+                                page.get('title', ''))
+                            if implicit_text:
+                                # Build description: implicit text + help_text
+                                help_text = _strip_wiki(
+                                    fields.get('help_text', ''))
+                                parts = [implicit_text]
+                                if help_text:
+                                    parts.append(help_text)
+                                item['description'] = '\n'.join(parts)
                     if not item['description']:
                         item['description'] = _first_prose(wikitext)
                     results.append(item)
             except Exception as exc:
-                log.warning('wiki fetch error (batch starting %s): %s', batch[0], exc)
+                log.warning('wiki fetch error (batch starting %s): %s',
+                            batch[0], exc, exc_info=True)
         return results
 
     def fetch_item(self, name: str) -> dict | None:
@@ -492,7 +571,7 @@ class Poe2WikiClient:
                     })
             except Exception as exc:
                 log.warning('concept batch error (starting %s): %s', batch[0], exc)
-            time.sleep(1.5)  # be polite to the wiki
+            time.sleep(2)  # be polite to the wiki
         return results
 
     def seed_concepts_from_db(self, pdb) -> tuple[int, int]:

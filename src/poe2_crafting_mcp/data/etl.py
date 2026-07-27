@@ -410,19 +410,19 @@ def _load_currencies(conn: sqlite3.Connection) -> int:
 
 # ── Concepts ──────────────────────────────────────────────────────────────────
 
-def _load_concepts(conn: sqlite3.Connection) -> int:
+def _load_concepts(conn: sqlite3.Connection, db_path: Path | None = None) -> int:
     from .concepts import CONCEPTS
     from .price_db import PriceDatabase
-    pdb = PriceDatabase(conn)
+    pdb = PriceDatabase(db_path)
     return pdb.upsert_concepts_bulk(CONCEPTS)
 
 
 # ── Item Descriptions ──────────────────────────────────────────────────────────
 
-def _load_item_descriptions(conn: sqlite3.Connection) -> int:
+def _load_item_descriptions(conn: sqlite3.Connection, db_path: Path | None = None) -> int:
     from .item_descriptions import ITEM_DESCRIPTIONS
     from .price_db import PriceDatabase
-    pdb = PriceDatabase(conn)
+    pdb = PriceDatabase(db_path)
     return pdb.upsert_item_descs_bulk(ITEM_DESCRIPTIONS)
 
 
@@ -503,11 +503,11 @@ def run(pob_path: Path | None = None, db_path: Path | None = None,
     log.info("  %d rows", counts["currencies"])
 
     log.info("Loading concepts…")
-    counts["concepts"] = _load_concepts(conn)
+    counts["concepts"] = _load_concepts(conn, db_path)
     log.info("  %d rows", counts["concepts"])
 
     log.info("Loading item descriptions…")
-    counts["item_descriptions"] = _load_item_descriptions(conn)
+    counts["item_descriptions"] = _load_item_descriptions(conn, db_path)
     log.info("  %d rows", counts["item_descriptions"])
 
     log.info("Rebuilding FTS indexes…")

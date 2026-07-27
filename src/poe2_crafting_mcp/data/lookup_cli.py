@@ -14,6 +14,9 @@ Examples:
     poe2-lookup "chaos orb" --type currencies
     poe2-lookup "energy shield" --type bases --slot Gloves
 
+    poe2-lookup status                                # show all DB health
+    poe2-lookup seed-all                              # ETL + concepts + item-desc
+
     poe2-lookup concept-status                        # concept DB freshness
     poe2-lookup concept-list [--category mechanic]    # list all concepts
     poe2-lookup concept-search "shock"                # search by keyword
@@ -661,6 +664,263 @@ _ITEM_DESC_CMDS = {
 }
 
 
+# ── Global status & seed-all ──────────────────────────────────────────────────
+
+
+def _cmd_status(argv: list[str]) -> int:
+    """Show status of all data stores: ETL, concepts, item descriptions."""
+    from poe2_crafting_mcp.data.price_db import PriceDatabase
+
+    pdb = PriceDatabase()
+
+    # ── ETL (game data) ───────────────────────────────────────────────────────
+    print(_h("Game Data (ETL)"))
+    try:
+        etl_row = pdb._conn.execute(
+            "SELECT ran_at, row_counts FROM etl_runs ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    except Exception:
+        etl_row = None
+
+    if etl_row:
+        import json as _json
+        counts = _json.loads(etl_row["row_counts"]) if etl_row["row_counts"] else {}
+        print(f"  {_BOLD}Status:{_RESET}  {_GREEN}✓ populated{_RESET}")
+        print(f"  {_BOLD}Ran at:{_RESET}  {etl_row['ran_at']}")
+        for tbl, cnt in counts.items():
+            print(f"  {_DIM}  {tbl}:{_RESET} {cnt}")
+    else:
+        # Check if the file even exists or has the ETL tables
+        db_path = Path(pdb._path)
+        if not db_path.exists():
+            print(f"  {_BOLD}Status:{_RESET}  {_RED}✗ database file not found{_RESET}")
+            print(f"  {_DIM}  path: {db_path}{_RESET}")
+        else:
+            # Check if ETL tables exist
+            has_currencies = pdb._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='currencies'"
+            ).fetchone()
+            if has_currencies:
+                cur_count = pdb._conn.execute("SELECT COUNT(*) FROM currencies").fetchone()[0]
+                base_count = pdb._conn.execute("SELECT COUNT(*) FROM item_bases").fetchone()[0]
+                print(f"  {_BOLD}Status:{_RESET}  {_YELLOW}⚠ no ETL run recorded{_RESET}")
+                print(f"  {_DIM}  currencies: {cur_count}, item_bases: {base_count}{_RESET}")
+            else:
+                print(f"  {_BOLD}Status:{_RESET}  {_RED}✗ never run{_RESET}")
+        print(f"\n  {_YELLOW}→ Run: poe2-lookup seed-all{_RESET}")
+
+    # ── Concepts ──────────────────────────────────────────────────────────────
+    print()
+    cs = pdb.concept_status()
+    icons = {
+        "fresh":        f"{_GREEN}✓ fresh{_RESET}",
+        "stale":        f"{_YELLOW}⚠ stale (>30 days){_RESET}",
+        "never_seeded": f"{_RED}✗ never seeded{_RESET}",
+    }
+    print(_h("Concepts"))
+    print(f"  {_BOLD}Status:{_RESET}  {icons.get(cs.get('status', ''), cs.get('status', ''))}")
+    print(f"  {_BOLD}Total:{_RESET}   {cs.get('total', 0)}")
+    if cs.get("manual"):
+        print(f"  {_DIM}  manual: {cs['manual']}{_RESET}")
+    if cs.get("seeded_at"):
+        age = cs.get("age_days")
+        age_str = f"  {_DIM}({age:.1f}d ago){_RESET}" if age is not None else ""
+        print(f"  {_BOLD}Seeded:{_RESET}  {cs['seeded_at']}{age_str}")
+
+    # ── Item Descriptions ─────────────────────────────────────────────────────
+    print()
+    ds = pdb.item_desc_status()
+    print(_h("Item Descriptions"))
+    print(f"  {_BOLD}Status:{_RESET}  {icons.get(ds.get('status', ''), ds.get('status', ''))}")
+    print(f"  {_BOLD}Total:{_RESET}   {ds.get('total', 0)}")
+    if ds.get("seeded_at"):
+        age = ds.get("age_days")
+        age_str = f"  {_DIM}({age:.1f}d ago){_RESET}" if age is not None else ""
+        print(f"  {_BOLD}Seeded:{_RESET}  {ds['seeded_at']}{age_str}")
+
+    # ── Summary hint ──────────────────────────────────────────────────────────
+    needs_work = []
+    if not etl_row:
+        needs_work.append("ETL")
+    if cs.get("status") != "fresh":
+        needs_work.append("concepts")
+    if ds.get("status") != "fresh":
+        needs_work.append("item-descriptions")
+    if needs_work:
+        print(f"\n  {_YELLOW}→ Run 'poe2-lookup seed-all' to populate: "
+              f"{', '.join(needs_work)}{_RESET}")
+    else:
+        print(f"\n  {_GREEN}All data stores are up to date.{_RESET}")
+    return 0
+
+
+def _cmd_seed_all(argv: list[str]) -> int:
+    """Run ETL + concept seed + item description seed in correct order."""
+    import time as _time
+
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup seed-all",
+        description=(
+            "Populate all data stores in the correct order:\n"
+            "  1. ETL (game data from PoB vendor)\n"
+            "  2. Concepts (from built-ins + poe2wiki.net)\n"
+            "  3. Item descriptions (from built-ins + poe2wiki.net)\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--skip-etl", action="store_true",
+                   help="Skip ETL step (use existing game data)")
+    p.add_argument("--skip-wiki", action="store_true",
+                   help="Skip wiki fetching (seed from built-ins only)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Show what would be done without writing")
+    args = p.parse_args(argv)
+
+    start = _time.time()
+
+    # ── Step 1: ETL ───────────────────────────────────────────────────────────
+    if args.skip_etl:
+        print(f"{_DIM}Skipping ETL (--skip-etl){_RESET}")
+    else:
+        print(_h("Step 1: ETL (game data)"))
+        # Check if DB already has ETL data
+        from poe2_crafting_mcp.data.price_db import PriceDatabase
+        pdb_check = PriceDatabase()
+        has_currencies = pdb_check._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='currencies'"
+        ).fetchone()
+        if has_currencies:
+            cur_count = pdb_check._conn.execute(
+                "SELECT COUNT(*) FROM currencies").fetchone()[0]
+            if cur_count > 0 and not args.dry_run:
+                print(f"  {_DIM}ETL tables already populated ({cur_count} currencies). "
+                      f"Re-running to refresh…{_RESET}")
+        pdb_check._conn.close()
+
+        if args.dry_run:
+            print(f"  {_YELLOW}Would run ETL pipeline (PoB data → SQLite){_RESET}")
+        else:
+            print(f"  {_DIM}Running ETL pipeline…{_RESET}", flush=True)
+            from poe2_crafting_mcp.data.etl import run as run_etl
+            counts = run_etl()
+            total_rows = sum(counts.values())
+            print(f"  {_GREEN}✓ ETL complete: {total_rows} rows across "
+                  f"{len(counts)} tables{_RESET}")
+            for tbl, cnt in counts.items():
+                print(f"    {_DIM}{tbl}: {cnt}{_RESET}")
+
+    # ── Step 2: Concepts ──────────────────────────────────────────────────────
+    print()
+    print(_h("Step 2: Concepts"))
+    pdb = _get_pdb()
+
+    # Seed from built-ins
+    from poe2_crafting_mcp.data.concepts import CONCEPTS
+    if args.dry_run:
+        print(f"  {_YELLOW}Would seed {len(CONCEPTS)} concepts from built-ins{_RESET}")
+    else:
+        n = pdb.upsert_concepts_bulk(CONCEPTS)
+        print(f"  {n} concepts seeded from built-ins.")
+
+    # Wiki seed
+    if args.skip_wiki:
+        print(f"  {_DIM}Skipping wiki fetch (--skip-wiki){_RESET}")
+    elif args.dry_run:
+        print(f"  {_YELLOW}Would fetch concepts from poe2wiki.net{_RESET}")
+    else:
+        from poe2_crafting_mcp.data.wiki_client import Poe2WikiClient
+        wiki = Poe2WikiClient()
+        print(f"  {_DIM}Fetching concepts from poe2wiki.net…{_RESET}", flush=True)
+        fetched, skipped = wiki.seed_concepts_from_db(pdb)
+        try:
+            pdb._conn.execute(
+                "INSERT INTO concepts_fts(concepts_fts) VALUES('rebuild')")
+            pdb._conn.commit()
+        except Exception:
+            pass
+        print(f"  {_GREEN}✓ Wiki seeded {fetched} concepts "
+              f"({skipped} skipped/not on wiki).{_RESET}")
+
+    # ── Step 3: Item Descriptions ─────────────────────────────────────────────
+    print()
+    print(_h("Step 3: Item Descriptions"))
+
+    # Seed from built-ins
+    from poe2_crafting_mcp.data.item_descriptions import ITEM_DESCRIPTIONS
+    if args.dry_run:
+        print(f"  {_YELLOW}Would seed {len(ITEM_DESCRIPTIONS)} item descriptions "
+              f"from built-ins{_RESET}")
+    else:
+        n = pdb.upsert_item_descs_bulk(ITEM_DESCRIPTIONS)
+        print(f"  {n} item descriptions seeded from built-ins.")
+
+    # Wiki seed (requires ETL tables)
+    if args.skip_wiki:
+        print(f"  {_DIM}Skipping wiki fetch (--skip-wiki){_RESET}")
+    elif args.dry_run:
+        print(f"  {_YELLOW}Would fetch item descriptions from poe2wiki.net{_RESET}")
+    else:
+        from poe2_crafting_mcp.data.database import PoBDatabase
+        from poe2_crafting_mcp.data.wiki_client import Poe2WikiClient
+        from poe2_crafting_mcp.data.general_items import all_exchange_item_names
+
+        try:
+            db = PoBDatabase()
+        except FileNotFoundError:
+            print(f"  {_RED}✗ Cannot fetch wiki items — ETL database not found.{_RESET}")
+            print(f"  {_DIM}  Run without --skip-etl first.{_RESET}")
+            return 1
+
+        currency_rows = db.search_currencies(limit=5000)
+        base_rows = db.search_bases(limit=5000)
+        seen: set[str] = set()
+        names: list[str] = []
+        for r in list(currency_rows) + list(base_rows):
+            n = r['name']
+            if n not in seen:
+                seen.add(n)
+                names.append(n)
+        for n in all_exchange_item_names():
+            if n not in seen:
+                seen.add(n)
+                names.append(n)
+
+        n_batches = (len(names) + 49) // 50
+        print(f"  {_DIM}Fetching {len(names)} items from poe2wiki.net "
+              f"({n_batches} batches, ~{n_batches * 3}s)…{_RESET}",
+              flush=True)
+        wiki = Poe2WikiClient()
+        items = wiki.fetch_items(names)
+        for item in items:
+            pdb.upsert_item_desc(**item)
+        try:
+            pdb._conn.execute(
+                "INSERT INTO item_descriptions_fts(item_descriptions_fts) "
+                "VALUES('rebuild')")
+            pdb._conn.commit()
+        except Exception:
+            pass
+        print(f"  {_GREEN}✓ Wiki seeded {len(items)} item descriptions "
+              f"({len(names) - len(items)} not on wiki).{_RESET}")
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    elapsed = _time.time() - start
+    print()
+    if args.dry_run:
+        print(f"{_YELLOW}Dry run complete — no changes made.{_RESET}")
+    else:
+        print(f"{_GREEN}{'─'*52}{_RESET}")
+        print(f"{_GREEN}✓ All data stores seeded in {elapsed:.1f}s{_RESET}")
+        print(f"  {_DIM}Run 'poe2-lookup status' to verify.{_RESET}")
+    return 0
+
+
+_GLOBAL_CMDS = {
+    "status":   _cmd_status,
+    "seed-all": _cmd_seed_all,
+}
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 _ALL_TYPES = ("bases", "mods", "gems", "uniques", "nodes", "currencies",
@@ -711,7 +971,7 @@ def main() -> None:
     # Pre-dispatch: management subcommands bypass the query parser
     if len(sys.argv) > 1:
         _cmd = sys.argv[1]
-        _dispatch = {**_CONCEPT_CMDS, **_ITEM_DESC_CMDS}
+        _dispatch = {**_GLOBAL_CMDS, **_CONCEPT_CMDS, **_ITEM_DESC_CMDS}
         if _cmd in _dispatch:
             sys.exit(_dispatch[_cmd](sys.argv[2:]) or 0)
 
