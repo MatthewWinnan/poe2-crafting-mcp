@@ -821,6 +821,8 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
     p.add_argument("--prefix", action="store_true", help="Show prefixes only")
     p.add_argument("--suffix", action="store_true", help="Show suffixes only")
     p.add_argument("--tiers", action="store_true", help="Expand all tiers with individual weights")
+    p.add_argument("--mod", default="",
+                   help="Filter to mods matching this text (e.g. 'Energy Shield', 'Life')")
     p.add_argument("--currency", default="",
                    help=("Currency to simulate pool filtering. "
                          "Options: greater-transmute (ilvl≥44), perfect-transmute (≥70), "
@@ -898,6 +900,23 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
               f"ilvl={args.ilvl}, min_mod_lv={min_mod_level}).{_RESET}")
         print(f"  {_DIM}Run 'poe2-lookup mod-pool-seed' if not yet seeded.{_RESET}")
         return 1
+
+    # Apply --mod text filter
+    if args.mod:
+        mod_filter = args.mod.lower()
+        result['prefixes'] = [
+            g for g in result['prefixes']
+            if mod_filter in g['tiers'][0]['stat_text'].lower()
+            or mod_filter in g['family'].lower()
+        ]
+        result['suffixes'] = [
+            g for g in result['suffixes']
+            if mod_filter in g['tiers'][0]['stat_text'].lower()
+            or mod_filter in g['family'].lower()
+        ]
+        if not result['prefixes'] and not result['suffixes']:
+            print(f"  {_RED}No mods matching '{args.mod}' in pool.{_RESET}")
+            return 1
 
     _fmt_craftable_mods(result, show_tiers=args.tiers)
     return 0
