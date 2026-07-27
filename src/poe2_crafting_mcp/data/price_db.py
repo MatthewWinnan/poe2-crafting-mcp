@@ -967,18 +967,20 @@ class PriceDatabase:
     ) -> dict:
         """Get all craftable mods for an item class at a given ilvl.
 
+        IMPORTANT: Each tier is an independent entry in the weight pool.
+        The game rolls ONE flat pool of all eligible tiers across all families.
+        P(hitting T1 +Life) = T1_life_weight / sum(ALL eligible tier weights).
+        P(hitting any +Life) = sum(all_life_tier_weights) / sum(ALL eligible tier weights).
+
         Returns a dict with:
-        - prefixes: list of mod groups with tiers, sorted by weight desc
+        - prefixes: list of mod groups with tiers, sorted by family_weight desc
         - suffixes: same
-        - total_prefix_weight: sum of all prefix weights at this ilvl
-        - total_suffix_weight: sum of all suffix weights at this ilvl
-        - item_class: the queried class
-        - ilvl: the queried ilvl
-        - pool: the queried pool
+        - total_prefix_weight: sum of ALL prefix tier weights at this ilvl
+        - total_suffix_weight: sum of ALL suffix tier weights at this ilvl
+        - item_class, ilvl, pool
 
         Each mod group is:
-        {family, tiers: [{mod_code, name, stat_text, weight, req_level, tags}]}
-        The "active tier" at the given ilvl is the highest req_level <= ilvl.
+        {family, family_weight (sum of all tier weights), tiers: [{stat_text, weight, req_level, ...}]}
         """
         import json as _json
 
@@ -995,8 +997,6 @@ class PriceDatabase:
         rows = self._conn.execute(q, params).fetchall()
 
         # Group by family + affix_type
-        # For probability: only the highest tier per family contributes weight
-        from collections import defaultdict
         families: dict[str, dict] = {}  # key = family+affix_type
 
         for row in rows:
@@ -1009,9 +1009,10 @@ class PriceDatabase:
                     'family': r['mod_family'],
                     'affix_type': r['affix_type'],
                     'name': r['mod_name'],
-                    'weight': r['weight'],  # highest tier weight (first due to ORDER BY)
+                    'family_weight': 0,  # sum of ALL tier weights
                     'tiers': [],
                 }
+            families[key]['family_weight'] += r['weight']
             families[key]['tiers'].append({
                 'mod_code': r['mod_code'],
                 'name': r['mod_name'],
@@ -1022,26 +1023,24 @@ class PriceDatabase:
             })
 
         # Split into prefix/suffix and calculate totals
+        # Total weight = sum of ALL individual tier weights (each tier competes independently)
         prefixes = []
         suffixes = []
         total_prefix_weight = 0
         total_suffix_weight = 0
 
         for group in families.values():
-            # The weight that contributes to the pool is the weight of the
-            # highest tier (they all have the same weight per family typically,
-            # but take the first/highest to be safe)
-            w = group['weight']
+            fw = group['family_weight']
             if group['affix_type'] == 'prefix':
                 prefixes.append(group)
-                total_prefix_weight += w
+                total_prefix_weight += fw
             elif group['affix_type'] == 'suffix':
                 suffixes.append(group)
-                total_suffix_weight += w
+                total_suffix_weight += fw
 
-        # Sort by weight descending
-        prefixes.sort(key=lambda g: -g['weight'])
-        suffixes.sort(key=lambda g: -g['weight'])
+        # Sort by family_weight descending
+        prefixes.sort(key=lambda g: -g['family_weight'])
+        suffixes.sort(key=lambda g: -g['family_weight'])
 
         return {
             'item_class': item_class,

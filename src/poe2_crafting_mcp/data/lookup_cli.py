@@ -768,47 +768,32 @@ def _fmt_craftable_mods(result: dict, show_tiers: bool = False) -> None:
     print(_h(f"Craftable Mods: {item_class} (ilvl {ilvl}, {pool})"))
     print()
 
+    def _fmt_group_list(groups: list, total_weight: int, label: str) -> None:
+        print(f"  {_BOLD}{label}{_RESET} ({len(groups)} families, "
+              f"total pool weight {total_weight})")
+        for g in groups:
+            fw = g['family_weight']
+            pct = fw / total_weight * 100 if total_weight else 0
+            top_tier = g['tiers'][0]  # highest tier (sorted by req_level DESC)
+            print(f"    {_CYAN}{pct:5.1f}%{_RESET} "
+                  f"{_DIM}(w={fw}){_RESET}  "
+                  f"{top_tier['stat_text'][:52]}")
+            if show_tiers:
+                for i, t in enumerate(g['tiers']):
+                    tier_num = i + 1
+                    tier_pct = t['weight'] / total_weight * 100 if total_weight else 0
+                    print(f"           {_DIM}T{tier_num} ilvl≥{t['req_level']:2d}  "
+                          f"{tier_pct:4.1f}% (w={t['weight']})  "
+                          f"{t['stat_text'][:42]}{_RESET}")
+            elif len(g['tiers']) > 1:
+                print(f"           {_DIM}{len(g['tiers'])} tiers "
+                      f"(T1 ilvl≥{top_tier['req_level']}){_RESET}")
+
     # Prefixes
-    prefixes = result['prefixes']
-    total_pw = result['total_prefix_weight']
-    print(f"  {_BOLD}Prefixes{_RESET} ({len(prefixes)} families, "
-          f"total weight {total_pw})")
-    for g in prefixes:
-        pct = g['weight'] / total_pw * 100 if total_pw else 0
-        top_tier = g['tiers'][0]  # highest tier (sorted by req_level DESC)
-        print(f"    {_CYAN}w={g['weight']:4d}{_RESET} "
-              f"{_DIM}({pct:4.1f}%){_RESET}  "
-              f"{top_tier['stat_text'][:55]}")
-        if show_tiers:
-            for i, t in enumerate(g['tiers']):
-                tier_num = i + 1
-                print(f"           {_DIM}T{tier_num} ilvl≥{t['req_level']:2d}  "
-                      f"w={t['weight']:4d}  {t['stat_text'][:50]}{_RESET}")
-        elif len(g['tiers']) > 1:
-            print(f"           {_DIM}{len(g['tiers'])} tiers "
-                  f"(T1 ilvl≥{top_tier['req_level']}){_RESET}")
-
+    _fmt_group_list(result['prefixes'], result['total_prefix_weight'], "Prefixes")
     print()
-
     # Suffixes
-    suffixes = result['suffixes']
-    total_sw = result['total_suffix_weight']
-    print(f"  {_BOLD}Suffixes{_RESET} ({len(suffixes)} families, "
-          f"total weight {total_sw})")
-    for g in suffixes:
-        pct = g['weight'] / total_sw * 100 if total_sw else 0
-        top_tier = g['tiers'][0]
-        print(f"    {_CYAN}w={g['weight']:4d}{_RESET} "
-              f"{_DIM}({pct:4.1f}%){_RESET}  "
-              f"{top_tier['stat_text'][:55]}")
-        if show_tiers:
-            for i, t in enumerate(g['tiers']):
-                tier_num = i + 1
-                print(f"           {_DIM}T{tier_num} ilvl≥{t['req_level']:2d}  "
-                      f"w={t['weight']:4d}  {t['stat_text'][:50]}{_RESET}")
-        elif len(g['tiers']) > 1:
-            print(f"           {_DIM}{len(g['tiers'])} tiers "
-                  f"(T1 ilvl≥{top_tier['req_level']}){_RESET}")
+    _fmt_group_list(result['suffixes'], result['total_suffix_weight'], "Suffixes")
 
 
 def _cmd_mod_pool_query(argv: list[str]) -> int:
