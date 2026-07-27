@@ -55,6 +55,35 @@ def _to_json(obj: Any) -> str:
     return json.dumps(obj, default=_default, indent=2)
 
 
+# ── MCP Resources: Crafting Knowledge Base ────────────────────────────────────
+
+_DOCS_DIR = Path(__file__).resolve().parent.parent.parent / "docs"
+
+
+@mcp.resource("poe2://crafting-guide/methods")
+def crafting_guide_methods() -> str:
+    """Crafting methods, currency orbs, and step-by-step crafting flow for PoE2."""
+    return (_DOCS_DIR / "crafting-guide-methods.md").read_text()
+
+
+@mcp.resource("poe2://crafting-guide/modifiers")
+def crafting_guide_modifiers() -> str:
+    """How item modifiers work: prefixes, suffixes, tiers, ilvl, tags, local vs global."""
+    return (_DOCS_DIR / "crafting-guide-modifiers.md").read_text()
+
+
+@mcp.resource("poe2://crafting-guide/corruption")
+def crafting_guide_corruption() -> str:
+    """Vaal Orb outcomes and corruption mechanics for items, gems, maps, and jewels."""
+    return (_DOCS_DIR / "crafting-guide-corruption.md").read_text()
+
+
+@mcp.resource("poe2://crafting-guide/defences")
+def crafting_guide_defences() -> str:
+    """Layered defence system: avoidance, mitigation, HP, recovery. Attribute-defence mapping."""
+    return (_DOCS_DIR / "crafting-guide-defences.md").read_text()
+
+
 # ── Build Loading ─────────────────────────────────────────────────────────────
 
 @mcp.tool()
