@@ -288,6 +288,7 @@ class DesecrationEngine:
         """Apply bone to item. Returns (modified item, affix_type of desecrated slot).
 
         If item has 6 mods, removes a random mod first (same affix type as desecrated).
+        Special: if item has_abyss_mark, the Mark is always removed (deterministic).
         """
         from poe2_crafting_mcp.crafting.simulator import OMENS
 
@@ -300,6 +301,18 @@ class DesecrationEngine:
                 if "desecrate" in applies_to:
                     if omen_def.get("gentype_only"):
                         gentype_only = omen_def["gentype_only"]
+
+        # Special: Abyss Mark is always removed when desecrating
+        if item.has_abyss_mark:
+            mark_mod = next(
+                (m for m in item.mods if m.family == "EssenceAbyss"), None
+            )
+            if mark_mod:
+                affix_type = mark_mod.affix_type
+                item.mods.remove(mark_mod)
+                item.has_abyss_mark = False
+                item.essence_mod_family = None
+                return item, affix_type
 
         affix_type = self.determine_affix_type(item, gentype_only)
 

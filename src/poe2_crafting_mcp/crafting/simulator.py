@@ -201,6 +201,7 @@ class ItemState:
     sockets: list[str] = field(default_factory=list)  # names of socketed items (runes/cores/idols)
     max_sockets: int = 0                   # determined by slot type (can increase via Vaal)
     corruption_enchantment: str = ""       # Vaal enchantment stat_text (separate from mods)
+    has_abyss_mark: bool = False           # True if "Mark of the Abyssal Lord" is on item
 
     @property
     def prefixes(self) -> list[ModInstance]:
@@ -264,6 +265,7 @@ class ItemState:
             sockets=list(self.sockets),
             max_sockets=self.max_sockets,
             corruption_enchantment=self.corruption_enchantment,
+            has_abyss_mark=self.has_abyss_mark,
         )
 
 
@@ -958,7 +960,8 @@ class CraftingSimulator:
             self.item.rarity = cur["to_rarity"]
 
         if op == "add":
-            if self.item.open_affixes == 0:
+            # Rarity change happens before add (e.g. transmute: Normal→Magic then add)
+            if self.item.open_affixes == 0 and "to_rarity" not in cur:
                 raise ValueError(f"No open affix slots ({len(self.item.mods)} mods, item is full)")
             for _ in range(qty):
                 if self.item.open_affixes == 0:
@@ -1306,6 +1309,10 @@ class CraftingSimulator:
         if essence_mod:
             self.item.mods.append(essence_mod)
             self.item.essence_mod_family = essence_family
+
+        # Special: Essence of the Abyss sets the mark flag
+        if essence_family == "EssenceAbyss":
+            self.item.has_abyss_mark = True
 
     def _find_essence_mod(self, family: str, stat_text: str = "") -> ModInstance | None:
         """Find the correct essence mod to place on the item.

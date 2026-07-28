@@ -646,9 +646,10 @@ def cmd_sim(argv: list[str]) -> int:
                 if min_mods and len(item.mods) < min_mods:
                     continue
                 op = cur_def.get("op", "")
-                # Skip add/augment if no open slots
+                # Skip add/augment if no open slots AND no rarity change that would create slots
                 if op == "add" and item.open_affixes == 0:
-                    continue
+                    if "to_rarity" not in cur_def:
+                        continue  # truly no slots (e.g. augment on full Magic)
                 to_r = cur_def.get("to_rarity", "")
                 rarity_change = f" → {to_r}" if to_r else ""
                 print(f"    {cur_name:25} op={op}{rarity_change}")
