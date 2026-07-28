@@ -1102,22 +1102,17 @@ class CraftingSimulator:
             outcome = random.choice(outcomes)
 
             if outcome == "reroll_mods":
-                # Reroll up to 3 modifiers into new ones.
-                # On Normal/Magic items with few mods, this adds mods (upgrades rarity).
-                non_fractured = [m for m in self.item.mods if not m.fractured]
-                n_to_reroll = min(3, len(non_fractured))
-                # Remove existing non-fractured mods
-                for mod in random.sample(non_fractured, n_to_reroll) if n_to_reroll else []:
-                    self.item.mods.remove(mod)
-                # Item becomes Rare if it wasn't already (corruption reroll upgrades)
-                if self.item.rarity in ("Normal", "Magic"):
-                    self.item.rarity = "Rare"
-                # Add up to 3 new mods
-                for _ in range(3):
-                    if self.item.open_affixes > 0:
-                        new_mod = self.roll_mod()
-                        if new_mod:
-                            self.item.mods.append(new_mod)
+                # Reroll: removes all non-fractured mods, fills with new random mods
+                # Makes the item Rare with full prefixes and suffixes (6 mods)
+                self.item.mods = [m for m in self.item.mods if m.fractured]
+                self.item.rarity = "Rare"
+                # Fill to 6 mods (3 prefix + 3 suffix)
+                while self.item.open_affixes > 0:
+                    new_mod = self.roll_mod()
+                    if new_mod:
+                        self.item.mods.append(new_mod)
+                    else:
+                        break
 
             elif outcome == "enchantment":
                 # Add a Vaal corruption implicit (doesn't take a prefix/suffix slot)
