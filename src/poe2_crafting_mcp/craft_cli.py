@@ -720,7 +720,14 @@ def cmd_sim(argv: list[str]) -> int:
                     if unit_price:
                         line_cost = unit_price * count
                         total_cost += line_cost
-                        print(f"    {lookup_name:38} ×{count:3}  @ {unit_price:.1f}c = {line_cost:.1f}c")
+                        # Use enough decimal places to show meaningful values
+                        if unit_price >= 1:
+                            price_str = f"{unit_price:.1f}c"
+                            cost_str = f"{line_cost:.1f}c"
+                        else:
+                            price_str = f"{unit_price:.2f}c"
+                            cost_str = f"{line_cost:.2f}c"
+                        print(f"    {lookup_name:38} ×{count:3}  @ {price_str} = {cost_str}")
                     else:
                         # Unpriced items get a penalty (can't follow recipe if unavailable)
                         # Default: 1 Divine Orb equivalent per use (tunable)
