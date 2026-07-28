@@ -723,9 +723,11 @@ def cmd_sim(argv: list[str]) -> int:
                         print(f"    {lookup_name:38} ×{count:3}  @ {unit_price:.1f}c = {line_cost:.1f}c")
                     else:
                         # Unpriced items get a penalty (can't follow recipe if unavailable)
-                        unpriced_penalty = 10.0 * count  # assume 10c per use as penalty
+                        # Default: 1 Divine Orb equivalent per use (tunable)
+                        _UNPRICED_PENALTY = 100.0  # chaos per use — ~1 divine, discourages unknown items
+                        unpriced_penalty = _UNPRICED_PENALTY * count
                         total_cost += unpriced_penalty
-                        print(f"    {lookup_name:38} ×{count:3}  @ {_YELLOW}~10c (no price data){_RESET} = {unpriced_penalty:.1f}c")
+                        print(f"    {lookup_name:38} ×{count:3}  @ {_YELLOW}~{_UNPRICED_PENALTY:.0f}c (no price){_RESET} = {unpriced_penalty:.1f}c")
                 print(f"  {'─' * 55}")
                 print(f"  {_BOLD}Total estimated cost: {total_cost:.1f} chaos{_RESET}")
 
