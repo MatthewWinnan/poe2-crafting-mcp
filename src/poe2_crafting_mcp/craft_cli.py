@@ -998,7 +998,8 @@ def cmd_sim(argv: list[str]) -> int:
             # Socket an augment item (rune/soul core/idol)
             if len(parts) < 2:
                 print(f"  {_RED}Usage: socket <item_name>{_RESET}")
-                print(f"  {_DIM}Example: socket Greater Body Rune{_RESET}")
+                print(f"  {_DIM}Example: socket Body Rune{_RESET}")
+                print(f"  {_DIM}Run 'socketables' to see available options with effects.{_RESET}")
                 continue
             socketable_name = " ".join(parts[1:])
             # Find an empty socket slot to fill
@@ -1008,9 +1009,29 @@ def cmd_sim(argv: list[str]) -> int:
                 if len(item.sockets) < item.max_sockets:
                     print(f"  {_DIM}Use 'artificer' to add a new socket first.{_RESET}")
                 continue
+            # Resolve effect to validate and show what it does
+            from poe2_crafting_mcp.crafting.socketables import get_socketable_effect_for_item
+            family_key = socketable_name.replace(" ", "").replace("'", "")
+            effect = get_socketable_effect_for_item('data/poe2_craft.db', item_class, family_key)
+            if not effect:
+                # Try stripping tier prefix
+                for prefix in ("Lesser", "Greater"):
+                    if family_key.startswith(prefix):
+                        stripped = family_key[len(prefix):]
+                        effect = get_socketable_effect_for_item('data/poe2_craft.db', item_class, stripped)
+                        if effect:
+                            break
+            if not effect:
+                print(f"  {_YELLOW}Warning: '{socketable_name}' not found in socketable DB for {item_class}.{_RESET}")
+                print(f"  {_DIM}Socketing anyway (effect unknown). Run 'socketables' to browse.{_RESET}")
+            
             item.sockets[empty_idx] = socketable_name
+            _track(socketable_name)
             history.append({"action": f"socket:{socketable_name}", "omens": []})
-            print(f"  {_GREEN}Socketed: {socketable_name}{_RESET}")
+            if effect:
+                print(f"  {_GREEN}Socketed: {socketable_name} → {effect.stat_text}{_RESET}")
+            else:
+                print(f"  {_GREEN}Socketed: {socketable_name}{_RESET}")
             _print_item(item, base_name)
 
         elif cmd == "unsocket":
@@ -1208,12 +1229,23 @@ def _print_item(item: ItemState, base_name: str) -> None:
     # Sockets
     socket_filled = [s for s in item.sockets if s]
     socket_empty = len(item.sockets) - len(socket_filled)
-    socket_info = f"  Sockets: {len(item.sockets)}/{item.max_sockets}"
-    if socket_filled:
-        socket_info += f" [{', '.join(socket_filled)}]"
+    socket_info = f"Sockets: {len(item.sockets)}/{item.max_sockets}"
     if socket_empty > 0:
         socket_info += f" ({socket_empty} empty)"
     print(f"  {_DIM}Slots: {item.open_prefixes}P / {item.open_suffixes}S open | {socket_info}{_RESET}")
+    if socket_filled:
+        from poe2_crafting_mcp.crafting.socketables import get_socketable_effect_for_item
+        for s in socket_filled:
+            family_key = s.replace(" ", "").replace("'", "")
+            effect = get_socketable_effect_for_item('data/poe2_craft.db', item.item_class, family_key)
+            if not effect:
+                for prefix in ("Lesser", "Greater"):
+                    if family_key.startswith(prefix):
+                        effect = get_socketable_effect_for_item('data/poe2_craft.db', item.item_class, family_key[len(prefix):])
+                        if effect:
+                            break
+            effect_text = f" → {effect.stat_text}" if effect else ""
+            print(f"    {_DIM}⬡{_RESET} {s}{effect_text}")
 
 
 def _serialize_item(
