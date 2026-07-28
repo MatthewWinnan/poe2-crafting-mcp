@@ -267,3 +267,126 @@ both targeted removal AND a desecrated mod in one sequence.
 4. **Pool weighting**: poe2db shows weight=1 for all desecrated mods. Is this
    truly uniform, or does the scraper not capture different weights? The equal
    weight makes the 3-choice mechanic give ~uniform odds across all options.
+
+## Reveal as Branching Decision Node
+
+The reveal is NOT a binary hit/miss — it's a full branching point because
+the specific mod chosen affects all future crafting decisions (family blocking,
+slot counts, annul targets). The MC simulation must:
+
+1. Draw N mods from pool (N=3, or N=6 with Echoes)
+2. If target is among them → pick target (deterministic best choice)
+3. If target is NOT among them → pick "least damaging" option:
+   - Prefer mod whose family doesn't block future targets
+   - Prefer affix type easier to annul later (opposite side from targets)
+   - Prefer lowest req_level (easier to Whittling-remove)
+   
+The optimizer can evolve the miss-case heuristic, but the simulator must
+place the actual concrete mod so downstream item state is correct.
+
+```python
+def simulate_desecration(item, pool, target_family, N=3):
+    drawn = random.sample(pool, min(N, len(pool)))
+    
+    # Hit case
+    hits = [m for m in drawn if m.family == target_family]
+    if hits:
+        return hits[0], True
+    
+    # Miss case: pick least-damaging from the drawn options
+    best = pick_least_damaging(drawn, item, future_targets)
+    return best, False  # miss, but concrete mod placed on item
+```
+
+## CLI: Interactive Crafting Mode
+
+The CLI exposes desecration as an interactive step where the user sees the
+revealed options and chooses — matching how the game works. This allows
+manual testing against known crafting guides (e.g. Craft of Exile paths).
+
+### CLI Flow: `poe2-craft sim`
+
+```
+$ poe2-craft sim "Gold Gloves" --ilvl 82
+
+Item: Gold Gloves (Rare, ilvl 82)
+Mods: (empty)
+
+> transmute
+Item: Gold Gloves (Magic, ilvl 82)
+  prefix T3 | IncreasedLife | +(30-39) to maximum Life
+
+> greater_essence IncreasedEnergyShield
+Item: Gold Gloves (Rare, ilvl 82)
+  prefix T1 | IncreasedEnergyShield | (68-79)% increased Energy Shield [ESSENCE]
+  suffix T2 | FireResistance | +(21-25)% to Fire Resistance
+  prefix T4 | IncreasedMana | +(45-54) to maximum Mana
+  suffix T5 | Dexterity | +(13-16) to Dexterity
+
+> desecrate --bone preserved
+Applying Preserved Rib to Gold Gloves...
+Item has open suffix — desecrating as suffix.
+
+Revealed options (pick 1-3):
+  [1] suffix | SpiritReservation | (5-10)% increased Spirit Reservation Efficiency  [amanamu]
+  [2] suffix | CritMultiplier    | (25-34)% increased Critical Damage Bonus         [kurgal]
+  [3] suffix | LifeRecoup        | (15-20)% of Damage taken Recouped as Life        [ulaman]
+
+Pick (1-3, or 'r' to reroll with Echoes omen): 2
+
+Item: Gold Gloves (Rare, ilvl 82)
+  prefix T1 | IncreasedEnergyShield | (68-79)% increased Energy Shield [ESSENCE]
+  suffix T2 | FireResistance | +(21-25)% to Fire Resistance
+  prefix T4 | IncreasedMana | +(45-54) to maximum Mana
+  suffix T5 | Dexterity | +(13-16) to Dexterity
+  suffix T1 | CritMultiplier | (25-34)% increased Critical Damage Bonus [DESECRATED]
+
+> exalted --omens sinistral_exaltation
+...
+
+> save my_gloves.json
+Saved item state to my_gloves.json
+
+> quit
+```
+
+### Key CLI Features:
+
+1. **Interactive reveal**: shows 3 (or 6) options, user picks
+2. **Item state persistence**: `save`/`load` commands to serialize item state as JSON
+3. **Feed back in**: `poe2-craft sim --load my_gloves.json` to continue from saved state
+4. **Omen stacking**: `--omens sinistral_exaltation,greater_exaltation`
+5. **Seed control**: `--seed 42` for reproducible simulations
+6. **History**: shows all operations performed (for comparing with Craft of Exile)
+
+### Item State JSON Format:
+
+```json
+{
+  "item_class": "Gloves_int",
+  "base_name": "Gold Gloves",
+  "ilvl": 82,
+  "rarity": "Rare",
+  "mods": [
+    {"family": "IncreasedEnergyShield", "affix_type": "prefix", "tier": 1,
+     "req_level": 72, "stat_text": "(68-79)% increased Energy Shield",
+     "fractured": false, "desecrated": false},
+    ...
+  ],
+  "corrupted": false,
+  "essence_mod_family": "IncreasedEnergyShield",
+  "desecrated_mod_family": "CritMultiplier",
+  "history": [
+    {"step": 1, "action": "transmute", "omens": []},
+    {"step": 2, "action": "greater_essence", "essence_family": "IncreasedEnergyShield"},
+    {"step": 3, "action": "desecrate", "bone": "preserved", "revealed": [...], "chose": 2},
+    {"step": 4, "action": "exalted", "omens": ["sinistral_exaltation"]}
+  ]
+}
+```
+
+This lets us:
+- Replay crafting sequences for verification
+- Compare against known Craft of Exile strategies
+- Feed saved states into the optimizer for "mid-craft entry" optimization
+- Share crafting plans as reproducible JSON files

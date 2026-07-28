@@ -22,10 +22,12 @@ class ModInstance:
     weight: int          # spawn weight (DropChance)
     stat_text: str       # human-readable stat
     fractured: bool = False
+    desecrated: bool = False  # True if this mod came from abyss desecration
 
     def __repr__(self) -> str:
         frac = " [F]" if self.fractured else ""
-        return f"<{self.affix_type[0].upper()} T{self.tier} {self.family}{frac}>"
+        desc = " [D]" if self.desecrated else ""
+        return f"<{self.affix_type[0].upper()} T{self.tier} {self.family}{frac}{desc}>"
 
 
 @dataclass
