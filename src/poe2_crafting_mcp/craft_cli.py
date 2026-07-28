@@ -797,6 +797,42 @@ def cmd_sim(argv: list[str]) -> int:
             except ValueError as e:
                 print(f"  {_RED}Error: {e}{_RESET}")
 
+        elif cmd == "socketables":
+            # Show available socketables for this item with their effects
+            from poe2_crafting_mcp.crafting.socketables import list_socketable_families
+            families = list_socketable_families('data/poe2_craft.db', item_class)
+            filter_text = " ".join(parts[1:]).lower() if len(parts) > 1 else ""
+            
+            if filter_text:
+                families = [f for f in families if filter_text in f["display_name"].lower()
+                           or filter_text in f["best_stat_text"].lower()]
+            
+            print(f"  {_BOLD}Socketables for {item_class}"
+                  f"{' (filter: ' + filter_text + ')' if filter_text else ''}:{_RESET}")
+            if not families:
+                print(f"  {_DIM}No matches.{_RESET}")
+            else:
+                for f in families[:30]:  # limit display
+                    tiers_str = f" ({f['tiers']} tiers)" if f['tiers'] > 1 else ""
+                    print(f"    {f['display_name']:35} {f['best_stat_text']}{tiers_str}")
+                if len(families) > 30:
+                    print(f"  {_DIM}...and {len(families) - 30} more. Use a filter to narrow.{_RESET}")
+
+        elif cmd == "export":
+            # Export item as PoB text format
+            from poe2_crafting_mcp.crafting.pob_export import item_state_to_pob_text, item_state_to_trade_text
+            fmt = parts[1] if len(parts) > 1 else "pob"
+            if fmt == "trade":
+                text = item_state_to_trade_text(item, base_name)
+            else:
+                text = item_state_to_pob_text(item, base_name)
+            print(f"\n{_DIM}{'─' * 50}{_RESET}")
+            print(text)
+            print(f"{_DIM}{'─' * 50}{_RESET}")
+            # Also copy-friendly: print without ANSI
+            if fmt == "pob":
+                print(f"  {_DIM}(Paste this into PoB's item editor){_RESET}")
+
         elif cmd == "socket":
             # Socket an augment item (rune/soul core/idol)
             if len(parts) < 2:

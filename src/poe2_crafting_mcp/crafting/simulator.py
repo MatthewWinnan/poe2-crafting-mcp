@@ -152,6 +152,9 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     "artificer":         {"op": "add_socket"},
     # Corruption
     "vaal":              {"op": "corrupt"},
+    # Architect's Orb (Atziri's Temple) — second corruption attempt
+    # 50% add second enchantment, 50% destroy item
+    "architect":         {"op": "architect_corrupt"},
 }
 
 # ── Max Sockets by Item Slot ──────────────────────────────────────────────────
@@ -946,6 +949,23 @@ class CraftingSimulator:
                 self.item.max_sockets += 1
                 self.item.sockets.append("")
             # "nothing" and "nothing_socket" — only corrupted tag added
+
+        elif op == "architect_corrupt":
+            # Architect's Orb: requires already-corrupted item
+            # 50% chance to add second corruption enchantment, 50% destroy
+            if not self.item.corrupted:
+                raise ValueError("Architect's Orb requires a corrupted item")
+            if random.random() < 0.5:
+                # Success: add second enchantment
+                enchant = self._roll_corruption_enchantment()
+                if self.item.corruption_enchantment:
+                    # Append to existing (both are kept)
+                    self.item.corruption_enchantment += "\n" + enchant
+                else:
+                    self.item.corruption_enchantment = enchant
+            else:
+                # Failure: item destroyed
+                raise ValueError("DESTROYED — Architect's Orb failed (50% chance)")
 
         return self.item
 
