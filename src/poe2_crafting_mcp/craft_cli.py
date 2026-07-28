@@ -665,6 +665,18 @@ def cmd_sim(argv: list[str]) -> int:
                     "sovereign": "Omen of the Sovereign",
                     "abyssal_echoes": "Omen of Abyssal Echoes",
                     "light": "Omen of Light",
+                    # Bones
+                    "preserved_jawbone": "Preserved Jawbone",
+                    "preserved_rib": "Preserved Rib",
+                    "preserved_collarbone": "Preserved Collarbone",
+                    "preserved_cranium": "Preserved Cranium",
+                    "preserved_vertebrae": "Preserved Vertebrae",
+                    "ancient_jawbone": "Ancient Jawbone",
+                    "ancient_rib": "Ancient Rib",
+                    "ancient_collarbone": "Ancient Collarbone",
+                    "gnawed_jawbone": "Gnawed Jawbone",
+                    "gnawed_rib": "Gnawed Rib",
+                    "gnawed_collarbone": "Gnawed Collarbone",
                 }
                 print(f"  {_BOLD}Currencies consumed:{_RESET}")
                 total_cost = 0.0
