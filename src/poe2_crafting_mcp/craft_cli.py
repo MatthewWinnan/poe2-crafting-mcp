@@ -470,7 +470,7 @@ def cmd_sim(argv: list[str]) -> int:
     from poe2_crafting_mcp.crafting.simulator import (
         CraftingSimulator, ItemState, ModInstance, CURRENCIES, OMENS,
     )
-    from poe2_crafting_mcp.crafting.desecration import DesecrationEngine, BONES
+    from poe2_crafting_mcp.crafting.desecration import DesecrationEngine, BONES, get_bone_slot_for_item_class
     from poe2_crafting_mcp.data.price_db import PriceDatabase
 
     pdb = PriceDatabase()
@@ -599,6 +599,168 @@ def cmd_sim(argv: list[str]) -> int:
             for fam, mods in sorted(by_family.items(), key=lambda x: -sum(m['weight'] for m in x[1])):
                 total_w = sum(m['weight'] for m in mods)
                 print(f"    {fam:30} weight={total_w:5} ({len(mods)} tiers)")
+
+        elif cmd == "currencies":
+            # Show which currencies are valid for current item state
+            print(f"  {_BOLD}Valid currencies for {item.rarity} item:{_RESET}")
+            for cur_name, cur_def in sorted(CURRENCIES.items()):
+                from_r = cur_def.get("from_rarity", [])
+                if from_r and item.rarity not in from_r:
+                    continue
+                min_mods = cur_def.get("min_mods", 0)
+                if min_mods and len(item.mods) < min_mods:
+                    continue
+                op = cur_def["op"]
+                to_r = cur_def.get("to_rarity", "")
+                rarity_change = f" → {to_r}" if to_r else ""
+                print(f"    {cur_name:25} op={op}{rarity_change}")
+
+        elif cmd == "omens":
+            # Show omens applicable to a currency
+            target_cur = parts[1] if len(parts) > 1 else ""
+            if not target_cur:
+                print(f"  {_BOLD}Usage: omens <currency>{_RESET}")
+                print(f"  {_DIM}Shows which omens apply to that currency.{_RESET}")
+            else:
+                print(f"  {_BOLD}Omens for '{target_cur}':{_RESET}")
+                found = False
+                for omen_name, omen_def in sorted(OMENS.items()):
+                    if target_cur in omen_def.get("applies_to", []):
+                        effect_parts = []
+                        if omen_def.get("gentype_only") == 1:
+                            effect_parts.append("prefix only")
+                        elif omen_def.get("gentype_only") == 2:
+                            effect_parts.append("suffix only")
+                        if omen_def.get("qty_override"):
+                            effect_parts.append(f"adds {omen_def['qty_override']} mods")
+                        if omen_def.get("homogenise"):
+                            effect_parts.append("shared tags only")
+                        if omen_def.get("del_gentype_only") == 1:
+                            effect_parts.append("removes prefix only")
+                        elif omen_def.get("del_gentype_only") == 2:
+                            effect_parts.append("removes suffix only")
+                        if omen_def.get("del_target"):
+                            effect_parts.append(f"removes {omen_def['del_target']}")
+                        effect = ", ".join(effect_parts) if effect_parts else "special"
+                        print(f"    {omen_name:30} {effect}")
+                        found = True
+                if not found:
+                    print(f"    {_DIM}No omens apply to '{target_cur}'.{_RESET}")
+
+        elif cmd == "essences":
+            # Show available essences for this item slot
+            from poe2_crafting_mcp.crafting.essence_resolver import EssenceResolver
+            ess_resolver = EssenceResolver()
+            # Determine slot from item_class
+            slot = _item_class_to_slot(item_class)
+            tier_filter = parts[1] if len(parts) > 1 else ""
+            essences_list = ess_resolver.list_for_slot(slot, tier=tier_filter)
+            if not essences_list:
+                print(f"  {_DIM}No essences found for slot '{slot}'"
+                      f"{' tier=' + tier_filter if tier_filter else ''}{_RESET}")
+            else:
+                print(f"  {_BOLD}Essences for {slot}"
+                      f"{' (' + tier_filter + ')' if tier_filter else ''}:{_RESET}")
+                for e in essences_list:
+                    valid = ""
+                    # Check if essence tier matches item rarity requirement
+                    if e.tier in ("Lesser", "Normal", "Greater"):
+                        if item.rarity not in ("Normal", "Magic"):
+                            valid = f" {_DIM}(needs Magic item){_RESET}"
+                    elif e.tier in ("Perfect", "Corrupted", "Alloy"):
+                        if item.rarity != "Rare":
+                            valid = f" {_DIM}(needs Rare item){_RESET}"
+                    print(f"    {e.essence_name:40} {e.stat_text}{valid}")
+
+        elif cmd == "bones":
+            # Show available bones for this item
+            slot_cat = get_bone_slot_for_item_class(item_class)
+            print(f"  {_BOLD}Bones for {item_class} (category: {slot_cat}):{_RESET}")
+            for bone_name, bone_def in sorted(BONES.items()):
+                if bone_def["slots"] != slot_cat:
+                    continue
+                err = desecration.validate_bone(bone_name, item_class, ilvl)
+                status = f" {_RED}({err}){_RESET}" if err else f" {_GREEN}✓{_RESET}"
+                min_lv = bone_def.get("min_mod_level", 0)
+                max_iv = bone_def.get("max_ilvl")
+                desc = f"min_lv={min_lv}" if min_lv else ""
+                if max_iv:
+                    desc += f" max_ilvl={max_iv}"
+                print(f"    {bone_name:25} {desc:20}{status}")
+
+        elif cmd in ("essence", "use_essence"):
+            # Apply essence by name — resolve family and stat_text from DB
+            from poe2_crafting_mcp.crafting.essence_resolver import EssenceResolver
+            ess_resolver = EssenceResolver()
+
+            # Parse essence name (everything after 'essence' that's not a flag)
+            ess_name_parts = []
+            i = 1
+            while i < len(parts) and not parts[i].startswith("--"):
+                ess_name_parts.append(parts[i])
+                i += 1
+            ess_name = " ".join(ess_name_parts)
+
+            if not ess_name:
+                print(f"  {_RED}Usage: essence \"Greater Essence of the Body\"{_RESET}")
+                print(f"  {_DIM}Run 'essences' to see available options.{_RESET}")
+                continue
+
+            # Resolve slot
+            slot = _item_class_to_slot(item_class)
+            resolved = ess_resolver.resolve(ess_name, slot)
+            if not resolved:
+                print(f"  {_RED}Cannot resolve '{ess_name}' for slot '{slot}'.{_RESET}")
+                print(f"  {_DIM}Run 'essences' to see available options.{_RESET}")
+                continue
+
+            # Determine currency key from tier
+            tier_to_currency = {
+                "Lesser": "lesser_essence",
+                "Normal": "normal_essence",
+                "Greater": "greater_essence",
+                "Perfect": "perfect_essence",
+                "Corrupted": "perfect_essence",  # corrupted essences use swap mechanic
+                "Alloy": "perfect_essence",       # alloys also use swap mechanic
+            }
+            currency_key = tier_to_currency.get(resolved.tier)
+            if not currency_key:
+                print(f"  {_RED}Unknown essence tier: {resolved.tier}{_RESET}")
+                continue
+
+            # Resolve mod_family from stat_text via mod_weights join
+            mod_family = _resolve_essence_family(pdb, resolved.stat_text, item_class)
+            if not mod_family:
+                print(f"  {_YELLOW}Warning: could not resolve mod_family for stat_text. "
+                      f"Using best-effort.{_RESET}")
+                # Try to continue anyway
+                mod_family = ""
+
+            # Parse omens
+            omens_str = _parse_flag(parts, "--omens")
+            active_omens = omens_str.split(",") if omens_str else []
+
+            print(f"  {_DIM}Applying {resolved.essence_name} ({resolved.tier}){_RESET}")
+            print(f"  {_DIM}  → family={mod_family}, stat={resolved.stat_text}{_RESET}")
+
+            try:
+                sim.apply_currency(
+                    currency_key,
+                    omens=active_omens if active_omens else None,
+                    essence_family=mod_family,
+                    essence_stat_text=resolved.stat_text,
+                )
+                item = sim.item
+                history.append({
+                    "action": f"essence:{ess_name}",
+                    "currency": currency_key,
+                    "essence_family": mod_family,
+                    "omens": active_omens,
+                })
+                print()
+                _print_item(item, base_name)
+            except ValueError as e:
+                print(f"  {_RED}Error: {e}{_RESET}")
 
         elif cmd == "desecrate":
             bone = parts[1] if len(parts) > 1 else "preserved_rib"
@@ -836,41 +998,106 @@ def _parse_flag(parts: list[str], flag: str) -> str:
     return ""
 
 
+def _item_class_to_slot(item_class: str) -> str:
+    """Convert poe2db item_class back to a slot name for EssenceResolver."""
+    # Strip attribute suffixes
+    slot_base = item_class.split("_")[0] if "_" in item_class else item_class
+
+    # Map poe2db class prefixes back to slot names
+    class_to_slot = {
+        "Gloves": "Gloves", "Boots": "Boots", "Helmets": "Helmet",
+        "Body": "Body Armour", "Shields": "Shield", "Bucklers": "Shield",
+        "Foci": "Focus", "Bows": "Bow", "Crossbows": "Crossbow",
+        "Daggers": "Dagger", "Claws": "Claw", "Flails": "Flail",
+        "Spears": "Spear", "Quarterstaves": "Quarterstaff",
+        "One": "One Hand Sword",  # will need context
+        "Two": "Two Hand Sword",  # will need context
+        "Sceptres": "Sceptre", "Wands": "Wand", "Staves": "Staff",
+        "Rings": "Ring", "Amulets": "Amulet", "Belts": "Belt",
+        "Quivers": "Quiver", "Talismans": "Talisman", "Traps": "Trap",
+    }
+
+    # Direct full matches first
+    full_matches = {
+        "Bows": "Bow", "Crossbows": "Crossbow", "Daggers": "Dagger",
+        "Claws": "Claw", "Flails": "Flail", "Spears": "Spear",
+        "Quarterstaves": "Quarterstaff", "Sceptres": "Sceptre",
+        "Wands": "Wand", "Staves": "Staff", "Rings": "Ring",
+        "Amulets": "Amulet", "Belts": "Belt", "Quivers": "Quiver",
+        "Talismans": "Talisman", "Traps": "Trap", "Foci": "Focus",
+        "Bucklers": "Shield",
+        "One_Hand_Swords": "One Hand Sword", "Two_Hand_Swords": "Two Hand Sword",
+        "One_Hand_Axes": "One Hand Axe", "Two_Hand_Axes": "Two Hand Axe",
+        "One_Hand_Maces": "One Hand Mace", "Two_Hand_Maces": "Two Hand Mace",
+    }
+    if item_class in full_matches:
+        return full_matches[item_class]
+
+    # Prefix-based matching for armour with attribute suffixes
+    for prefix, slot in [
+        ("Body_Armours", "Body Armour"), ("Boots", "Boots"),
+        ("Gloves", "Gloves"), ("Helmets", "Helmet"),
+        ("Shields", "Shield"),
+    ]:
+        if item_class.startswith(prefix):
+            return slot
+
+    return item_class  # fallback
+
+
+def _resolve_essence_family(pdb, stat_text: str, item_class: str) -> str:
+    """Resolve essence stat_text to mod_family by joining with mod_weights."""
+    row = pdb._conn.execute(
+        "SELECT mod_family FROM mod_weights "
+        "WHERE stat_text = ? AND pool IN ('essence', 'perfect_essence') "
+        "AND item_class = ? LIMIT 1",
+        (stat_text, item_class),
+    ).fetchone()
+    if row:
+        return row[0]
+    # Fallback: search across all item classes
+    row = pdb._conn.execute(
+        "SELECT mod_family FROM mod_weights "
+        "WHERE stat_text = ? AND pool IN ('essence', 'perfect_essence') LIMIT 1",
+        (stat_text,),
+    ).fetchone()
+    return row[0] if row else ""
+
+
 def _sim_help() -> None:
     print(f"""
   {_BOLD}Crafting Commands:{_RESET}
     <currency>                       Apply currency (e.g. transmute, exalted, chaos)
     <currency> --omens x,y           Apply with stacked omens
-    <currency> --family F            Essence: specify mod family to guarantee
-    <currency> --stat_text "..."     Essence: pin exact tier by stat text
-    desecrate <bone>                 Apply bone (e.g. preserved_jawbone)
+    essence <name>                   Apply essence by name (auto-resolves family/tier)
+    essence <name> --omens x         With omen (e.g. sinistral_crystallisation)
+    desecrate <bone>                 Apply bone (e.g. preserved_rib, ancient_jawbone)
     desecrate <bone> --omens x       With omen (e.g. blackblooded, abyssal_echoes)
 
+  {_BOLD}Discovery Commands:{_RESET}
+    currencies                       Show valid currencies for current item state
+    essences [tier]                  Show available essences (e.g. 'essences Greater')
+    omens <currency>                 Show omens that apply to a currency
+    bones                            Show valid bones for this item
+    pool [prefix|suffix]             Show available mod pool with weights
+
   {_BOLD}Item Management:{_RESET}
-    save <file.json>                 Save current item state
+    save <file.json>                 Save current item state + history
     load <file.json>                 Load item state from file
-    pool [prefix|suffix]             Show available mod pool
     history                          Show crafting history
 
   {_BOLD}Other:{_RESET}
     help                             Show this help
     quit                             Exit
 
-  {_BOLD}Currencies:{_RESET}
-    transmute, augment, alteration, regal, alchemy, chaos, exalted, annulment,
-    divine, scour, fracturing + greater_*/perfect_* variants
-    lesser_essence, normal_essence, greater_essence, perfect_essence
-
-  {_BOLD}Omens (stack with commas):{_RESET}
-    sinistral_exaltation, dextral_exaltation, greater_exaltation,
-    homogenising_exaltation, sinistral_annulment, dextral_annulment,
-    sinistral_erasure, dextral_erasure, whittling, ...
-
-  {_BOLD}Bones:{_RESET}
-    gnawed_jawbone, preserved_jawbone, ancient_jawbone,
-    gnawed_rib, preserved_rib, ancient_rib,
-    gnawed_collarbone, preserved_collarbone, ancient_collarbone,
-    preserved_cranium, preserved_vertebrae
+  {_BOLD}Examples:{_RESET}
+    > transmute
+    > essence Greater Essence of the Body
+    > exalted --omens dextral_exaltation,greater_exaltation
+    > desecrate preserved_rib --omens blackblooded
+    > omens exalted
+    > essences Perfect
+    > save my_craft.json
 """)
 
 
