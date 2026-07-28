@@ -285,12 +285,20 @@ class DesecrationEngine:
         bone: str,
         omens: list[str] | None = None,
     ) -> tuple[ItemState, str]:
-        """Apply bone to item. Returns (modified item, affix_type of desecrated slot).
+        """Apply bone to item. Sets unrevealed desecrated state.
+
+        Returns (modified item, affix_type of desecrated slot).
+        The item now has desecrated_unrevealed=True and must be revealed
+        at the Well of Souls (separate step) before further desecration.
 
         If item has 6 mods, removes a random mod first (same affix type as desecrated).
         Special: if item has_abyss_mark, the Mark is always removed (deterministic).
         """
         from poe2_crafting_mcp.crafting.simulator import OMENS
+
+        # Can't desecrate if already has an unrevealed desecrated mod
+        if item.desecrated_unrevealed:
+            raise ValueError("Item already has an unrevealed desecrated modifier. Use 'reveal' first.")
 
         # Merge omen effects
         gentype_only = 0
@@ -313,6 +321,8 @@ class DesecrationEngine:
                 item.has_abyss_mark = False
                 item.essence_mod_family = None
                 # abyss_mark_min_level stays set — used by get_reveal_pool
+                item.desecrated_unrevealed = True
+                item.desecrated_affix_type = affix_type
                 return item, affix_type
 
         affix_type = self.determine_affix_type(item, gentype_only)
@@ -326,6 +336,10 @@ class DesecrationEngine:
             if removable:
                 to_remove = random.choice(removable)
                 item.mods.remove(to_remove)
+
+        # Mark as unrevealed
+        item.desecrated_unrevealed = True
+        item.desecrated_affix_type = affix_type
 
         return item, affix_type
 

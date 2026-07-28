@@ -204,6 +204,8 @@ class ItemState:
     has_abyss_mark: bool = False           # True if "Mark of the Abyssal Lord" is on item
     abyss_mark_min_level: int = 0          # req_level of the mod removed by Abyss essence (tier floor for reveal)
     implicits: list[ModInstance] = field(default_factory=list)  # corruption implicits, base implicits
+    desecrated_unrevealed: bool = False    # True if item has an unrevealed desecrated mod pending
+    desecrated_affix_type: str = ""        # "prefix" or "suffix" — what slot is reserved for reveal
 
     @property
     def prefixes(self) -> list[ModInstance]:
@@ -270,6 +272,8 @@ class ItemState:
             has_abyss_mark=self.has_abyss_mark,
             abyss_mark_min_level=self.abyss_mark_min_level,
             implicits=[ModInstance(**m.__dict__) for m in self.implicits],
+            desecrated_unrevealed=self.desecrated_unrevealed,
+            desecrated_affix_type=self.desecrated_affix_type,
         )
 
 

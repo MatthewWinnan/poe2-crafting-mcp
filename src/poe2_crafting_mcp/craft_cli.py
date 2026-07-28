@@ -1134,14 +1134,42 @@ def cmd_sim(argv: list[str]) -> int:
                 print(f"  {_RED}{err}{_RESET}")
                 continue
 
-            # Apply bone
-            item, affix_type = desecration.apply_bone(item, bone, omens=active_omens)
-            sim.item = item
+            # Apply bone (sets unrevealed state)
+            try:
+                item, affix_type = desecration.apply_bone(item, bone, omens=active_omens)
+                sim.item = item
+            except ValueError as e:
+                print(f"  {_RED}Error: {e}{_RESET}")
+                continue
 
-            # Get pool and draw options
-            pool = desecration.get_reveal_pool(item_class, ilvl, affix_type, bone, item, omens=active_omens)
+            _track(bone)
+            for o in active_omens:
+                if o:
+                    _track(o)
+            history.append({"action": f"desecrate:{bone}", "omens": active_omens})
+            print(f"  {_GREEN}Desecrated ({affix_type} slot reserved). Use 'reveal' at the Well of Souls.{_RESET}")
+            print()
+            _print_item(item, base_name)
+
+        elif cmd == "reveal":
+            # Reveal desecrated mod at the Well of Souls
+            if not item.desecrated_unrevealed:
+                print(f"  {_RED}No unrevealed desecrated mod. Use 'desecrate <bone>' first.{_RESET}")
+                continue
+
+            omens_str = _parse_flag(parts, "--omens")
+            active_omens = omens_str.split(",") if omens_str else []
+
+            affix_type = item.desecrated_affix_type
+            # Use a generic bone for pool lookup (min_mod_level comes from bone quality used earlier)
+            slot_cat = get_bone_slot_for_item_class(item_class)
+            bone_for_pool = f"preserved_{slot_cat.replace('weapon','jawbone').replace('armour','rib').replace('jewellery','collarbone')}"
+            if bone_for_pool not in BONES:
+                bone_for_pool = "preserved_rib"
+
+            pool = desecration.get_reveal_pool(item_class, ilvl, affix_type, bone_for_pool, item, omens=active_omens or None)
             if not pool:
-                print(f"  {_RED}No desecrated mods available in pool!{_RESET}")
+                print(f"  {_RED}No mods available in reveal pool!{_RESET}")
                 continue
 
             echoes = "abyssal_echoes" in active_omens
@@ -1149,13 +1177,18 @@ def cmd_sim(argv: list[str]) -> int:
             options = _random.sample(pool, n_draws)
 
             # Show options
-            print(f"\n  {_BOLD}Revealed options ({affix_type}, pick 1-{n_draws}):{_RESET}")
+            print(f"\n  {_BOLD}Well of Souls — Revealed options ({affix_type}, pick 1-{n_draws}):{_RESET}")
             for i, opt in enumerate(options, 1):
                 faction_tag = f" [{opt.faction}]" if opt.faction else ""
                 print(f"    [{i}] {opt.affix_type:6} | {opt.family:28} | {opt.stat_text}{faction_tag}")
 
-            if echoes and n_draws < len(pool):
-                print(f"  {_DIM}(Abyssal Echoes active — showing {n_draws} options){_RESET}")
+            if echoes:
+                print(f"  {_DIM}(Abyssal Echoes: {n_draws} options shown){_RESET}")
+
+            # Track echoes omen cost
+            for o in active_omens:
+                if o:
+                    _track(o)
 
             # Get player choice
             while True:
@@ -1176,15 +1209,13 @@ def cmd_sim(argv: list[str]) -> int:
             mod = chosen.to_mod_instance(desecrated=True)
             mod.desecrated = True
             item.mods.append(mod)
+            item.desecrated_unrevealed = False
+            item.desecrated_affix_type = ""
+            item.abyss_mark_min_level = 0  # reset after use
             sim.item = item
 
-            _track(bone)
-            for o in active_omens:
-                if o:
-                    _track(o)
             history.append({
-                "action": "desecrate",
-                "bone": bone,
+                "action": "reveal",
                 "omens": active_omens,
                 "affix_type": affix_type,
                 "revealed": [{"family": o.family, "stat_text": o.stat_text} for o in options],
@@ -1267,7 +1298,11 @@ def _print_item(item: ItemState, base_name: str) -> None:
     socket_info = f"Sockets: {len(item.sockets)}/{item.max_sockets}"
     if socket_empty > 0:
         socket_info += f" ({socket_empty} empty)"
-    print(f"  {_DIM}Slots: {item.open_prefixes}P / {item.open_suffixes}S open | {socket_info}{_RESET}")
+    # Desecrated unrevealed indicator
+    desecrate_info = ""
+    if item.desecrated_unrevealed:
+        desecrate_info = f" | {_CYAN}⚗ Unrevealed {item.desecrated_affix_type} desecration{_RESET}"
+    print(f"  {_DIM}Slots: {item.open_prefixes}P / {item.open_suffixes}S open | {socket_info}{desecrate_info}{_RESET}")
     if socket_filled:
         from poe2_crafting_mcp.crafting.socketables import get_socketable_effect_for_item
         for s in socket_filled:
