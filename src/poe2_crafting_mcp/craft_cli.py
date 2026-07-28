@@ -520,12 +520,19 @@ def cmd_sim(argv: list[str]) -> int:
     sim = CraftingSimulator.from_db(item_class, ilvl)
     sim.item = item
 
+    # Currency usage tracker: {name: count}
+    currency_used: dict[str, int] = {}
+
+    def _track(name: str, count: int = 1) -> None:
+        """Record currency/omen usage."""
+        currency_used[name] = currency_used.get(name, 0) + count
+
     # ── REPL ──────────────────────────────────────────────────────────────────
     print()
     _print_item(item, base_name)
     print()
     print(f"  {_DIM}Commands: <currency> [--omens x,y] [--essence_family F] | desecrate <bone>"
-          f" | save <file> | load <file> | pool | history | help | quit{_RESET}")
+          f" | save <file> | load <file> | pool | cost | history | help | quit{_RESET}")
     print()
 
     while True:
@@ -606,6 +613,83 @@ def cmd_sim(argv: list[str]) -> int:
             else:
                 need = 2 - sim.reforge_stock
                 print(f"  {_DIM}Need {need} more spare(s) to reforge{_RESET}")
+
+        elif cmd == "cost":
+            # Show total currencies consumed and estimated cost
+            if not currency_used:
+                print(f"  {_DIM}No currencies used yet.{_RESET}")
+            else:
+                # Map internal keys to price lookup names
+                _PRICE_NAMES: dict[str, str] = {
+                    "transmute": "Orb of Transmutation",
+                    "greater_transmute": "Greater Orb of Transmutation",
+                    "perfect_transmute": "Perfect Orb of Transmutation",
+                    "augment": "Orb of Augmentation",
+                    "greater_augment": "Greater Orb of Augmentation",
+                    "perfect_augment": "Perfect Orb of Augmentation",
+                    "alteration": "Orb of Alteration",
+                    "regal": "Regal Orb",
+                    "greater_regal": "Greater Regal Orb",
+                    "perfect_regal": "Perfect Regal Orb",
+                    "chaos": "Chaos Orb",
+                    "greater_chaos": "Greater Chaos Orb",
+                    "perfect_chaos": "Perfect Chaos Orb",
+                    "exalted": "Exalted Orb",
+                    "greater_exalted": "Greater Exalted Orb",
+                    "perfect_exalted": "Perfect Exalted Orb",
+                    "annulment": "Orb of Annulment",
+                    "divine": "Divine Orb",
+                    "vaal": "Vaal Orb",
+                    "scour": "Orb of Scouring",
+                    "fracturing": "Fracturing Orb",
+                    "alchemy": "Orb of Alchemy",
+                    "sinistral_exaltation": "Omen of Sinistral Exaltation",
+                    "dextral_exaltation": "Omen of Dextral Exaltation",
+                    "greater_exaltation": "Omen of Greater Exaltation",
+                    "homogenising_exaltation": "Omen of Homogenising Exaltation",
+                    "catalysing_exaltation": "Omen of Catalysing Exaltation",
+                    "sinistral_annulment": "Omen of Sinistral Annulment",
+                    "dextral_annulment": "Omen of Dextral Annulment",
+                    "sinistral_erasure": "Omen of Sinistral Erasure",
+                    "dextral_erasure": "Omen of Dextral Erasure",
+                    "whittling": "Omen of Whittling",
+                    "sinistral_crystallisation": "Omen of Sinistral Crystallisation",
+                    "dextral_crystallisation": "Omen of Dextral Crystallisation",
+                    "sinistral_coronation": "Omen of Sinistral Coronation",
+                    "dextral_coronation": "Omen of Dextral Coronation",
+                    "corruption": "Omen of Corruption",
+                    "sanctification": "Omen of Sanctification",
+                    "blessed": "Omen of the Blessed",
+                    "blackblooded": "Omen of the Blackblooded",
+                    "liege": "Omen of the Liege",
+                    "sovereign": "Omen of the Sovereign",
+                    "abyssal_echoes": "Omen of Abyssal Echoes",
+                    "light": "Omen of Light",
+                }
+                print(f"  {_BOLD}Currencies consumed:{_RESET}")
+                total_cost = 0.0
+                for name, count in sorted(currency_used.items()):
+                    # Look up price by mapped name or raw name
+                    lookup_name = _PRICE_NAMES.get(name, name)
+                    price_row = pdb._conn.execute(
+                        "SELECT chaos_value FROM prices WHERE name = ? COLLATE NOCASE LIMIT 1",
+                        (lookup_name,),
+                    ).fetchone()
+                    if not price_row:
+                        # Try without apostrophes
+                        price_row = pdb._conn.execute(
+                            "SELECT chaos_value FROM prices WHERE name = ? COLLATE NOCASE LIMIT 1",
+                            (lookup_name.replace("'", ""),),
+                        ).fetchone()
+                    unit_price = price_row[0] if price_row else None
+                    if unit_price:
+                        line_cost = unit_price * count
+                        total_cost += line_cost
+                        print(f"    {lookup_name:38} ×{count:3}  @ {unit_price:.1f}c = {line_cost:.1f}c")
+                    else:
+                        print(f"    {lookup_name:38} ×{count:3}  @ ???")
+                print(f"  {'─' * 55}")
+                print(f"  {_BOLD}Total estimated cost: {total_cost:.1f} chaos{_RESET}")
 
         elif cmd == "stash":
             # Stash current item as reforge fodder, get fresh Normal
@@ -790,6 +874,10 @@ def cmd_sim(argv: list[str]) -> int:
                     essence_stat_text=resolved.stat_text,
                 )
                 item = sim.item
+                _track(resolved.essence_name)
+                for o in active_omens:
+                    if o:
+                        _track(o)
                 history.append({
                     "action": f"essence:{ess_name}",
                     "currency": currency_key,
@@ -885,6 +973,7 @@ def cmd_sim(argv: list[str]) -> int:
             try:
                 sim.apply_currency("artificer")
                 item = sim.item
+                _track("Artificer's Orb")
                 history.append({"action": "artificer", "omens": []})
                 print(f"  {_GREEN}Socket added ({len(item.sockets)}/{item.max_sockets}){_RESET}")
                 _print_item(item, base_name)
@@ -896,11 +985,14 @@ def cmd_sim(argv: list[str]) -> int:
             slot_cat = get_bone_slot_for_item_class(item_class)
             if slot_cat == "weapon":
                 cur_key = "blacksmiths_whetstone"
+                track_name = "Blacksmith's Whetstone"
             else:
                 cur_key = "armourers_scrap"
+                track_name = "Armourer's Scrap"
             try:
                 sim.apply_currency(cur_key)
                 item = sim.item
+                _track(track_name)
                 history.append({"action": cur_key, "omens": []})
                 print(f"  {_GREEN}Quality: {item.quality}%{_RESET}")
             except ValueError as e:
@@ -961,6 +1053,10 @@ def cmd_sim(argv: list[str]) -> int:
             item.mods.append(mod)
             sim.item = item
 
+            _track(bone)
+            for o in active_omens:
+                if o:
+                    _track(o)
             history.append({
                 "action": "desecrate",
                 "bone": bone,
@@ -999,6 +1095,10 @@ def cmd_sim(argv: list[str]) -> int:
                     essence_stat_text=ess_stat,
                 )
                 item = sim.item
+                _track(currency)
+                for o in active_omens:
+                    if o:
+                        _track(o)
                 history.append({
                     "action": currency,
                     "omens": active_omens,
