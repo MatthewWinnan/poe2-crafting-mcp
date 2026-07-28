@@ -722,7 +722,10 @@ def cmd_sim(argv: list[str]) -> int:
                         total_cost += line_cost
                         print(f"    {lookup_name:38} ×{count:3}  @ {unit_price:.1f}c = {line_cost:.1f}c")
                     else:
-                        print(f"    {lookup_name:38} ×{count:3}  @ ???")
+                        # Unpriced items get a penalty (can't follow recipe if unavailable)
+                        unpriced_penalty = 10.0 * count  # assume 10c per use as penalty
+                        total_cost += unpriced_penalty
+                        print(f"    {lookup_name:38} ×{count:3}  @ {_YELLOW}~10c (no price data){_RESET} = {unpriced_penalty:.1f}c")
                 print(f"  {'─' * 55}")
                 print(f"  {_BOLD}Total estimated cost: {total_cost:.1f} chaos{_RESET}")
 
@@ -1251,7 +1254,8 @@ def cmd_sim(argv: list[str]) -> int:
                     essence_stat_text=ess_stat,
                 )
                 item = sim.item
-                _track(currency)
+                if currency != "scour":  # scour is free (conceptual reset, not a real currency)
+                    _track(currency)
                 for o in active_omens:
                     if o:
                         _track(o)
