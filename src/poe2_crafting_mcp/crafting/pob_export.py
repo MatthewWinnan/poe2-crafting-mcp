@@ -70,11 +70,10 @@ def item_state_to_pob_text(
     lines.append(f"Item Level: {item.ilvl}")
     lines.append(sep)
 
-    # ── Implicit mods (base implicits) ────────────────────────────────────────
-    # Note: we don't track base implicits in ItemState currently
-    # If corruption_enchantment exists, show it as a corruption implicit
-    if item.corruption_enchantment:
-        lines.append(f"{item.corruption_enchantment} (enchant)")
+    # ── Implicit mods (corruption implicits, base implicits) ────────────────
+    if item.implicits:
+        for imp in item.implicits:
+            lines.append(imp.stat_text)
         lines.append(sep)
 
     # ── Explicit mods ─────────────────────────────────────────────────────────
@@ -136,8 +135,9 @@ def item_state_to_trade_text(item: ItemState, base_name: str = "") -> str:
     lines.append(header)
     lines.append(f"ilvl {item.ilvl} | {len(item.prefixes)}P/{len(item.suffixes)}S")
 
-    if item.corruption_enchantment:
-        lines.append(f"  [Enchant] {item.corruption_enchantment}")
+    if item.implicits:
+        for imp in item.implicits:
+            lines.append(f"  [Implicit] {imp.display_text}")
 
     for mod in item.mods:
         prefix = "P" if mod.affix_type == "prefix" else "S"

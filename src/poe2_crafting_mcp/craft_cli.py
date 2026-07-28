@@ -1186,6 +1186,10 @@ def _print_item(item: ItemState, base_name: str) -> None:
     corrupt_str = "  [CORRUPTED]" if item.corrupted else ""
     quality_str = f"  Q{item.quality}%" if item.quality > 0 else ""
     print(f"  {_BOLD}{base_name}{_RESET} ({item.rarity}, ilvl {item.ilvl}){quality_str}{corrupt_str}")
+    # Implicits (corruption implicits, base implicits)
+    if item.implicits:
+        for m in item.implicits:
+            print(f"    {_DIM}implicit{_RESET} | {m.family:25} | {m.display_text} {_DIM}[implicit]{_RESET}")
     if not item.mods:
         print(f"  {_DIM}(no mods){_RESET}")
     else:
@@ -1239,6 +1243,17 @@ def _serialize_item(
         "quality": item.quality,
         "sockets": item.sockets,
         "max_sockets": item.max_sockets,
+        "implicits": [
+            {
+                "family": m.family,
+                "affix_type": m.affix_type,
+                "tier": m.tier,
+                "req_level": m.req_level,
+                "weight": m.weight,
+                "stat_text": m.stat_text,
+            }
+            for m in item.implicits
+        ],
         "history": history,
     }
 

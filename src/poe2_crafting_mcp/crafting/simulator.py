@@ -200,8 +200,9 @@ class ItemState:
     quality: int = 0                       # 0-20 (23 max via corruption)
     sockets: list[str] = field(default_factory=list)  # names of socketed items (runes/cores/idols)
     max_sockets: int = 0                   # determined by slot type (can increase via Vaal)
-    corruption_enchantment: str = ""       # Vaal enchantment stat_text (separate from mods)
+    corruption_enchantment: str = ""       # DEPRECATED — use implicits list instead
     has_abyss_mark: bool = False           # True if "Mark of the Abyssal Lord" is on item
+    implicits: list[ModInstance] = field(default_factory=list)  # corruption implicits, base implicits
 
     @property
     def prefixes(self) -> list[ModInstance]:
@@ -266,6 +267,7 @@ class ItemState:
             max_sockets=self.max_sockets,
             corruption_enchantment=self.corruption_enchantment,
             has_abyss_mark=self.has_abyss_mark,
+            implicits=[ModInstance(**m.__dict__) for m in self.implicits],
         )
 
 
@@ -1013,6 +1015,7 @@ class CraftingSimulator:
             self.item.essence_mod_family = None
             self.item.corrupted = False
             self.item.corruption_enchantment = ""
+            self.item.implicits = []
 
         elif op == "reforge":
             # Reforging bench: 3-to-1. Current item + 2 from stock → fresh Rare.
@@ -1113,9 +1116,10 @@ class CraftingSimulator:
                             self.item.mods.append(new_mod)
 
             elif outcome == "enchantment":
-                # Add a Vaal enchantment from the corrupted pool
-                # Store as a special field (doesn't take a prefix/suffix slot)
-                self.item.corruption_enchantment = self._roll_corruption_enchantment()
+                # Add a Vaal corruption implicit (doesn't take a prefix/suffix slot)
+                implicit = self._roll_corruption_implicit()
+                if implicit:
+                    self.item.implicits.append(implicit)
 
             elif outcome == "socket":
                 # Add +1 socket beyond normal max
@@ -1125,17 +1129,14 @@ class CraftingSimulator:
 
         elif op == "architect_corrupt":
             # Architect's Orb: requires already-corrupted item
-            # 50% chance to add second corruption enchantment, 50% destroy
+            # 50% chance to add second corruption implicit, 50% destroy
             if not self.item.corrupted:
                 raise ValueError("Architect's Orb requires a corrupted item")
             if random.random() < 0.5:
-                # Success: add second enchantment
-                enchant = self._roll_corruption_enchantment()
-                if self.item.corruption_enchantment:
-                    # Append to existing (both are kept)
-                    self.item.corruption_enchantment += "\n" + enchant
-                else:
-                    self.item.corruption_enchantment = enchant
+                # Success: add second implicit
+                implicit = self._roll_corruption_implicit()
+                if implicit:
+                    self.item.implicits.append(implicit)
             else:
                 # Failure: item destroyed
                 raise ValueError("DESTROYED — Architect's Orb failed (50% chance)")
@@ -1166,22 +1167,29 @@ class CraftingSimulator:
         self.reforge_stock += count
 
 
-    def _roll_corruption_enchantment(self) -> str:
-        """Roll a random Vaal enchantment from the corrupted pool for this item class."""
-        # Query the corrupted pool for this item class at ilvl
+    def _roll_corruption_implicit(self) -> ModInstance | None:
+        """Roll a random Vaal implicit from the corrupted pool for this item class."""
         from poe2_crafting_mcp.data.price_db import PriceDatabase
         try:
             pdb = PriceDatabase()
             rows = pdb._conn.execute(
-                "SELECT stat_text FROM mod_weights "
+                "SELECT mod_family, stat_text, req_level FROM mod_weights "
                 "WHERE pool = 'corrupted' AND item_class = ? AND req_level <= ?",
                 (self.item_class, self.ilvl),
             ).fetchall()
             if rows:
-                return random.choice(rows)[0]
+                row = random.choice(rows)
+                return ModInstance(
+                    family=row[0],
+                    affix_type="implicit",
+                    tier=1,
+                    req_level=row[2],
+                    weight=1,
+                    stat_text=row[1],
+                )
         except Exception:
             pass
-        return ""
+        return None
 
     def _get_removable(
         self, del_gentype_only: int = 0, del_target: str = ""
