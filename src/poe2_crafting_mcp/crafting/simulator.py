@@ -276,7 +276,7 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     "transmute":         {"op": "add", "qty": 1, "min_lv": 0,  "to_rarity": "Magic", "from_rarity": ["Normal"]},
     "augment":           {"op": "add", "qty": 1, "min_lv": 0,  "from_rarity": ["Magic"]},
     "regal":             {"op": "add", "qty": 1, "min_lv": 0,  "to_rarity": "Rare", "from_rarity": ["Magic"]},
-    "alchemy":           {"op": "reroll", "qty": 4, "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Normal"]},
+    "alchemy":           {"op": "reroll", "qty": 4, "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Normal", "Magic"]},
     "chaos":             {"op": "del_add", "qty": 1, "min_lv": 0, "from_rarity": ["Rare"]},
     "exalted":           {"op": "add", "qty": 1, "min_lv": 0,  "from_rarity": ["Rare"]},
     "annulment":         {"op": "del", "qty": 1, "min_lv": 0,  "from_rarity": ["Magic", "Rare"]},
