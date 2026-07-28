@@ -754,6 +754,40 @@ def cmd_sim(argv: list[str]) -> int:
                     print(f"    {p.affix_type:6} | {p.family:28} | {p.stat_text}{faction_tag}")
                 print()
 
+        elif cmd in ("vpool", "vaal-pool"):
+            # Show available Vaal Orb corruption implicits for this item
+            import sqlite3 as _sqlite3
+            conn = _sqlite3.connect('data/poe2_craft.db')
+            conn.row_factory = _sqlite3.Row
+            rows = conn.execute(
+                "SELECT mod_family, stat_text, weight FROM mod_weights "
+                "WHERE pool = 'corrupted' AND item_class = ? AND req_level <= ? "
+                "ORDER BY mod_family",
+                (item_class, ilvl),
+            ).fetchall()
+            conn.close()
+            print(f"  {_BOLD}Vaal Orb implicit pool for {item_class} ({len(rows)} options):{_RESET}")
+            if not rows:
+                print(f"  {_DIM}No corruption implicits for this item class.{_RESET}")
+            else:
+                for r in rows:
+                    print(f"    {r['mod_family']:35} | {r['stat_text']}")
+            # Also show corruption_upgrade pool if available
+            rows2 = conn if False else None  # reopen for upgrade pool
+            conn2 = _sqlite3.connect('data/poe2_craft.db')
+            conn2.row_factory = _sqlite3.Row
+            upgrades = conn2.execute(
+                "SELECT mod_family, stat_text FROM mod_weights "
+                "WHERE pool = 'corruption_upgrade' AND item_class = ? AND req_level <= ? "
+                "ORDER BY mod_family",
+                (item_class, ilvl),
+            ).fetchall()
+            conn2.close()
+            if upgrades:
+                print(f"\n  {_BOLD}Orb of Sacrifice upgrades ({len(upgrades)}):{_RESET}")
+                for r in upgrades:
+                    print(f"    {r['mod_family']:35} | {r['stat_text']}")
+
         elif cmd == "currencies":
             # Show which currencies are valid for current item state
             print(f"  {_BOLD}Valid currencies for {item.rarity} item:{_RESET}")
