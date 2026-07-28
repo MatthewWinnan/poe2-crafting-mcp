@@ -163,13 +163,16 @@ class CraftingSimulator:
     exact probabilities for hitting target mods.
     """
 
-    def __init__(self, item_class: str, ilvl: int, mod_pool: dict):
+    def __init__(self, item_class: str, ilvl: int, mod_pool: dict, essence_pool: dict | None = None):
         """
         Args:
             item_class: poe2db item class (e.g. "Gloves_int")
             ilvl: item level
             mod_pool: result from PriceDatabase.get_craftable_mods()
                       Must include 'prefixes' and 'suffixes' with tier data.
+            essence_pool: optional result from get_craftable_mods(pool='essence')
+                          If None, _find_essence_mod falls back to normal pool.
+                          Should include both 'essence' and 'perfect_essence' mods.
         """
         self.item_class = item_class
         self.ilvl = ilvl
@@ -197,6 +200,53 @@ class CraftingSimulator:
                     'weight': tier['weight'],
                     'stat_text': tier['stat_text'],
                 })
+
+        # Flatten essence-specific pool (mods that only essences can guarantee)
+        # This includes essence-exclusive mods not in the normal pool
+        self._essence_mods: list[dict] = []
+        if essence_pool:
+            for group in essence_pool.get('prefixes', []):
+                for tier_idx, tier in enumerate(group['tiers']):
+                    self._essence_mods.append({
+                        'family': group['family'],
+                        'affix_type': 'prefix',
+                        'tier': tier_idx + 1,
+                        'req_level': tier['req_level'],
+                        'weight': tier.get('weight', 0),
+                        'stat_text': tier['stat_text'],
+                    })
+            for group in essence_pool.get('suffixes', []):
+                for tier_idx, tier in enumerate(group['tiers']):
+                    self._essence_mods.append({
+                        'family': group['family'],
+                        'affix_type': 'suffix',
+                        'tier': tier_idx + 1,
+                        'req_level': tier['req_level'],
+                        'weight': tier.get('weight', 0),
+                        'stat_text': tier['stat_text'],
+                    })
+
+    @classmethod
+    def from_db(cls, item_class: str, ilvl: int, db_path: str = "data/poe2_craft.db") -> "CraftingSimulator":
+        """Create a simulator with all pools loaded from the database.
+
+        Loads the normal pool for rolling + combined essence/perfect_essence
+        pool for essence-guaranteed mods.
+        """
+        from poe2_crafting_mcp.data.price_db import PriceDatabase
+        pdb = PriceDatabase(db_path)
+
+        normal_pool = pdb.get_craftable_mods(item_class, ilvl=ilvl, pool='normal')
+        essence_pool = pdb.get_craftable_mods(item_class, ilvl=ilvl, pool='essence')
+        perfect_pool = pdb.get_craftable_mods(item_class, ilvl=ilvl, pool='perfect_essence')
+
+        # Merge essence + perfect_essence into one pool for the simulator
+        merged_essence = {
+            'prefixes': essence_pool['prefixes'] + perfect_pool['prefixes'],
+            'suffixes': essence_pool['suffixes'] + perfect_pool['suffixes'],
+        }
+
+        return cls(item_class, ilvl, normal_pool, essence_pool=merged_essence)
 
     def get_available_pool(
         self,
@@ -542,6 +592,7 @@ class CraftingSimulator:
         currency: str,
         omen: str = "",
         essence_family: str = "",
+        essence_stat_text: str = "",
     ) -> ItemState:
         """Apply a currency to the item, mutating state. Returns new state.
 
@@ -549,6 +600,8 @@ class CraftingSimulator:
             currency: currency key from CURRENCIES dict
             omen: optional omen key from OMENS dict
             essence_family: for essence operations, the guaranteed mod family
+            essence_stat_text: for essence operations, the exact stat_text to place
+                               (pins the correct tier). If empty, picks best tier.
         """
         cur = CURRENCIES.get(currency)
         if not cur:
@@ -638,11 +691,11 @@ class CraftingSimulator:
 
         elif op == "essence_upgrade":
             # Greater Essence: Magic → Rare with guaranteed mod + random fill
-            self._apply_essence_upgrade(essence_family, min_lv, gentype_only)
+            self._apply_essence_upgrade(essence_family, min_lv, gentype_only, essence_stat_text)
 
         elif op == "essence_swap":
             # Perfect Essence: remove 1, add 1 guaranteed (NOT a reroll)
-            self._apply_essence_swap(essence_family, del_gentype_only)
+            self._apply_essence_swap(essence_family, del_gentype_only, essence_stat_text)
 
         elif op == "fracture":
             non_fractured = [m for m in self.item.mods if not m.fractured]
@@ -675,15 +728,29 @@ class CraftingSimulator:
         return random.choice(removable)
 
     def _apply_essence_upgrade(
-        self, essence_family: str, min_lv: int = 0, gentype_only: int = 0
+        self, essence_family: str, min_lv: int = 0, gentype_only: int = 0,
+        essence_stat_text: str = "",
     ) -> None:
         """Essence upgrade: Normal→Magic (lesser/normal) or Magic→Rare (greater).
 
         Lesser/Normal: gives 1 guaranteed mod on Magic item.
         Greater: gives 1 guaranteed mod + random fill to 4 mods on Rare item.
+
+        Family blocking: cannot use if essence_family is already on item
+        as a fractured (permanent) mod that won't be cleared.
         """
         if not essence_family:
             raise ValueError("essence_family required for essence operations")
+
+        # Family blocking: only block if the family is fractured on item
+        # (non-fractured mods will be cleared during the upgrade process)
+        existing_family_mod = next(
+            (m for m in self.item.mods if m.family == essence_family and m.fractured), None
+        )
+        if existing_family_mod and essence_family != self.item.essence_mod_family:
+            raise ValueError(
+                f"Cannot use essence: family '{essence_family}' is fractured on item"
+            )
 
         # If item already has an essence mod, remove it (one per item rule)
         if self.item.essence_mod_family:
@@ -693,7 +760,7 @@ class CraftingSimulator:
             ]
 
         # Add the guaranteed essence mod
-        essence_mod = self._find_essence_mod(essence_family)
+        essence_mod = self._find_essence_mod(essence_family, essence_stat_text)
         if essence_mod:
             self.item.mods.append(essence_mod)
             self.item.essence_mod_family = essence_family
@@ -709,16 +776,33 @@ class CraftingSimulator:
                     break
 
     def _apply_essence_swap(
-        self, essence_family: str, del_gentype_only: int = 0
+        self, essence_family: str, del_gentype_only: int = 0,
+        essence_stat_text: str = "",
     ) -> None:
         """Perfect Essence: remove 1 mod, add 1 guaranteed. NOT a reroll.
 
         Slot-forcing: if the essence mod's affix type is full,
         removal is forced to target that type (making room).
         Crystallisation omen overrides: del_gentype_only controls removal type.
+
+        Family blocking: the game prevents using a perfect essence if the
+        target family is already on the item AND it would remain after the
+        removal step (i.e., if it's fractured). If the existing mod with
+        that family can be removed, the essence is allowed (remove then add).
         """
         if not essence_family:
             raise ValueError("essence_family required for perfect_essence")
+
+        # Family blocking check: can't use if family is on item AND the mod is
+        # fractured (permanent). Non-fractured mods could be the removal target.
+        existing_family_mod = next(
+            (m for m in self.item.mods if m.family == essence_family), None
+        )
+        if existing_family_mod and existing_family_mod.fractured:
+            if essence_family != self.item.essence_mod_family:
+                raise ValueError(
+                    f"Cannot use essence: family '{essence_family}' is fractured on item"
+                )
 
         # If item already has an essence mod, that mod is removed first (one per item)
         if self.item.essence_mod_family:
@@ -749,14 +833,57 @@ class CraftingSimulator:
                 self.item.mods.remove(to_remove)
 
         # Add guaranteed essence mod
-        essence_mod = self._find_essence_mod(essence_family)
+        essence_mod = self._find_essence_mod(essence_family, essence_stat_text)
         if essence_mod:
             self.item.mods.append(essence_mod)
             self.item.essence_mod_family = essence_family
 
-    def _find_essence_mod(self, family: str) -> ModInstance | None:
-        """Find the best tier of a family in the pool and return as ModInstance."""
-        candidates = [m for m in self._all_mods if m['family'] == family and m['req_level'] <= self.ilvl]
+    def _find_essence_mod(self, family: str, stat_text: str = "") -> ModInstance | None:
+        """Find the correct essence mod to place on the item.
+
+        If stat_text is provided (from EssenceResolver), matches the exact mod
+        tier. This ensures Lesser/Normal/Greater/Perfect essences place the
+        correct tier, not just the best available.
+
+        If stat_text is empty, falls back to best tier at ilvl (legacy behavior).
+        """
+        # If exact stat_text provided, find the matching mod
+        if stat_text:
+            # Search essence pool first
+            match = next(
+                (m for m in self._essence_mods
+                 if m['family'] == family and m['stat_text'] == stat_text),
+                None,
+            )
+            # Fall back to normal pool
+            if not match:
+                match = next(
+                    (m for m in self._all_mods
+                     if m['family'] == family and m['stat_text'] == stat_text),
+                    None,
+                )
+            if match:
+                return ModInstance(
+                    family=match['family'],
+                    affix_type=match['affix_type'],
+                    tier=match['tier'],
+                    req_level=match['req_level'],
+                    weight=match.get('weight', 0),
+                    stat_text=match['stat_text'],
+                )
+
+        # Fallback: find best tier at ilvl (when stat_text not specified)
+        # Search essence pool first (has essence-exclusive mods)
+        candidates = [
+            m for m in self._essence_mods
+            if m['family'] == family and m['req_level'] <= self.ilvl
+        ]
+        # Fall back to normal pool if not found in essence pool
+        if not candidates:
+            candidates = [
+                m for m in self._all_mods
+                if m['family'] == family and m['req_level'] <= self.ilvl
+            ]
         if not candidates:
             return None
         # Essence guarantees best available tier (tier 1 = best)
@@ -772,6 +899,10 @@ class CraftingSimulator:
 
     def _get_family_affix_type(self, family: str) -> str:
         """Look up whether a family is prefix or suffix."""
+        # Check essence pool first (for essence-exclusive families)
+        for mod in self._essence_mods:
+            if mod['family'] == family:
+                return mod['affix_type']
         for mod in self._all_mods:
             if mod['family'] == family:
                 return mod['affix_type']

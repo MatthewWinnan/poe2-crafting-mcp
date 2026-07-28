@@ -336,24 +336,31 @@ def _seed_prices(pdb, dry_run: bool = False) -> None:
     pdb.set_active_league(league)
 
     print(f"    {_DIM}Fetching from poe.ninja ({league})...{_RESET}", flush=True)
+
+    # ── Currency exchange rates (orbs, quality, other) ────────────────────────
     _CURRENCY_EXCHANGE_CATS = {"Orb", "Quality", "Other"}
+    trade_ids = [c[4] for c in CURRENCIES if c[4] and c[1] in _CURRENCY_EXCHANGE_CATS]
     try:
-        rates = client.fetch_currency_rates(league)
-        exchange_rates = {
-            name: info for name, info in rates.items()
-            if any(cat in info.get("category", "") for cat in _CURRENCY_EXCHANGE_CATS)
-        }
-        if exchange_rates:
-            pdb.upsert_prices(league, exchange_rates)
+        rows = client.fetch_currency_rates(league, trade_ids)
+        if rows:
+            pdb.upsert_prices(rows, league)
     except Exception as e:
         print(f"    {_YELLOW}Currency rates failed: {e}{_RESET}")
 
+    # ── General exchange categories (essences, runes, omens, etc.) ────────────
+    for item_type, label in GENERAL_ITEM_TYPES:
+        try:
+            gen_rows = client.fetch_exchange_category(league, item_type)
+            if gen_rows:
+                pdb.upsert_prices(gen_rows, league)
+        except Exception as e:
+            print(f"    {_YELLOW}{label} failed: {e}{_RESET}")
+
+    # Fill chaos values from divine rates
     try:
-        items = client.fetch_item_prices(league)
-        if items:
-            pdb.upsert_prices(league, items)
-    except Exception as e:
-        print(f"    {_YELLOW}Item prices failed: {e}{_RESET}")
+        pdb.fill_chaos_from_divine(league)
+    except Exception:
+        pass  # non-critical
 
     total = pdb._conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
     print(f"    {_GREEN}Done: {total} prices for {league}{_RESET}")

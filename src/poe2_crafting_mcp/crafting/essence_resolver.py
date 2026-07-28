@@ -49,7 +49,8 @@ _SLOT_TO_CATEGORIES: dict[str, set[str]] = {
     # Jewellery
     "Amulet":         {"Amulet", "Jewellery", "Equipment"},
     "Ring":           {"Ring", "Jewellery", "Equipment"},
-    "Talisman":       {"Talisman", "Jewellery", "Equipment"},
+    "Talisman":       {"Talisman", "Melee Weapon", "Martial Weapon", "Weapons", "Equipment",
+                       "Two Handed Melee Weapon", "Two Handed Melee Weapon or Crossbow"},
     "Belt":           {"Belt", "Equipment"},
     # Ranged weapons
     "Bow":            {"Bow", "Martial Weapon", "Weapons", "Equipment",

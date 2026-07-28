@@ -1098,3 +1098,37 @@ class PriceDatabase:
             "item_classes": classes,
             "age_days": age_days,
         }
+
+    def essence_status(self) -> dict:
+        """Return freshness info for the essences table."""
+        _STALE_DAYS = 14
+        seeded_at = self.get_meta("essences_seeded_at")
+        try:
+            total = self._conn.execute(
+                "SELECT COUNT(*) FROM essences"
+            ).fetchone()[0]
+            unique_essences = self._conn.execute(
+                "SELECT COUNT(DISTINCT name) FROM essences"
+            ).fetchone()[0]
+        except Exception:
+            total = 0
+            unique_essences = 0
+
+        age_days: float | None = None
+        if seeded_at:
+            age_days = round(self._age_seconds(seeded_at) / 86400, 1)
+
+        if not seeded_at or total == 0:
+            status = "never_seeded"
+        elif age_days is not None and age_days > _STALE_DAYS:
+            status = "stale"
+        else:
+            status = "fresh"
+
+        return {
+            "status": status,
+            "seeded_at": seeded_at,
+            "total": total,
+            "unique_essences": unique_essences,
+            "age_days": age_days,
+        }

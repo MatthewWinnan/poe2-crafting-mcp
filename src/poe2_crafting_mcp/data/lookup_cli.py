@@ -15,7 +15,7 @@ Examples:
     poe2-lookup "energy shield" --type bases --slot Gloves
 
     poe2-lookup status                                # show all DB health
-    poe2-lookup seed-all                              # ETL + concepts + item-desc
+    poe2-lookup seed-all                              # ETL + concepts + item-desc + essences + prices
 
     poe2-lookup concept-status                        # concept DB freshness
     poe2-lookup concept-list [--category mechanic]    # list all concepts
@@ -1711,6 +1711,40 @@ def _cmd_status(argv: list[str]) -> int:
         age_str = f"  {_DIM}({age:.1f}d ago){_RESET}" if age is not None else ""
         print(f"  {_BOLD}Seeded:{_RESET}  {ms['seeded_at']}{age_str}")
 
+    # ── Essences ──────────────────────────────────────────────────────────────
+    print()
+    es = pdb.essence_status()
+    print(_h("Essences (poe2db)"))
+    print(f"  {_BOLD}Status:{_RESET}  {icons.get(es.get('status', ''), es.get('status', ''))}")
+    print(f"  {_BOLD}Total:{_RESET}   {es.get('total', 0)} effects from "
+          f"{es.get('unique_essences', 0)} essences")
+    if es.get("seeded_at"):
+        age = es.get("age_days")
+        age_str = f"  {_DIM}({age:.1f}d ago){_RESET}" if age is not None else ""
+        print(f"  {_BOLD}Seeded:{_RESET}  {es['seeded_at']}{age_str}")
+
+    # ── Prices ────────────────────────────────────────────────────────────────
+    print()
+    active_league = pdb.get_active_league() or ""
+    ps = pdb.price_cache_status(active_league)
+    price_icons = {
+        "fresh":        f"{_GREEN}✓ fresh{_RESET}",
+        "stale_ttl":    f"{_YELLOW}⚠ stale (ttl expired){_RESET}",
+        "stale_league": f"{_YELLOW}⚠ stale (wrong league){_RESET}",
+        "missing":      f"{_RED}✗ never seeded{_RESET}",
+    }
+    print(_h("Prices (poe.ninja)"))
+    print(f"  {_BOLD}Status:{_RESET}  {price_icons.get(ps.get('status', ''), ps.get('status', ''))}")
+    if ps.get("league"):
+        print(f"  {_BOLD}League:{_RESET}  {ps['league']}")
+    if ps.get("age_minutes") is not None:
+        print(f"  {_BOLD}Age:{_RESET}     {ps['age_minutes']:.0f} min ago")
+    try:
+        price_count = pdb._conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
+        print(f"  {_BOLD}Total:{_RESET}   {price_count} items")
+    except Exception:
+        pass
+
     # ── Summary hint ──────────────────────────────────────────────────────────
     needs_work = []
     if not etl_row:
@@ -1721,6 +1755,10 @@ def _cmd_status(argv: list[str]) -> int:
         needs_work.append("item-descriptions")
     if ms.get("status") != "fresh":
         needs_work.append("mod-pool")
+    if es.get("status") != "fresh":
+        needs_work.append("essences")
+    if ps.get("status") not in ("fresh",):
+        needs_work.append("prices")
     if needs_work:
         print(f"\n  {_YELLOW}→ Run 'poe2-lookup seed-all' to populate: "
               f"{', '.join(needs_work)}{_RESET}")
@@ -1730,7 +1768,7 @@ def _cmd_status(argv: list[str]) -> int:
 
 
 def _cmd_seed_all(argv: list[str]) -> int:
-    """Run ETL + concept seed + item description seed in correct order."""
+    """Run ETL + concept seed + item description seed + essences + prices in correct order."""
     import time as _time
 
     p = argparse.ArgumentParser(
@@ -1740,6 +1778,8 @@ def _cmd_seed_all(argv: list[str]) -> int:
             "  1. ETL (game data from PoB vendor)\n"
             "  2. Concepts (from built-ins + poe2wiki.net)\n"
             "  3. Item descriptions (from built-ins + poe2wiki.net)\n"
+            "  4. Essences (from poe2db.tw)\n"
+            "  5. Prices (from poe.ninja)\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1877,6 +1917,87 @@ def _cmd_seed_all(argv: list[str]) -> int:
             pass
         print(f"  {_GREEN}✓ Wiki seeded {len(items)} item descriptions "
               f"({len(names) - len(items)} not on wiki).{_RESET}")
+
+    # ── Step 4: Essences ──────────────────────────────────────────────────────
+    print()
+    print(_h("Step 4: Essences (poe2db)"))
+    if args.dry_run:
+        print(f"  {_YELLOW}Would fetch essences from poe2db.tw{_RESET}")
+    else:
+        from poe2_crafting_mcp.data.poe2db_client import Poe2DbClient
+        client = Poe2DbClient()
+        print(f"  {_DIM}Fetching essences from poe2db.tw…{_RESET}", flush=True)
+        essences = client.fetch_essences()
+        if essences:
+            pdb._conn.execute("DELETE FROM essences")
+            for ess in essences:
+                pdb._conn.execute(
+                    "INSERT OR REPLACE INTO essences "
+                    "(name, tier, base_name, effect_type, item_slots, stat_text, stat_min, stat_max) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (ess["name"], ess["tier"], ess["base_name"], ess["effect_type"],
+                     ess["item_slots"], ess["stat_text"], ess.get("stat_min"), ess.get("stat_max")),
+                )
+            pdb._conn.commit()
+            pdb.set_meta("essences_seeded_at", pdb._now_iso())
+            print(f"  {_GREEN}✓ {len(essences)} essence effects from "
+                  f"{len(set(e['name'] for e in essences))} essences{_RESET}")
+        else:
+            print(f"  {_YELLOW}⚠ No essences scraped — page structure may have changed{_RESET}")
+
+    # ── Step 5: Prices (poe.ninja) ────────────────────────────────────────────
+    print()
+    print(_h("Step 5: Prices (poe.ninja)"))
+    if args.dry_run:
+        print(f"  {_YELLOW}Would fetch prices from poe.ninja{_RESET}")
+    else:
+        from poe2_crafting_mcp.data.economy import NinjaClient as _NinjaClient, GENERAL_ITEM_TYPES
+        from poe2_crafting_mcp.data.currencies import CURRENCIES as _CURRENCIES
+
+        ninja = _NinjaClient()
+
+        # Detect league
+        league = pdb.get_active_league() or ""
+        if not league:
+            try:
+                league = ninja.get_current_league()
+                pdb.set_active_league(league)
+            except Exception as e:
+                print(f"  {_RED}✗ Cannot detect league: {e}{_RESET}")
+                league = ""
+
+        if league:
+            print(f"  {_DIM}Fetching from poe.ninja ({league})…{_RESET}", flush=True)
+
+            # Currency exchange rates
+            _CURRENCY_EXCHANGE_CATS = {"Orb", "Quality", "Other"}
+            trade_ids = [c[4] for c in _CURRENCIES if c[4] and c[1] in _CURRENCY_EXCHANGE_CATS]
+            try:
+                rows = ninja.fetch_currency_rates(league, trade_ids)
+                if rows:
+                    pdb.upsert_prices(rows, league)
+            except Exception as e:
+                print(f"  {_YELLOW}  Currency rates failed: {e}{_RESET}")
+
+            # General exchange categories
+            for item_type, label in GENERAL_ITEM_TYPES:
+                try:
+                    gen_rows = ninja.fetch_exchange_category(league, item_type)
+                    if gen_rows:
+                        pdb.upsert_prices(gen_rows, league)
+                except Exception as e:
+                    print(f"  {_YELLOW}  {label} failed: {e}{_RESET}")
+
+            # Fill chaos values from divine rates
+            try:
+                pdb.fill_chaos_from_divine(league)
+            except Exception:
+                pass
+
+            total_prices = pdb._conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
+            print(f"  {_GREEN}✓ {total_prices} prices cached for {league}{_RESET}")
+        else:
+            print(f"  {_YELLOW}⚠ Skipped — no league detected{_RESET}")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = _time.time() - start
