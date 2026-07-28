@@ -42,6 +42,7 @@ class ItemState:
     quality: int = 0                       # 0-20 (23 max via corruption)
     sockets: list[str] = field(default_factory=list)  # names of socketed items (runes/cores/idols)
     max_sockets: int = 0                   # determined by slot type (can increase via Vaal)
+    corruption_enchantment: str = ""       # Vaal enchantment stat_text (separate from mods)
 
     @property
     def prefixes(self) -> list[ModInstance]:
@@ -104,6 +105,7 @@ class ItemState:
             quality=self.quality,
             sockets=list(self.sockets),
             max_sockets=self.max_sockets,
+            corruption_enchantment=self.corruption_enchantment,
         )
 
 
@@ -898,26 +900,52 @@ class CraftingSimulator:
             if self.item.corrupted:
                 raise ValueError("Item is already corrupted")
             self.item.corrupted = True
-            # Possible outcomes (simplified model):
-            # 1. Nothing changes (just adds corrupted tag) — ~25%
-            # 2. Reroll all mods (brick) — ~25%
-            # 3. Add enchantment / change implicits — ~25%
-            # 4. Add socket beyond max — ~25%
-            # For simulation: pick random outcome
-            outcome = random.choice(["nothing", "brick", "enchant", "socket"])
-            if outcome == "brick":
-                # Reroll all mods randomly
-                self.item.mods = [m for m in self.item.mods if m.fractured]
-                for _ in range(random.randint(3, 6)):
-                    if self.item.open_affixes > 0:
-                        mod = self.roll_mod()
-                        if mod:
-                            self.item.mods.append(mod)
+
+            # Check for Omen of Corruption (removes "no change" outcome)
+            has_corruption_omen = "corruption" in [o for o in active_omens]
+
+            # Determine if item can gain sockets (weapons + armour only, not jewellery)
+            from poe2_crafting_mcp.crafting.desecration import get_bone_slot_for_item_class
+            slot_cat = get_bone_slot_for_item_class(self.item_class)
+            can_gain_socket = slot_cat in ("weapon", "armour")
+
+            # Build outcome pool (equally weighted per wiki)
+            outcomes = []
+            if not has_corruption_omen:
+                outcomes.append("nothing")
+            outcomes.append("reroll_mods")      # reroll up to 3 mods
+            outcomes.append("enchantment")       # add Vaal enchantment
+            if can_gain_socket:
+                outcomes.append("socket")        # add socket beyond max
+            else:
+                outcomes.append("nothing_socket")  # jewellery: pseudo no-change
+
+            outcome = random.choice(outcomes)
+
+            if outcome == "reroll_mods":
+                # Reroll up to 3 existing mods into new ones
+                non_fractured = [m for m in self.item.mods if not m.fractured]
+                n_to_reroll = min(3, len(non_fractured))
+                if n_to_reroll > 0:
+                    to_reroll = random.sample(non_fractured, n_to_reroll)
+                    for mod in to_reroll:
+                        self.item.mods.remove(mod)
+                    # Add same number of new mods
+                    for _ in range(n_to_reroll):
+                        new_mod = self.roll_mod()
+                        if new_mod:
+                            self.item.mods.append(new_mod)
+
+            elif outcome == "enchantment":
+                # Add a Vaal enchantment from the corrupted pool
+                # Store as a special field (doesn't take a prefix/suffix slot)
+                self.item.corruption_enchantment = self._roll_corruption_enchantment()
+
             elif outcome == "socket":
                 # Add +1 socket beyond normal max
                 self.item.max_sockets += 1
                 self.item.sockets.append("")
-            # "nothing" and "enchant" don't change mod structure
+            # "nothing" and "nothing_socket" — only corrupted tag added
 
         return self.item
 
@@ -943,6 +971,24 @@ class CraftingSimulator:
         Cost tracking is handled by the caller (optimizer/CLI).
         """
         self.reforge_stock += count
+
+
+    def _roll_corruption_enchantment(self) -> str:
+        """Roll a random Vaal enchantment from the corrupted pool for this item class."""
+        # Query the corrupted pool for this item class at ilvl
+        from poe2_crafting_mcp.data.price_db import PriceDatabase
+        try:
+            pdb = PriceDatabase()
+            rows = pdb._conn.execute(
+                "SELECT stat_text FROM mod_weights "
+                "WHERE pool = 'corrupted' AND item_class = ? AND req_level <= ?",
+                (self.item_class, self.ilvl),
+            ).fetchall()
+            if rows:
+                return random.choice(rows)[0]
+        except Exception:
+            pass
+        return ""
 
     def _get_removable(
         self, del_gentype_only: int = 0, del_target: str = ""
