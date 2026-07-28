@@ -480,24 +480,38 @@ def cmd_sim(argv: list[str]) -> int:
 
     # ── Load or create item ───────────────────────────────────────────────────
     if args.load:
-        with open(args.load) as f:
-            state = _json.load(f)
-        item_class = state["item_class"]
-        ilvl = state["ilvl"]
-        item = ItemState(
-            item_class=item_class,
-            ilvl=ilvl,
-            rarity=state["rarity"],
-            mods=[ModInstance(**m) for m in state["mods"]],
-            corrupted=state.get("corrupted", False),
-            essence_mod_family=state.get("essence_mod_family"),
-            quality=state.get("quality", 0),
-            sockets=state.get("sockets", []),
-            max_sockets=state.get("max_sockets", 0),
-        )
-        history = state.get("history", [])
-        base_name = state.get("base_name", item_class)
-        print(f"  {_GREEN}Loaded item from {args.load}{_RESET}")
+        filepath = args.load
+        if filepath.endswith(".txt"):
+            # Load from PoB text format
+            from poe2_crafting_mcp.crafting.pob_export import pob_text_to_item_state
+            with open(filepath) as f:
+                text = f.read()
+            item, base_name, item_name = pob_text_to_item_state(text)
+            item_class = item.item_class
+            ilvl = item.ilvl
+            history = []
+            print(f"  {_GREEN}Loaded PoB item from {filepath}{_RESET}")
+        else:
+            # Load from JSON
+            with open(filepath) as f:
+                state = _json.load(f)
+            item_class = state["item_class"]
+            ilvl = state["ilvl"]
+            item = ItemState(
+                item_class=item_class,
+                ilvl=ilvl,
+                rarity=state["rarity"],
+                mods=[ModInstance(**m) for m in state["mods"]],
+                corrupted=state.get("corrupted", False),
+                essence_mod_family=state.get("essence_mod_family"),
+                quality=state.get("quality", 0),
+                sockets=state.get("sockets", []),
+                max_sockets=state.get("max_sockets", 0),
+                implicits=[ModInstance(**m) for m in state.get("implicits", [])],
+            )
+            history = state.get("history", [])
+            base_name = state.get("base_name", item_class)
+            print(f"  {_GREEN}Loaded item from {filepath}{_RESET}")
     elif args.base:
         # Resolve base name to item_class
         item_class = _resolve_item_class(pdb, args.base)
@@ -556,13 +570,22 @@ def cmd_sim(argv: list[str]) -> int:
 
         elif cmd == "save":
             if len(parts) < 2:
-                print(f"  {_RED}Usage: save <filename.json>{_RESET}")
+                print(f"  {_RED}Usage: save <filename.json|.txt>{_RESET}")
                 continue
             filepath = parts[1]
-            state = _serialize_item(item, base_name, item_class, ilvl, history)
-            with open(filepath, "w") as f:
-                _json.dump(state, f, indent=2)
-            print(f"  {_GREEN}Saved to {filepath}{_RESET}")
+            if filepath.endswith(".txt"):
+                # Save as PoB text format
+                from poe2_crafting_mcp.crafting.pob_export import item_state_to_pob_text
+                text = item_state_to_pob_text(item, base_name)
+                with open(filepath, "w") as f:
+                    f.write(text)
+                print(f"  {_GREEN}Saved PoB text to {filepath}{_RESET}")
+            else:
+                # Save as JSON
+                state = _serialize_item(item, base_name, item_class, ilvl, history)
+                with open(filepath, "w") as f:
+                    _json.dump(state, f, indent=2)
+                print(f"  {_GREEN}Saved to {filepath}{_RESET}")
 
         elif cmd == "load":
             if len(parts) < 2:
