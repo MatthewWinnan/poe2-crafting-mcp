@@ -284,7 +284,7 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     "annulment":         {"op": "del", "qty": 1, "min_lv": 0,  "from_rarity": ["Magic", "Rare"]},
     "divine":            {"op": "divine", "min_lv": 0, "from_rarity": ["Magic", "Rare"]},
     "fracturing":        {"op": "fracture", "min_lv": 0, "from_rarity": ["Rare"], "min_mods": 4},
-    "scour":             {"op": "scour", "min_lv": 0, "from_rarity": ["Magic", "Rare"]},
+    "scour":             {"op": "scour", "min_lv": 0},
     "alteration":        {"op": "reroll", "qty": 2, "min_lv": 0, "to_rarity": "Magic", "from_rarity": ["Magic"]},
     # Greater
     "greater_transmute": {"op": "add", "qty": 1, "min_lv": 44, "to_rarity": "Magic", "from_rarity": ["Normal"]},
@@ -1102,15 +1102,19 @@ class CraftingSimulator:
             outcome = random.choice(outcomes)
 
             if outcome == "reroll_mods":
-                # Reroll up to 3 existing mods into new ones
+                # Reroll up to 3 modifiers into new ones.
+                # On Normal/Magic items with few mods, this adds mods (upgrades rarity).
                 non_fractured = [m for m in self.item.mods if not m.fractured]
                 n_to_reroll = min(3, len(non_fractured))
-                if n_to_reroll > 0:
-                    to_reroll = random.sample(non_fractured, n_to_reroll)
-                    for mod in to_reroll:
-                        self.item.mods.remove(mod)
-                    # Add same number of new mods
-                    for _ in range(n_to_reroll):
+                # Remove existing non-fractured mods
+                for mod in random.sample(non_fractured, n_to_reroll) if n_to_reroll else []:
+                    self.item.mods.remove(mod)
+                # Item becomes Rare if it wasn't already (corruption reroll upgrades)
+                if self.item.rarity in ("Normal", "Magic"):
+                    self.item.rarity = "Rare"
+                # Add up to 3 new mods
+                for _ in range(3):
+                    if self.item.open_affixes > 0:
                         new_mod = self.roll_mod()
                         if new_mod:
                             self.item.mods.append(new_mod)
