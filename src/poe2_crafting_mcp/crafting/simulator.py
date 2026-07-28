@@ -132,26 +132,45 @@ CURRENCIES: dict[str, dict[str, Any]] = {
 }
 
 # Omen gentype_only: 1=prefix, 2=suffix
+# Multiple omens can be active simultaneously — their effects stack.
 OMENS: dict[str, dict[str, Any]] = {
-    "sinistral_exaltation": {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "gentype_only": 1},
-    "dextral_exaltation":   {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "gentype_only": 2},
-    "sinistral_coronation": {"applies_to": ["regal", "greater_regal", "perfect_regal"], "gentype_only": 1},
-    "dextral_coronation":   {"applies_to": ["regal", "greater_regal", "perfect_regal"], "gentype_only": 2},
-    "sinistral_erasure":    {"applies_to": ["chaos", "greater_chaos", "perfect_chaos"], "del_gentype_only": 1},
-    "dextral_erasure":      {"applies_to": ["chaos", "greater_chaos", "perfect_chaos"], "del_gentype_only": 2},
-    "sinistral_annulment":  {"applies_to": ["annulment"], "del_gentype_only": 1},
-    "dextral_annulment":    {"applies_to": ["annulment"], "del_gentype_only": 2},
-    "sinistral_alchemy":    {"applies_to": ["alchemy"], "gentype_only": 1},  # maximize prefixes
-    "dextral_alchemy":      {"applies_to": ["alchemy"], "gentype_only": 2},  # maximize suffixes
-    # Greater Exaltation: next exalt adds 2 mods instead of 1
-    "greater_exaltation":   {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "qty_override": 2},
-    # Whittling: next chaos removes lowest req_level mod (deterministic)
-    "whittling":            {"applies_to": ["chaos", "greater_chaos", "perfect_chaos"], "del_target": "lowest_req_level"},
-    # Homogenising: next exalt adds mod matching existing type tags
+    # ── Exaltation omens ──────────────────────────────────────────────────────
+    "sinistral_exaltation":    {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "gentype_only": 1},
+    "dextral_exaltation":      {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "gentype_only": 2},
+    "greater_exaltation":      {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "qty_override": 2},
     "homogenising_exaltation": {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "homogenise": True},
-    # Crystallisation: controls which affix type is removed by perfect essence
+    "catalysing_exaltation":   {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "catalyse": True},
+    # ── Annulment omens ───────────────────────────────────────────────────────
+    "sinistral_annulment":     {"applies_to": ["annulment"], "del_gentype_only": 1},
+    "dextral_annulment":       {"applies_to": ["annulment"], "del_gentype_only": 2},
+    # ── Erasure omens (Chaos) ─────────────────────────────────────────────────
+    "sinistral_erasure":       {"applies_to": ["chaos", "greater_chaos", "perfect_chaos"], "del_gentype_only": 1},
+    "dextral_erasure":         {"applies_to": ["chaos", "greater_chaos", "perfect_chaos"], "del_gentype_only": 2},
+    "whittling":               {"applies_to": ["chaos", "greater_chaos", "perfect_chaos"], "del_target": "lowest_req_level"},
+    # ── Coronation omens (Regal) ──────────────────────────────────────────────
+    "sinistral_coronation":    {"applies_to": ["regal", "greater_regal", "perfect_regal"], "gentype_only": 1},
+    "dextral_coronation":      {"applies_to": ["regal", "greater_regal", "perfect_regal"], "gentype_only": 2},
+    "homogenising_coronation": {"applies_to": ["regal", "greater_regal", "perfect_regal"], "homogenise": True},
+    # ── Crystallisation omens (Essence) ───────────────────────────────────────
     "sinistral_crystallisation": {"applies_to": ["perfect_essence"], "del_gentype_only": 1},
     "dextral_crystallisation":   {"applies_to": ["perfect_essence"], "del_gentype_only": 2},
+    # ── Alchemy omens ─────────────────────────────────────────────────────────
+    "sinistral_alchemy":       {"applies_to": ["alchemy"], "gentype_only": 1},
+    "dextral_alchemy":         {"applies_to": ["alchemy"], "gentype_only": 2},
+    # ── Corruption / Terminal omens ───────────────────────────────────────────
+    "corruption":              {"applies_to": ["vaal"], "force_outcome": True},
+    "blessed":                 {"applies_to": ["divine"], "implicit_only": True},
+    "sanctification":          {"applies_to": ["divine"], "sanctify": True},
+    "recombination":           {"applies_to": ["recombinator"], "lucky": True},
+    # ── Abyss omens (desecration system) ──────────────────────────────────────
+    "sinistral_necromancy":    {"applies_to": ["desecrate"], "gentype_only": 1},
+    "dextral_necromancy":      {"applies_to": ["desecrate"], "gentype_only": 2},
+    "light":                   {"applies_to": ["annulment"], "desecrated_only": True},
+    "abyssal_echoes":          {"applies_to": ["desecrate"], "reroll_reveal": True},
+    "putrefaction":            {"applies_to": ["desecrate"], "replace_all": True},
+    "blackblooded":            {"applies_to": ["desecrate"], "lich_pool": "kurgal"},
+    "liege":                   {"applies_to": ["desecrate"], "lich_pool": "amanamu"},
+    "sovereign":               {"applies_to": ["desecrate"], "lich_pool": "ulaman"},
 }
 
 
@@ -189,6 +208,7 @@ class CraftingSimulator:
                     'req_level': tier['req_level'],
                     'weight': tier['weight'],
                     'stat_text': tier['stat_text'],
+                    'tags': tier.get('tags', []),
                 })
         for group in mod_pool.get('suffixes', []):
             for tier_idx, tier in enumerate(group['tiers']):
@@ -199,6 +219,7 @@ class CraftingSimulator:
                     'req_level': tier['req_level'],
                     'weight': tier['weight'],
                     'stat_text': tier['stat_text'],
+                    'tags': tier.get('tags', []),
                 })
 
         # Flatten essence-specific pool (mods that only essences can guarantee)
@@ -565,13 +586,36 @@ class CraftingSimulator:
             })
         return results
 
-    def roll_mod(self, min_mod_level: int = 0, gentype_only: int = 0) -> ModInstance | None:
-        """Roll a random mod from the available pool (for simulation)."""
+    def roll_mod(
+        self, min_mod_level: int = 0, gentype_only: int = 0, homogenise: bool = False
+    ) -> ModInstance | None:
+        """Roll a random mod from the available pool (for simulation).
+
+        Args:
+            min_mod_level: minimum req_level filter (Greater/Perfect currencies)
+            gentype_only: 1=prefix only, 2=suffix only, 0=both
+            homogenise: if True, only mods sharing tags with existing item mods
+        """
         pool = self.get_available_pool(min_mod_level=min_mod_level, gentype_only=gentype_only)
+
+        # Homogenise filter: only mods sharing at least one tag with existing mods
+        if homogenise and pool:
+            existing_tags: set[str] = set()
+            for mod in self.item.mods:
+                # Find the mod's tags from _all_mods or _essence_mods
+                for pool_mod in self._all_mods:
+                    if pool_mod['family'] == mod.family and pool_mod['tier'] == mod.tier:
+                        existing_tags.update(pool_mod.get('tags', []))
+                        break
+            if existing_tags:
+                pool = [m for m in pool if set(m.get('tags', [])) & existing_tags]
+
         if not pool:
             return None
 
         total = sum(m['weight'] for m in pool)
+        if total <= 0:
+            return None
         roll = random.randint(1, total)
         cumulative = 0
         for mod in pool:
@@ -591,6 +635,7 @@ class CraftingSimulator:
         self,
         currency: str,
         omen: str = "",
+        omens: list[str] | None = None,
         essence_family: str = "",
         essence_stat_text: str = "",
     ) -> ItemState:
@@ -598,7 +643,9 @@ class CraftingSimulator:
 
         Args:
             currency: currency key from CURRENCIES dict
-            omen: optional omen key from OMENS dict
+            omen: single omen key (backward compat, deprecated — use omens=[])
+            omens: list of active omen keys. Multiple omens stack their effects.
+                   E.g. omens=["dextral_exaltation", "greater_exaltation"] adds 2 suffixes.
             essence_family: for essence operations, the guaranteed mod family
             essence_stat_text: for essence operations, the exact stat_text to place
                                (pins the correct tier). If empty, picks best tier.
@@ -625,20 +672,40 @@ class CraftingSimulator:
                 f"{currency} requires at least {min_mods} mods, item has {len(self.item.mods)}"
             )
 
-        op = cur["op"]
-        min_lv = cur.get("min_lv", 0)
+        # ── Merge omen effects ────────────────────────────────────────────────
+        # Support both old single-omen API and new multi-omen list
+        active_omens: list[str] = []
+        if omens:
+            active_omens = omens
+        elif omen:
+            active_omens = [omen]
+
+        # Merge all active omen effects into composite values
         gentype_only = 0
         del_gentype_only = 0
-        qty = cur.get("qty", 1)
         del_target = ""
+        homogenise = False
+        qty = cur.get("qty", 1)
 
-        if omen:
-            omen_def = OMENS.get(omen, {})
-            gentype_only = omen_def.get("gentype_only", 0)
-            del_gentype_only = omen_def.get("del_gentype_only", 0)
-            del_target = omen_def.get("del_target", "")
+        for omen_key in active_omens:
+            omen_def = OMENS.get(omen_key, {})
+            # Validate omen applies to this currency
+            applies_to = omen_def.get("applies_to", [])
+            if applies_to and currency not in applies_to:
+                continue  # omen doesn't affect this currency, skip
+            if omen_def.get("gentype_only"):
+                gentype_only = omen_def["gentype_only"]
+            if omen_def.get("del_gentype_only"):
+                del_gentype_only = omen_def["del_gentype_only"]
+            if omen_def.get("del_target"):
+                del_target = omen_def["del_target"]
+            if omen_def.get("homogenise"):
+                homogenise = True
             if "qty_override" in omen_def:
                 qty = omen_def["qty_override"]
+
+        op = cur["op"]
+        min_lv = cur.get("min_lv", 0)
 
         # Rarity change
         if "to_rarity" in cur:
@@ -646,7 +713,7 @@ class CraftingSimulator:
 
         if op == "add":
             for _ in range(qty):
-                mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
+                mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only, homogenise=homogenise)
                 if mod:
                     self.item.mods.append(mod)
 
@@ -659,7 +726,7 @@ class CraftingSimulator:
                 if to_remove.family == self.item.essence_mod_family:
                     self.item.essence_mod_family = None
             # Add step
-            mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
+            mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only, homogenise=homogenise)
             if mod:
                 self.item.mods.append(mod)
 
