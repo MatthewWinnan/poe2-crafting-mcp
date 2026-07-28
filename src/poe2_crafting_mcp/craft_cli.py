@@ -1027,7 +1027,7 @@ def _print_item(item: ItemState, base_name: str) -> None:
             mark_str = " ".join(markers)
             if mark_str:
                 mark_str = " " + mark_str
-            print(f"    {m.affix_type:6} T{m.tier} | {m.family:25} | {m.stat_text}{mark_str}")
+            print(f"    {m.affix_type:6} T{m.tier} | {m.family:25} | {m.display_text}{mark_str}")
     # Sockets
     socket_filled = [s for s in item.sockets if s]
     socket_empty = len(item.sockets) - len(socket_filled)

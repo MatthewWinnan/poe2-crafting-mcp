@@ -20,14 +20,87 @@ class ModInstance:
     tier: int            # tier number within family (1=best)
     req_level: int       # ilvl required to roll this tier
     weight: int          # spawn weight (DropChance)
-    stat_text: str       # human-readable stat
+    stat_text: str       # range text (e.g. "+(25-27) to Dexterity")
     fractured: bool = False
     desecrated: bool = False  # True if this mod came from abyss desecration
+    value: float | None = None  # actual rolled value within the range (None = not yet rolled)
+
+    def __post_init__(self):
+        """Roll a value if not already set."""
+        if self.value is None:
+            self.value = _roll_stat_value(self.stat_text)
+
+    @property
+    def display_text(self) -> str:
+        """Show the rolled value with the range: '32: (31-33) to Dexterity'."""
+        if self.value is not None:
+            # Try to format with the rolled value replacing the range
+            return _format_with_value(self.stat_text, self.value)
+        return self.stat_text
+
+    def divine(self) -> None:
+        """Reroll the value within the stat range (Divine Orb)."""
+        self.value = _roll_stat_value(self.stat_text)
 
     def __repr__(self) -> str:
         frac = " [F]" if self.fractured else ""
         desc = " [D]" if self.desecrated else ""
         return f"<{self.affix_type[0].upper()} T{self.tier} {self.family}{frac}{desc}>"
+
+
+def _parse_stat_range(stat_text: str) -> tuple[float | None, float | None]:
+    """Extract (min, max) numeric range from stat_text.
+    
+    Examples:
+        '+(25-27) to Dexterity' → (25, 27)
+        '(68-79)% increased Energy Shield' → (68, 79)
+        'Adds (4-6) to (7-11) Physical Damage' → (4, 11)  # uses first range
+        '+45 to maximum Life' → (45, 45)  # single value
+        'Gain 5 Life per Enemy Hit' → (5, 5)
+    """
+    import re
+    # Find all (min-max) patterns
+    ranges = re.findall(r'\((\d+(?:\.\d+)?)[—–-](\d+(?:\.\d+)?)\)', stat_text)
+    if ranges:
+        # Use the first range found
+        return float(ranges[0][0]), float(ranges[0][1])
+    
+    # Single value patterns: +45, 5%, etc.
+    single = re.search(r'[+]?(\d+(?:\.\d+)?)', stat_text)
+    if single:
+        v = float(single.group(1))
+        return v, v
+    
+    return None, None
+
+
+def _roll_stat_value(stat_text: str) -> float | None:
+    """Roll a random value within the stat_text range."""
+    import random as _rand
+    lo, hi = _parse_stat_range(stat_text)
+    if lo is None or hi is None:
+        return None
+    if lo == hi:
+        return lo
+    # Roll integer for int ranges, float for decimal ranges
+    if lo == int(lo) and hi == int(hi):
+        return float(_rand.randint(int(lo), int(hi)))
+    return round(_rand.uniform(lo, hi), 2)
+
+
+def _format_with_value(stat_text: str, value: float) -> str:
+    """Format stat_text showing the rolled value alongside the range.
+    
+    '+(25-27) to Dexterity' with value=26 → '26: +(25-27) to Dexterity'
+    """
+    import re
+    # Check if it's an integer value
+    if value == int(value):
+        val_str = str(int(value))
+    else:
+        val_str = f"{value:.1f}"
+    
+    return f"{val_str}: {stat_text}"
 
 
 @dataclass
@@ -878,7 +951,10 @@ class CraftingSimulator:
                 chosen.fractured = True
 
         elif op == "divine":
-            pass  # Values reroll within tier — doesn't change mod structure
+            # Divine Orb: reroll numeric values of ALL mods within their tier ranges
+            for mod in self.item.mods:
+                if not mod.fractured:  # fractured mods can't be divined
+                    mod.divine()
 
         elif op == "quality":
             # Add quality to item (5% per use, max 20)
