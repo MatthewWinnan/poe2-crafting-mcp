@@ -447,16 +447,450 @@ def cmd_seed(argv: list[str]) -> int:
     return 0
 
 
+# ── Sim: Interactive Crafting ─────────────────────────────────────────────────
+
+def cmd_sim(argv: list[str]) -> int:
+    """Interactive crafting simulator with save/load item state."""
+    import json as _json
+    import random as _random
+
+    p = argparse.ArgumentParser(
+        prog="poe2-craft sim",
+        description="Interactive crafting simulator. Apply currencies step-by-step.",
+    )
+    p.add_argument("base", nargs="?", help="Base item name (e.g. 'Gold Gloves') or item class")
+    p.add_argument("--ilvl", type=int, default=82, help="Item level (default: 82)")
+    p.add_argument("--load", type=str, help="Load item state from JSON file")
+    p.add_argument("--seed", type=int, help="Random seed for reproducibility")
+    args = p.parse_args(argv)
+
+    if args.seed is not None:
+        _random.seed(args.seed)
+
+    from poe2_crafting_mcp.crafting.simulator import (
+        CraftingSimulator, ItemState, ModInstance, CURRENCIES, OMENS,
+    )
+    from poe2_crafting_mcp.crafting.desecration import DesecrationEngine, BONES
+    from poe2_crafting_mcp.data.price_db import PriceDatabase
+
+    pdb = PriceDatabase()
+    desecration = DesecrationEngine()
+    history: list[dict] = []
+
+    # ── Load or create item ───────────────────────────────────────────────────
+    if args.load:
+        with open(args.load) as f:
+            state = _json.load(f)
+        item_class = state["item_class"]
+        ilvl = state["ilvl"]
+        item = ItemState(
+            item_class=item_class,
+            ilvl=ilvl,
+            rarity=state["rarity"],
+            mods=[ModInstance(**m) for m in state["mods"]],
+            corrupted=state.get("corrupted", False),
+            essence_mod_family=state.get("essence_mod_family"),
+        )
+        history = state.get("history", [])
+        base_name = state.get("base_name", item_class)
+        print(f"  {_GREEN}Loaded item from {args.load}{_RESET}")
+    elif args.base:
+        # Resolve base name to item_class
+        item_class = _resolve_item_class(pdb, args.base)
+        if not item_class:
+            print(f"{_RED}Cannot resolve '{args.base}' to an item class.{_RESET}")
+            return 1
+        ilvl = args.ilvl
+        item = ItemState(item_class=item_class, ilvl=ilvl, rarity="Normal")
+        base_name = args.base
+        print(f"  {_GREEN}Created: {base_name} ({item_class}, ilvl {ilvl}){_RESET}")
+    else:
+        print(f"{_RED}Provide a base name or --load file.{_RESET}")
+        p.print_help()
+        return 1
+
+    # Create simulator with pools
+    sim = CraftingSimulator.from_db(item_class, ilvl)
+    sim.item = item
+
+    # ── REPL ──────────────────────────────────────────────────────────────────
+    print()
+    _print_item(item, base_name)
+    print()
+    print(f"  {_DIM}Commands: <currency> [--omens x,y] [--essence_family F] | desecrate <bone>"
+          f" | save <file> | load <file> | pool | history | help | quit{_RESET}")
+    print()
+
+    while True:
+        try:
+            line = input(f"{_CYAN}>{_RESET} ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        if not line:
+            continue
+
+        parts = line.split()
+        cmd = parts[0].lower()
+
+        if cmd in ("quit", "exit", "q"):
+            break
+
+        elif cmd == "help":
+            _sim_help()
+
+        elif cmd == "save":
+            if len(parts) < 2:
+                print(f"  {_RED}Usage: save <filename.json>{_RESET}")
+                continue
+            filepath = parts[1]
+            state = _serialize_item(item, base_name, item_class, ilvl, history)
+            with open(filepath, "w") as f:
+                _json.dump(state, f, indent=2)
+            print(f"  {_GREEN}Saved to {filepath}{_RESET}")
+
+        elif cmd == "load":
+            if len(parts) < 2:
+                print(f"  {_RED}Usage: load <filename.json>{_RESET}")
+                continue
+            filepath = parts[1]
+            try:
+                with open(filepath) as f:
+                    state = _json.load(f)
+                item_class = state["item_class"]
+                ilvl = state["ilvl"]
+                item = ItemState(
+                    item_class=item_class, ilvl=ilvl, rarity=state["rarity"],
+                    mods=[ModInstance(**m) for m in state["mods"]],
+                    corrupted=state.get("corrupted", False),
+                    essence_mod_family=state.get("essence_mod_family"),
+                )
+                sim = CraftingSimulator.from_db(item_class, ilvl)
+                sim.item = item
+                base_name = state.get("base_name", item_class)
+                history = state.get("history", [])
+                print(f"  {_GREEN}Loaded from {filepath}{_RESET}")
+                _print_item(item, base_name)
+            except Exception as e:
+                print(f"  {_RED}Error loading: {e}{_RESET}")
+
+        elif cmd == "history":
+            if not history:
+                print(f"  {_DIM}No history yet.{_RESET}")
+            else:
+                for i, h in enumerate(history, 1):
+                    omens_str = f" +{','.join(h['omens'])}" if h.get("omens") else ""
+                    extra = ""
+                    if h.get("essence_family"):
+                        extra += f" family={h['essence_family']}"
+                    if h.get("bone"):
+                        extra += f" bone={h['bone']}"
+                    print(f"  {_DIM}{i}.{_RESET} {h['action']}{omens_str}{extra}")
+
+        elif cmd == "pool":
+            # Show available pool summary
+            affix = parts[1] if len(parts) > 1 else ""
+            pool = sim.get_available_pool(gentype_only=1 if affix == "prefix" else 2 if affix == "suffix" else 0)
+            by_family: dict[str, list] = {}
+            for m in pool:
+                by_family.setdefault(m['family'], []).append(m)
+            print(f"  {_BOLD}Available pool ({len(pool)} tiers, {len(by_family)} families):{_RESET}")
+            for fam, mods in sorted(by_family.items(), key=lambda x: -sum(m['weight'] for m in x[1])):
+                total_w = sum(m['weight'] for m in mods)
+                print(f"    {fam:30} weight={total_w:5} ({len(mods)} tiers)")
+
+        elif cmd == "desecrate":
+            bone = parts[1] if len(parts) > 1 else "preserved_rib"
+            omens_str = _parse_flag(parts, "--omens")
+            active_omens = omens_str.split(",") if omens_str else []
+
+            # Validate bone
+            err = desecration.validate_bone(bone, item_class, ilvl)
+            if err:
+                print(f"  {_RED}{err}{_RESET}")
+                continue
+
+            # Apply bone
+            item, affix_type = desecration.apply_bone(item, bone, omens=active_omens)
+            sim.item = item
+
+            # Get pool and draw options
+            pool = desecration.get_reveal_pool(item_class, ilvl, affix_type, bone, item, omens=active_omens)
+            if not pool:
+                print(f"  {_RED}No desecrated mods available in pool!{_RESET}")
+                continue
+
+            echoes = "abyssal_echoes" in active_omens
+            n_draws = min(6 if echoes else 3, len(pool))
+            options = _random.sample(pool, n_draws)
+
+            # Show options
+            print(f"\n  {_BOLD}Revealed options ({affix_type}, pick 1-{n_draws}):{_RESET}")
+            for i, opt in enumerate(options, 1):
+                faction_tag = f" [{opt.faction}]" if opt.faction else ""
+                print(f"    [{i}] {opt.affix_type:6} | {opt.family:28} | {opt.stat_text}{faction_tag}")
+
+            if echoes and n_draws < len(pool):
+                print(f"  {_DIM}(Abyssal Echoes active — showing {n_draws} options){_RESET}")
+
+            # Get player choice
+            while True:
+                try:
+                    choice_str = input(f"  {_CYAN}Pick (1-{n_draws}):{_RESET} ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    break
+                try:
+                    choice_idx = int(choice_str) - 1
+                    if 0 <= choice_idx < n_draws:
+                        break
+                except ValueError:
+                    pass
+                print(f"  {_RED}Enter a number 1-{n_draws}{_RESET}")
+
+            chosen = options[choice_idx]
+            mod = chosen.to_mod_instance(desecrated=True)
+            mod.desecrated = True
+            item.mods.append(mod)
+            sim.item = item
+
+            history.append({
+                "action": "desecrate",
+                "bone": bone,
+                "omens": active_omens,
+                "affix_type": affix_type,
+                "revealed": [{"family": o.family, "stat_text": o.stat_text} for o in options],
+                "chose": choice_idx + 1,
+            })
+            print()
+            _print_item(item, base_name)
+
+        else:
+            # Treat as currency application
+            currency = cmd
+            if currency not in CURRENCIES:
+                print(f"  {_RED}Unknown command/currency: {currency}{_RESET}")
+                print(f"  {_DIM}Available: {', '.join(sorted(CURRENCIES.keys()))}{_RESET}")
+                continue
+
+            omens_str = _parse_flag(parts, "--omens")
+            active_omens = omens_str.split(",") if omens_str else []
+            ess_family = _parse_flag(parts, "--essence_family") or _parse_flag(parts, "--family") or ""
+            ess_stat = _parse_flag(parts, "--stat_text") or ""
+
+            # Validate omens
+            bad_omens = [o for o in active_omens if o and o not in OMENS]
+            if bad_omens:
+                print(f"  {_RED}Unknown omen(s): {bad_omens}{_RESET}")
+                continue
+
+            try:
+                sim.apply_currency(
+                    currency,
+                    omens=active_omens if active_omens else None,
+                    essence_family=ess_family,
+                    essence_stat_text=ess_stat,
+                )
+                item = sim.item
+                history.append({
+                    "action": currency,
+                    "omens": active_omens,
+                    "essence_family": ess_family or None,
+                })
+                print()
+                _print_item(item, base_name)
+            except ValueError as e:
+                print(f"  {_RED}Error: {e}{_RESET}")
+
+    return 0
+
+
+def _print_item(item: ItemState, base_name: str) -> None:
+    """Pretty-print current item state."""
+    print(f"  {_BOLD}{base_name}{_RESET} ({item.rarity}, ilvl {item.ilvl})"
+          f"{'  [CORRUPTED]' if item.corrupted else ''}")
+    if not item.mods:
+        print(f"  {_DIM}(no mods){_RESET}")
+    else:
+        for m in item.mods:
+            markers = []
+            if m.fractured:
+                markers.append(f"{_YELLOW}[F]{_RESET}")
+            if m.desecrated:
+                markers.append(f"{_CYAN}[D]{_RESET}")
+            if item.essence_mod_family and m.family == item.essence_mod_family:
+                markers.append(f"{_GREEN}[E]{_RESET}")
+            mark_str = " ".join(markers)
+            if mark_str:
+                mark_str = " " + mark_str
+            print(f"    {m.affix_type:6} T{m.tier} | {m.family:25} | {m.stat_text}{mark_str}")
+    print(f"  {_DIM}Slots: {item.open_prefixes}P / {item.open_suffixes}S open{_RESET}")
+
+
+def _serialize_item(
+    item: ItemState, base_name: str, item_class: str, ilvl: int, history: list[dict]
+) -> dict:
+    """Serialize item state to JSON-compatible dict."""
+    return {
+        "base_name": base_name,
+        "item_class": item_class,
+        "ilvl": ilvl,
+        "rarity": item.rarity,
+        "corrupted": item.corrupted,
+        "essence_mod_family": item.essence_mod_family,
+        "mods": [
+            {
+                "family": m.family,
+                "affix_type": m.affix_type,
+                "tier": m.tier,
+                "req_level": m.req_level,
+                "weight": m.weight,
+                "stat_text": m.stat_text,
+                "fractured": m.fractured,
+                "desecrated": m.desecrated,
+            }
+            for m in item.mods
+        ],
+        "history": history,
+    }
+
+
+def _resolve_item_class(pdb, base_name: str) -> str | None:
+    """Resolve a base name or item class to poe2db item_class slug."""
+    import sqlite3
+    # Direct match (user typed item_class directly)
+    count = pdb._conn.execute(
+        "SELECT COUNT(*) FROM mod_weights WHERE item_class = ?", (base_name,)
+    ).fetchone()[0]
+    if count > 0:
+        return base_name
+
+    # Search item_bases for the name
+    try:
+        row = pdb._conn.execute(
+            "SELECT tags, slot FROM item_bases WHERE name = ? COLLATE NOCASE LIMIT 1",
+            (base_name,)
+        ).fetchone()
+    except Exception:
+        row = None
+
+    if not row:
+        # Fuzzy search
+        try:
+            row = pdb._conn.execute(
+                "SELECT tags, slot FROM item_bases WHERE name LIKE ? COLLATE NOCASE LIMIT 1",
+                (f"%{base_name}%",)
+            ).fetchone()
+        except Exception:
+            return None
+
+    if not row:
+        return None
+
+    import json as _json
+    tags = _json.loads(row["tags"]) if row["tags"] else []
+    slot = row["slot"] or ""
+
+    # Mapping logic from crafting_advisor_design.md
+    attr_map = {
+        "int_armour": "_int", "str_armour": "_str", "dex_armour": "_dex",
+        "str_dex_armour": "_str_dex", "str_int_armour": "_str_int",
+        "dex_int_armour": "_dex_int", "str_dex_int_armour": "_str_dex_int",
+    }
+    slot_map = {
+        "Gloves": "Gloves", "Boots": "Boots", "Helmet": "Helmets",
+        "Body Armour": "Body_Armours", "Shield": "Shields",
+        "Focus": "Foci", "Bow": "Bows", "Crossbow": "Crossbows",
+        "Dagger": "Daggers", "Claw": "Claws", "Flail": "Flails",
+        "Spear": "Spears", "Quarterstaff": "Quarterstaves",
+        "One Hand Sword": "One_Hand_Swords", "Two Hand Sword": "Two_Hand_Swords",
+        "One Hand Axe": "One_Hand_Axes", "Two Hand Axe": "Two_Hand_Axes",
+        "One Hand Mace": "One_Hand_Maces", "Two Hand Mace": "Two_Hand_Maces",
+        "Sceptre": "Sceptres", "Wand": "Wands", "Staff": "Staves",
+        "Ring": "Rings", "Amulet": "Amulets", "Belt": "Belts",
+        "Quiver": "Quivers", "Talisman": "Talismans",
+    }
+
+    base_slug = slot_map.get(slot, slot)
+    attr_suffix = ""
+    for tag in tags:
+        if tag in attr_map:
+            attr_suffix = attr_map[tag]
+            break
+
+    item_class = base_slug + attr_suffix
+
+    # Verify it exists
+    count = pdb._conn.execute(
+        "SELECT COUNT(*) FROM mod_weights WHERE item_class = ?", (item_class,)
+    ).fetchone()[0]
+    return item_class if count > 0 else None
+
+
+def _parse_flag(parts: list[str], flag: str) -> str:
+    """Extract --flag value from parts list."""
+    for i, p in enumerate(parts):
+        if p == flag and i + 1 < len(parts):
+            return parts[i + 1]
+    return ""
+
+
+def _sim_help() -> None:
+    print(f"""
+  {_BOLD}Crafting Commands:{_RESET}
+    <currency>                       Apply currency (e.g. transmute, exalted, chaos)
+    <currency> --omens x,y           Apply with stacked omens
+    <currency> --family F            Essence: specify mod family to guarantee
+    <currency> --stat_text "..."     Essence: pin exact tier by stat text
+    desecrate <bone>                 Apply bone (e.g. preserved_jawbone)
+    desecrate <bone> --omens x       With omen (e.g. blackblooded, abyssal_echoes)
+
+  {_BOLD}Item Management:{_RESET}
+    save <file.json>                 Save current item state
+    load <file.json>                 Load item state from file
+    pool [prefix|suffix]             Show available mod pool
+    history                          Show crafting history
+
+  {_BOLD}Other:{_RESET}
+    help                             Show this help
+    quit                             Exit
+
+  {_BOLD}Currencies:{_RESET}
+    transmute, augment, alteration, regal, alchemy, chaos, exalted, annulment,
+    divine, scour, fracturing + greater_*/perfect_* variants
+    lesser_essence, normal_essence, greater_essence, perfect_essence
+
+  {_BOLD}Omens (stack with commas):{_RESET}
+    sinistral_exaltation, dextral_exaltation, greater_exaltation,
+    homogenising_exaltation, sinistral_annulment, dextral_annulment,
+    sinistral_erasure, dextral_erasure, whittling, ...
+
+  {_BOLD}Bones:{_RESET}
+    gnawed_jawbone, preserved_jawbone, ancient_jawbone,
+    gnawed_rib, preserved_rib, ancient_rib,
+    gnawed_collarbone, preserved_collarbone, ancient_collarbone,
+    preserved_cranium, preserved_vertebrae
+""")
+
+
 # ── Help ──────────────────────────────────────────────────────────────────────
 
-HELP_TEXT = f"""{_BOLD}poe2-craft{_RESET} — PoE2 crafting data manager
+HELP_TEXT = f"""{_BOLD}poe2-craft{_RESET} — PoE2 crafting data manager & simulator
 
 {_BOLD}Commands:{_RESET}
   {_CYAN}status{_RESET}           Check all data sources and current league
   {_CYAN}seed{_RESET}             Seed stale/missing data in correct order
   {_CYAN}seed --force{_RESET}     Re-seed all data sources
   {_CYAN}seed --only X{_RESET}    Seed only: etl, mod_weights, essences, concepts, item_descriptions, prices
+  {_CYAN}sim{_RESET} <base>       Interactive crafting simulator (step-by-step)
+  {_CYAN}sim --load{_RESET} F     Load saved item state and continue crafting
   {_CYAN}mcp{_RESET}              Start the MCP server (stdio transport)
+
+{_BOLD}Sim examples:{_RESET}
+  poe2-craft sim "Gold Gloves" --ilvl 82
+  poe2-craft sim Bows --ilvl 82 --seed 42
+  poe2-craft sim --load my_item.json
 
 {_BOLD}Data sources{_RESET} (seed order):
   1. ETL            PoB vendor data → bases, mods, gems, uniques, nodes, currencies
@@ -488,6 +922,8 @@ def main() -> None:
         sys.exit(cmd_status(rest))
     elif cmd == "seed":
         sys.exit(cmd_seed(rest))
+    elif cmd == "sim":
+        sys.exit(cmd_sim(rest))
     elif cmd == "mcp":
         from poe2_crafting_mcp.server import main as mcp_main
         mcp_main()
