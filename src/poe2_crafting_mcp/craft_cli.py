@@ -629,13 +629,19 @@ def cmd_sim(argv: list[str]) -> int:
                     print(f"  {_DIM}{i}.{_RESET} {h['action']}{omens_str}{extra}")
 
         elif cmd == "stock":
-            # Show reforge stock
-            print(f"  {_BOLD}Reforge stock:{_RESET} {sim.reforge_stock} spare base(s)")
-            if sim.reforge_stock >= 2:
-                print(f"  {_GREEN}Can reforge (need 2 spares + current item){_RESET}")
+            # Show reforge stock per rarity
+            print(f"  {_BOLD}Reforge stock:{_RESET}")
+            for rarity in ("Magic", "Rare"):
+                count = sim.reforge_stock.get(rarity, 0)
+                can = "✓ can reforge" if count >= 2 else f"need {2 - count} more"
+                print(f"    {rarity:6}: {count} spare(s)  ({can})")
+            cur_rarity = item.rarity
+            if cur_rarity in ("Magic", "Rare"):
+                stock = sim.reforge_stock.get(cur_rarity, 0)
+                if stock >= 2:
+                    print(f"  {_GREEN}Current item is {cur_rarity} — can reforge now{_RESET}")
             else:
-                need = 2 - sim.reforge_stock
-                print(f"  {_DIM}Need {need} more spare(s) to reforge{_RESET}")
+                print(f"  {_DIM}Current item is {cur_rarity} — must be Magic or Rare to reforge{_RESET}")
 
         elif cmd == "cost":
             # Show total currencies consumed and estimated cost
@@ -741,19 +747,28 @@ def cmd_sim(argv: list[str]) -> int:
 
         elif cmd == "stash":
             # Stash current item as reforge fodder, get fresh Normal
-            sim.stash_for_reforge()
-            item = sim.item
-            history.append({"action": "stash", "omens": []})
-            print(f"  {_DIM}Item stashed for reforging. Stock: {sim.reforge_stock}{_RESET}")
-            print()
-            _print_item(item, base_name)
+            try:
+                stashed_rarity = item.rarity
+                sim.stash_for_reforge()
+                item = sim.item
+                history.append({"action": "stash", "omens": []})
+                stock = sim.reforge_stock.get(stashed_rarity, 0)
+                print(f"  {_DIM}Stashed {stashed_rarity} item. {stashed_rarity} stock: {stock}{_RESET}")
+                print()
+                _print_item(item, base_name)
+            except ValueError as e:
+                print(f"  {_RED}Error: {e}{_RESET}")
 
         elif cmd == "buy_base":
             # Buy spare bases for reforge stock
             count = int(parts[1]) if len(parts) > 1 else 1
-            sim.buy_base(count)
-            history.append({"action": f"buy_base:{count}", "omens": []})
-            print(f"  {_DIM}Bought {count} base(s). Stock: {sim.reforge_stock}{_RESET}")
+            rarity = parts[2] if len(parts) > 2 else "Rare"
+            try:
+                sim.buy_base(count, rarity)
+                history.append({"action": f"buy_base:{count}:{rarity}", "omens": []})
+                print(f"  {_DIM}Bought {count} {rarity} base(s). Stock: {sim.reforge_stock}{_RESET}")
+            except ValueError as e:
+                print(f"  {_RED}Error: {e}{_RESET}")
 
         elif cmd == "pool":
             # Show available pool summary

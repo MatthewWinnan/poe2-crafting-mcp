@@ -430,18 +430,18 @@ class TestWhittling:
 class TestReforge:
     def test_reforge_produces_rare_with_4_mods(self):
         sim = _make_sim()
-        sim.item.rarity = "Normal"
-        sim.reforge_stock = 2
+        sim.item.rarity = "Rare"
+        sim.reforge_stock = {"Magic": 0, "Rare": 2}
         random.seed(42)
         sim.apply_currency("reforge")
         assert sim.item.rarity == "Rare"
         assert len(sim.item.mods) == 4
 
     def test_reforge_works_on_rare(self):
-        """Reforge accepts Rare items (unlike alchemy which requires Normal)."""
+        """Reforge accepts Rare items with matching stock."""
         sim = _make_sim()
         sim.item.rarity = "Rare"
-        sim.reforge_stock = 2
+        sim.reforge_stock = {"Magic": 0, "Rare": 2}
         _add_mod(sim, "IncreasedLife")
         _add_mod(sim, "FireResist")
         random.seed(42)
@@ -452,7 +452,7 @@ class TestReforge:
     def test_reforge_preserves_fractured(self):
         sim = _make_sim()
         sim.item.rarity = "Rare"
-        sim.reforge_stock = 2
+        sim.reforge_stock = {"Magic": 0, "Rare": 2}
         _add_mod(sim, "IncreasedLife", fractured=True)
         _add_mod(sim, "FireResist")
         random.seed(42)
@@ -460,33 +460,60 @@ class TestReforge:
         assert any(m.family == "IncreasedLife" and m.fractured for m in sim.item.mods)
 
     def test_reforge_requires_stock(self):
-        """Reforge fails without 2 spare bases in stock."""
+        """Reforge fails without 2 spare bases of matching rarity."""
         sim = _make_sim()
         sim.item.rarity = "Rare"
-        sim.reforge_stock = 1  # not enough
+        sim.reforge_stock = {"Magic": 0, "Rare": 1}
         import pytest
-        with pytest.raises(ValueError, match="Reforge requires 2 spare bases"):
+        with pytest.raises(ValueError, match="Reforge requires 2 spare Rare"):
+            sim.apply_currency("reforge")
+
+    def test_reforge_requires_matching_rarity(self):
+        """Reforge fails if item is Normal."""
+        sim = _make_sim()
+        sim.item.rarity = "Normal"
+        sim.reforge_stock = {"Magic": 5, "Rare": 5}
+        import pytest
+        with pytest.raises(ValueError):
             sim.apply_currency("reforge")
 
     def test_reforge_consumes_stock(self):
-        """Reforge decrements stock by 2."""
+        """Reforge decrements stock by 2 for matching rarity."""
         sim = _make_sim()
         sim.item.rarity = "Rare"
-        sim.reforge_stock = 5
+        sim.reforge_stock = {"Magic": 0, "Rare": 5}
         random.seed(42)
         sim.apply_currency("reforge")
-        assert sim.reforge_stock == 3
+        assert sim.reforge_stock["Rare"] == 3
 
     def test_stash_for_reforge(self):
-        """Stashing increments stock and resets item."""
+        """Stashing increments stock for item's rarity and resets item."""
         sim = _make_sim()
         sim.item.rarity = "Rare"
         _add_mod(sim, "IncreasedLife")
         sim.stash_for_reforge()
-        assert sim.reforge_stock == 1
+        assert sim.reforge_stock["Rare"] == 1
         assert sim.item.rarity == "Normal"
         assert len(sim.item.mods) == 0
 
+    def test_stash_rejects_normal(self):
+        """Can't stash a Normal item (nothing to reforge)."""
+        sim = _make_sim()
+        sim.item.rarity = "Normal"
+        import pytest
+        with pytest.raises(ValueError, match="Can only stash Magic or Rare"):
+            sim.stash_for_reforge()
+
+    def test_reforge_magic_gives_2_mods(self):
+        """Reforging 3 Magic items gives a Magic with 2 mods."""
+        sim = _make_sim()
+        sim.item.rarity = "Magic"
+        sim.reforge_stock = {"Magic": 2, "Rare": 0}
+        _add_mod(sim, "IncreasedLife")
+        random.seed(42)
+        sim.apply_currency("reforge")
+        assert sim.item.rarity == "Magic"
+        assert len(sim.item.mods) == 2
 
 # ── Annulment clears essence tracking ──────────────────────────────────────
 

@@ -312,7 +312,7 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     # Reforging bench — 3-to-1 recycling
     # Requires 2 spare bases (reforge_stock >= 2). Consumes current item + 2 spares.
     # Output: fresh Rare with 4 random mods (same base type, lowest ilvl).
-    "reforge":           {"op": "reforge", "qty": 4, "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Normal", "Magic", "Rare"]},
+    "reforge":           {"op": "reforge", "qty": 4, "min_lv": 0, "from_rarity": ["Magic", "Rare"]},
     # Quality currencies
     "armourers_scrap":   {"op": "quality", "qty": 5, "slot_type": "armour"},
     "blacksmiths_whetstone": {"op": "quality", "qty": 5, "slot_type": "weapon"},
@@ -451,7 +451,8 @@ class CraftingSimulator:
         # Reforging: tracks spare bases available for 3-to-1 recycling.
         # Each failed craft that gets scoured/discarded adds 1 to this count.
         # Reforging consumes 2 spares (current item + 2 spares → 1 new item).
-        self.reforge_stock: int = 0
+        # All 3 items must be same rarity. Output matches input rarity.
+        self.reforge_stock: dict[str, int] = {"Magic": 0, "Rare": 0}  # per-rarity counts
 
         # Flatten mod pool into a list of all tiers
         self._all_mods: list[dict] = []
@@ -1024,19 +1025,26 @@ class CraftingSimulator:
             self.item.implicits = []
 
         elif op == "reforge":
-            # Reforging bench: 3-to-1. Current item + 2 from stock → fresh Rare.
-            if self.reforge_stock < 2:
+            # Reforging bench: 3-to-1. Current item + 2 from stock → new item.
+            # All 3 must be same rarity. Output = same rarity with new random mods.
+            item_rarity = self.item.rarity
+            if item_rarity not in ("Magic", "Rare"):
                 raise ValueError(
-                    f"Reforge requires 2 spare bases in stock (have {self.reforge_stock}). "
-                    f"Use 'stash' to add failed items to stock, or buy bases."
+                    f"Reforge requires a Magic or Rare item (current is {item_rarity})"
                 )
-            self.reforge_stock -= 2
-            # Reset item completely (all mods gone, fresh start)
+            stock_count = self.reforge_stock.get(item_rarity, 0)
+            if stock_count < 2:
+                raise ValueError(
+                    f"Reforge requires 2 spare {item_rarity} bases in stock "
+                    f"(have {stock_count}). Use 'stash' to add failed items."
+                )
+            self.reforge_stock[item_rarity] -= 2
+            # Reset item completely (all mods gone, reroll)
             self.item.mods = [m for m in self.item.mods if m.fractured]
-            self.item.rarity = "Rare"
             self.item.essence_mod_family = None
-            # Roll 4 fresh mods (same as alchemy)
-            for _ in range(4):
+            # Output: same rarity, 4 mods for Rare, 2 mods for Magic
+            target_mods = 4 if item_rarity == "Rare" else 2
+            for _ in range(target_mods):
                 if self.item.open_affixes > 0:
                     mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
                     if mod:
@@ -1152,10 +1160,14 @@ class CraftingSimulator:
     def stash_for_reforge(self) -> None:
         """Stash current item as a spare base for reforging.
 
-        Increments reforge_stock and resets the item to a fresh Normal state.
+        Increments reforge_stock for the item's current rarity and resets to Normal.
         Used when a craft attempt fails and the item should be recycled.
+        Only Magic and Rare items can be stashed (Normal has nothing to reforge).
         """
-        self.reforge_stock += 1
+        rarity = self.item.rarity
+        if rarity not in ("Magic", "Rare"):
+            raise ValueError(f"Can only stash Magic or Rare items for reforging (item is {rarity})")
+        self.reforge_stock[rarity] = self.reforge_stock.get(rarity, 0) + 1
         self.item = ItemState(
             item_class=self.item_class,
             ilvl=self.ilvl,
@@ -1163,13 +1175,15 @@ class CraftingSimulator:
             max_sockets=get_max_sockets_for_item_class(self.item_class),
         )
 
-    def buy_base(self, count: int = 1) -> None:
-        """Buy fresh bases and add to reforge stock.
+    def buy_base(self, count: int = 1, rarity: str = "Rare") -> None:
+        """Buy bases and add to reforge stock for a specific rarity.
 
-        Represents purchasing white bases from trade to fuel reforging.
+        Represents purchasing items from trade to fuel reforging.
         Cost tracking is handled by the caller (optimizer/CLI).
         """
-        self.reforge_stock += count
+        if rarity not in ("Magic", "Rare"):
+            raise ValueError(f"Can only buy Magic or Rare bases for reforging")
+        self.reforge_stock[rarity] = self.reforge_stock.get(rarity, 0) + count
 
 
     def _roll_corruption_implicit(self) -> ModInstance | None:
