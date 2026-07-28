@@ -727,7 +727,8 @@ def cmd_sim(argv: list[str]) -> int:
                         _UNPRICED_PENALTY = 100.0  # chaos per use — ~1 divine, discourages unknown items
                         unpriced_penalty = _UNPRICED_PENALTY * count
                         total_cost += unpriced_penalty
-                        print(f"    {lookup_name:38} ×{count:3}  @ {_YELLOW}~{_UNPRICED_PENALTY:.0f}c (no price){_RESET} = {unpriced_penalty:.1f}c")
+                        print(f"    {lookup_name:38} ×{count:3}  "
+                              f"@ {_YELLOW}~{_UNPRICED_PENALTY:.0f}c PENALTY (no price in DB){_RESET} = {unpriced_penalty:.1f}c")
                 print(f"  {'─' * 55}")
                 print(f"  {_BOLD}Total estimated cost: {total_cost:.1f} chaos{_RESET}")
 
