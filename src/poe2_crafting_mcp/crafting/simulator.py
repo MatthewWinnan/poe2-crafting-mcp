@@ -39,6 +39,9 @@ class ItemState:
     mods: list[ModInstance] = field(default_factory=list)
     corrupted: bool = False
     essence_mod_family: str | None = None  # tracks which family is the essence mod (one per item)
+    quality: int = 0                       # 0-20 (23 max via corruption)
+    sockets: list[str] = field(default_factory=list)  # names of socketed items (runes/cores/idols)
+    max_sockets: int = 0                   # determined by slot type (can increase via Vaal)
 
     @property
     def prefixes(self) -> list[ModInstance]:
@@ -77,6 +80,10 @@ class ItemState:
         return self.open_prefixes + self.open_suffixes
 
     @property
+    def open_sockets(self) -> int:
+        return max(0, self.max_sockets - len(self.sockets))
+
+    @property
     def families_on_item(self) -> set[str]:
         return {m.family for m in self.mods}
 
@@ -94,6 +101,9 @@ class ItemState:
             mods=[ModInstance(**m.__dict__) for m in self.mods],
             corrupted=self.corrupted,
             essence_mod_family=self.essence_mod_family,
+            quality=self.quality,
+            sockets=list(self.sockets),
+            max_sockets=self.max_sockets,
         )
 
 
@@ -133,7 +143,68 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     # Requires 2 spare bases (reforge_stock >= 2). Consumes current item + 2 spares.
     # Output: fresh Rare with 4 random mods (same base type, lowest ilvl).
     "reforge":           {"op": "reforge", "qty": 4, "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Normal", "Magic", "Rare"]},
+    # Quality currencies
+    "armourers_scrap":   {"op": "quality", "qty": 5, "slot_type": "armour"},
+    "blacksmiths_whetstone": {"op": "quality", "qty": 5, "slot_type": "weapon"},
+    # Socket currency
+    "artificer":         {"op": "add_socket"},
+    # Corruption
+    "vaal":              {"op": "corrupt"},
 }
+
+# ── Max Sockets by Item Slot ──────────────────────────────────────────────────
+# Normal max sockets. Vaal Orb can add +1 beyond this.
+
+MAX_SOCKETS_BY_SLOT: dict[str, int] = {
+    # Two-handed weapons: 2 sockets
+    "Bow": 2, "Crossbow": 2, "Two Hand Sword": 2, "Two Hand Axe": 2,
+    "Two Hand Mace": 2, "Quarterstaff": 2, "Staff": 2, "Talisman": 2,
+    # Body Armour: 2 sockets
+    "Body Armour": 2,
+    # One-handed weapons: 1 socket
+    "One Hand Sword": 1, "One Hand Axe": 1, "One Hand Mace": 1,
+    "Dagger": 1, "Claw": 1, "Flail": 1, "Spear": 1,
+    "Wand": 1, "Sceptre": 1,
+    # Armour pieces: 1 socket
+    "Helmet": 1, "Gloves": 1, "Boots": 1,
+    # Off-hand: 1 socket
+    "Shield": 1, "Focus": 1, "Buckler": 1,
+    # Jewellery/Quiver: 0 sockets
+    "Ring": 0, "Amulet": 0, "Belt": 0, "Quiver": 0,
+}
+
+
+def get_max_sockets_for_item_class(item_class: str) -> int:
+    """Determine default max sockets from item_class."""
+    from poe2_crafting_mcp.crafting.desecration import get_bone_slot_for_item_class
+    # Try direct slot name first (for item_classes that ARE slot names)
+    if item_class in MAX_SOCKETS_BY_SLOT:
+        return MAX_SOCKETS_BY_SLOT[item_class]
+    # Map item_class to slot
+    # Import here to avoid circular
+    slot_map = {
+        "Bows": "Bow", "Crossbows": "Crossbow", "Daggers": "Dagger",
+        "Claws": "Claw", "Flails": "Flail", "Spears": "Spear",
+        "Quarterstaves": "Quarterstaff", "Sceptres": "Sceptre",
+        "Wands": "Wand", "Staves": "Staff", "Rings": "Ring",
+        "Amulets": "Amulet", "Belts": "Belt", "Quivers": "Quiver",
+        "Talismans": "Talisman", "Traps": "Talisman",
+        "Foci": "Focus", "Bucklers": "Buckler",
+        "One_Hand_Swords": "One Hand Sword", "Two_Hand_Swords": "Two Hand Sword",
+        "One_Hand_Axes": "One Hand Axe", "Two_Hand_Axes": "Two Hand Axe",
+        "One_Hand_Maces": "One Hand Mace", "Two_Hand_Maces": "Two Hand Mace",
+    }
+    if item_class in slot_map:
+        return MAX_SOCKETS_BY_SLOT.get(slot_map[item_class], 0)
+    # Armour with attribute suffixes (e.g. Body_Armours_str, Gloves_int)
+    for prefix, slot in [
+        ("Body_Armours", "Body Armour"), ("Boots", "Boots"),
+        ("Gloves", "Gloves"), ("Helmets", "Helmet"),
+        ("Shields", "Shield"),
+    ]:
+        if item_class.startswith(prefix):
+            return MAX_SOCKETS_BY_SLOT.get(slot, 0)
+    return 0
 
 # Omen gentype_only: 1=prefix, 2=suffix
 # Multiple omens can be active simultaneously — their effects stack.
@@ -199,7 +270,10 @@ class CraftingSimulator:
         """
         self.item_class = item_class
         self.ilvl = ilvl
-        self.item = ItemState(item_class=item_class, ilvl=ilvl, rarity="Rare")
+        self.item = ItemState(
+            item_class=item_class, ilvl=ilvl, rarity="Rare",
+            max_sockets=get_max_sockets_for_item_class(item_class),
+        )
 
         # Reforging: tracks spare bases available for 3-to-1 recycling.
         # Each failed craft that gets scoured/discarded adds 1 to this count.
@@ -801,6 +875,50 @@ class CraftingSimulator:
         elif op == "divine":
             pass  # Values reroll within tier — doesn't change mod structure
 
+        elif op == "quality":
+            # Add quality to item (5% per use, max 20)
+            if self.item.quality >= 20:
+                raise ValueError("Item already at maximum quality (20%)")
+            self.item.quality = min(20, self.item.quality + cur.get("qty", 5))
+
+        elif op == "add_socket":
+            # Artificer's Orb: always adds 1 socket (guaranteed)
+            if self.item.corrupted:
+                raise ValueError("Cannot add socket to corrupted item")
+            if len(self.item.sockets) >= self.item.max_sockets:
+                raise ValueError(
+                    f"Item at max sockets ({self.item.max_sockets}). "
+                    f"Use Vaal Orb for a chance at +1 beyond max."
+                )
+            # Socket is added as empty (no augment placed yet)
+            self.item.sockets.append("")
+
+        elif op == "corrupt":
+            # Vaal Orb: corrupts item with random outcome
+            if self.item.corrupted:
+                raise ValueError("Item is already corrupted")
+            self.item.corrupted = True
+            # Possible outcomes (simplified model):
+            # 1. Nothing changes (just adds corrupted tag) — ~25%
+            # 2. Reroll all mods (brick) — ~25%
+            # 3. Add enchantment / change implicits — ~25%
+            # 4. Add socket beyond max — ~25%
+            # For simulation: pick random outcome
+            outcome = random.choice(["nothing", "brick", "enchant", "socket"])
+            if outcome == "brick":
+                # Reroll all mods randomly
+                self.item.mods = [m for m in self.item.mods if m.fractured]
+                for _ in range(random.randint(3, 6)):
+                    if self.item.open_affixes > 0:
+                        mod = self.roll_mod()
+                        if mod:
+                            self.item.mods.append(mod)
+            elif outcome == "socket":
+                # Add +1 socket beyond normal max
+                self.item.max_sockets += 1
+                self.item.sockets.append("")
+            # "nothing" and "enchant" don't change mod structure
+
         return self.item
 
 
@@ -815,6 +933,7 @@ class CraftingSimulator:
             item_class=self.item_class,
             ilvl=self.ilvl,
             rarity="Normal",
+            max_sockets=get_max_sockets_for_item_class(self.item_class),
         )
 
     def buy_base(self, count: int = 1) -> None:

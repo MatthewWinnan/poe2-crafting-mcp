@@ -469,6 +469,7 @@ def cmd_sim(argv: list[str]) -> int:
 
     from poe2_crafting_mcp.crafting.simulator import (
         CraftingSimulator, ItemState, ModInstance, CURRENCIES, OMENS,
+        get_max_sockets_for_item_class,
     )
     from poe2_crafting_mcp.crafting.desecration import DesecrationEngine, BONES, get_bone_slot_for_item_class
     from poe2_crafting_mcp.data.price_db import PriceDatabase
@@ -490,6 +491,9 @@ def cmd_sim(argv: list[str]) -> int:
             mods=[ModInstance(**m) for m in state["mods"]],
             corrupted=state.get("corrupted", False),
             essence_mod_family=state.get("essence_mod_family"),
+            quality=state.get("quality", 0),
+            sockets=state.get("sockets", []),
+            max_sockets=state.get("max_sockets", 0),
         )
         history = state.get("history", [])
         base_name = state.get("base_name", item_class)
@@ -501,7 +505,10 @@ def cmd_sim(argv: list[str]) -> int:
             print(f"{_RED}Cannot resolve '{args.base}' to an item class.{_RESET}")
             return 1
         ilvl = args.ilvl
-        item = ItemState(item_class=item_class, ilvl=ilvl, rarity="Normal")
+        item = ItemState(
+            item_class=item_class, ilvl=ilvl, rarity="Normal",
+            max_sockets=get_max_sockets_for_item_class(item_class),
+        )
         base_name = args.base
         print(f"  {_GREEN}Created: {base_name} ({item_class}, ilvl {ilvl}){_RESET}")
     else:
@@ -565,6 +572,9 @@ def cmd_sim(argv: list[str]) -> int:
                     mods=[ModInstance(**m) for m in state["mods"]],
                     corrupted=state.get("corrupted", False),
                     essence_mod_family=state.get("essence_mod_family"),
+                    quality=state.get("quality", 0),
+                    sockets=state.get("sockets", []),
+                    max_sockets=state.get("max_sockets", 0),
                 )
                 sim = CraftingSimulator.from_db(item_class, ilvl)
                 sim.item = item
@@ -787,6 +797,75 @@ def cmd_sim(argv: list[str]) -> int:
             except ValueError as e:
                 print(f"  {_RED}Error: {e}{_RESET}")
 
+        elif cmd == "socket":
+            # Socket an augment item (rune/soul core/idol)
+            if len(parts) < 2:
+                print(f"  {_RED}Usage: socket <item_name>{_RESET}")
+                print(f"  {_DIM}Example: socket Greater Body Rune{_RESET}")
+                continue
+            socketable_name = " ".join(parts[1:])
+            # Find an empty socket slot to fill
+            empty_idx = next((i for i, s in enumerate(item.sockets) if not s), None)
+            if empty_idx is None:
+                print(f"  {_RED}No empty sockets. All {len(item.sockets)} sockets are filled.{_RESET}")
+                if len(item.sockets) < item.max_sockets:
+                    print(f"  {_DIM}Use 'artificer' to add a new socket first.{_RESET}")
+                continue
+            item.sockets[empty_idx] = socketable_name
+            history.append({"action": f"socket:{socketable_name}", "omens": []})
+            print(f"  {_GREEN}Socketed: {socketable_name}{_RESET}")
+            _print_item(item, base_name)
+
+        elif cmd == "unsocket":
+            # Remove a socketable by index or name
+            if not any(s for s in item.sockets if s):
+                print(f"  {_DIM}No socketed items to remove.{_RESET}")
+                continue
+            if len(parts) > 1:
+                target = " ".join(parts[1:])
+                for i, s in enumerate(item.sockets):
+                    if s.lower() == target.lower():
+                        item.sockets[i] = ""
+                        print(f"  {_DIM}Removed: {target}{_RESET}")
+                        break
+                else:
+                    print(f"  {_RED}'{target}' not found in sockets.{_RESET}")
+            else:
+                # Remove last socketed item
+                for i in range(len(item.sockets) - 1, -1, -1):
+                    if item.sockets[i]:
+                        print(f"  {_DIM}Removed: {item.sockets[i]}{_RESET}")
+                        item.sockets[i] = ""
+                        break
+            history.append({"action": "unsocket", "omens": []})
+            _print_item(item, base_name)
+
+        elif cmd == "artificer":
+            # Add a socket via Artificer's Orb
+            try:
+                sim.apply_currency("artificer")
+                item = sim.item
+                history.append({"action": "artificer", "omens": []})
+                print(f"  {_GREEN}Socket added ({len(item.sockets)}/{item.max_sockets}){_RESET}")
+                _print_item(item, base_name)
+            except ValueError as e:
+                print(f"  {_RED}Error: {e}{_RESET}")
+
+        elif cmd == "quality":
+            # Apply quality currency
+            slot_cat = get_bone_slot_for_item_class(item_class)
+            if slot_cat == "weapon":
+                cur_key = "blacksmiths_whetstone"
+            else:
+                cur_key = "armourers_scrap"
+            try:
+                sim.apply_currency(cur_key)
+                item = sim.item
+                history.append({"action": cur_key, "omens": []})
+                print(f"  {_GREEN}Quality: {item.quality}%{_RESET}")
+            except ValueError as e:
+                print(f"  {_RED}Error: {e}{_RESET}")
+
         elif cmd == "desecrate":
             bone = parts[1] if len(parts) > 1 else "preserved_rib"
             omens_str = _parse_flag(parts, "--omens")
@@ -895,8 +974,9 @@ def cmd_sim(argv: list[str]) -> int:
 
 def _print_item(item: ItemState, base_name: str) -> None:
     """Pretty-print current item state."""
-    print(f"  {_BOLD}{base_name}{_RESET} ({item.rarity}, ilvl {item.ilvl})"
-          f"{'  [CORRUPTED]' if item.corrupted else ''}")
+    corrupt_str = "  [CORRUPTED]" if item.corrupted else ""
+    quality_str = f"  Q{item.quality}%" if item.quality > 0 else ""
+    print(f"  {_BOLD}{base_name}{_RESET} ({item.rarity}, ilvl {item.ilvl}){quality_str}{corrupt_str}")
     if not item.mods:
         print(f"  {_DIM}(no mods){_RESET}")
     else:
@@ -912,7 +992,15 @@ def _print_item(item: ItemState, base_name: str) -> None:
             if mark_str:
                 mark_str = " " + mark_str
             print(f"    {m.affix_type:6} T{m.tier} | {m.family:25} | {m.stat_text}{mark_str}")
-    print(f"  {_DIM}Slots: {item.open_prefixes}P / {item.open_suffixes}S open{_RESET}")
+    # Sockets
+    socket_filled = [s for s in item.sockets if s]
+    socket_empty = len(item.sockets) - len(socket_filled)
+    socket_info = f"  Sockets: {len(item.sockets)}/{item.max_sockets}"
+    if socket_filled:
+        socket_info += f" [{', '.join(socket_filled)}]"
+    if socket_empty > 0:
+        socket_info += f" ({socket_empty} empty)"
+    print(f"  {_DIM}Slots: {item.open_prefixes}P / {item.open_suffixes}S open | {socket_info}{_RESET}")
 
 
 def _serialize_item(
@@ -939,6 +1027,9 @@ def _serialize_item(
             }
             for m in item.mods
         ],
+        "quality": item.quality,
+        "sockets": item.sockets,
+        "max_sockets": item.max_sockets,
         "history": history,
     }
 
