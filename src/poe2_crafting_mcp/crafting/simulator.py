@@ -1033,26 +1033,29 @@ class CraftingSimulator:
         self, essence_family: str, min_lv: int = 0, gentype_only: int = 0,
         essence_stat_text: str = "",
     ) -> None:
-        """Essence upgrade: Normal→Magic (lesser/normal) or Magic→Rare (greater).
+        """Essence upgrade: Magic → Rare with guaranteed mod + random fill to 4.
 
-        Lesser/Normal: gives 1 guaranteed mod on Magic item.
-        Greater: gives 1 guaranteed mod + random fill to 4 mods on Rare item.
+        All essence tiers (Lesser/Normal/Greater) work the same:
+        - Requires Magic item
+        - Upgrades to Rare
+        - Keeps existing Magic mods
+        - Adds 1 guaranteed essence mod
+        - Fills remaining slots randomly to 4 total mods
 
         Family blocking: cannot use if essence_family is already on item
-        as a fractured (permanent) mod that won't be cleared.
+        (game prevents using an essence whose guaranteed mod shares a family
+        with an existing mod on the item).
         """
         if not essence_family:
             raise ValueError("essence_family required for essence operations")
 
-        # Family blocking: only block if the family is fractured on item
-        # (non-fractured mods will be cleared during the upgrade process)
-        existing_family_mod = next(
-            (m for m in self.item.mods if m.family == essence_family and m.fractured), None
-        )
-        if existing_family_mod and essence_family != self.item.essence_mod_family:
-            raise ValueError(
-                f"Cannot use essence: family '{essence_family}' is fractured on item"
-            )
+        # Family blocking: game won't let you use essence if the guaranteed
+        # family already exists on the item (regardless of fractured status)
+        if essence_family in self.item.families_on_item:
+            if essence_family != self.item.essence_mod_family:
+                raise ValueError(
+                    f"Cannot use essence: family '{essence_family}' already on item"
+                )
 
         # If item already has an essence mod, remove it (one per item rule)
         if self.item.essence_mod_family:
@@ -1067,7 +1070,8 @@ class CraftingSimulator:
             self.item.mods.append(essence_mod)
             self.item.essence_mod_family = essence_family
 
-        # Fill remaining slots randomly if upgrading to Rare (greater essence)
+        # Fill remaining slots randomly to 4 total mods
+        # (existing Magic mods are kept, essence mod counted, rest filled)
         if self.item.rarity == "Rare":
             target_count = 4
             while len(self.item.mods) < target_count and self.item.open_affixes > 0:
