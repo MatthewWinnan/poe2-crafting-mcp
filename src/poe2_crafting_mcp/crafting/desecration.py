@@ -337,7 +337,11 @@ class DesecrationEngine:
         item: ItemState,
         omens: list[str] | None = None,
     ) -> list[DesecrationOption]:
-        """Get the pool from which reveal options will be drawn."""
+        """Get the pool from which reveal options will be drawn.
+        
+        If no desecrated mods exist for the determined affix_type,
+        falls back to the other type (some slots only have suffix desecrated mods).
+        """
         from poe2_crafting_mcp.crafting.simulator import OMENS
 
         bone_def = BONES.get(bone, {})
@@ -354,7 +358,7 @@ class DesecrationEngine:
         # Family blocking: exclude families already on item
         blocked_families = item.families_on_item
 
-        return get_desecration_pool(
+        pool = get_desecration_pool(
             db_path=self._db_path,
             item_class=item_class,
             ilvl=ilvl,
@@ -363,6 +367,21 @@ class DesecrationEngine:
             faction=faction,
             blocked_families=blocked_families,
         )
+
+        # Fallback: if no mods exist for this affix type, try the other
+        if not pool:
+            other_type = "suffix" if affix_type == "prefix" else "prefix"
+            pool = get_desecration_pool(
+                db_path=self._db_path,
+                item_class=item_class,
+                ilvl=ilvl,
+                affix_type=other_type,
+                min_mod_level=min_mod_level,
+                faction=faction,
+                blocked_families=blocked_families,
+            )
+
+        return pool
 
     def reveal(
         self,
