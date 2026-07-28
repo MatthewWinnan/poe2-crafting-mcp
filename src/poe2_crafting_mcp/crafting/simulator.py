@@ -1070,16 +1070,9 @@ class CraftingSimulator:
             self.item.mods.append(essence_mod)
             self.item.essence_mod_family = essence_family
 
-        # Fill remaining slots randomly to 4 total mods
-        # (existing Magic mods are kept, essence mod counted, rest filled)
-        if self.item.rarity == "Rare":
-            target_count = 4
-            while len(self.item.mods) < target_count and self.item.open_affixes > 0:
-                mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
-                if mod:
-                    self.item.mods.append(mod)
-                else:
-                    break
+        # No random fill — essence only adds the 1 guaranteed mod.
+        # The item keeps its existing Magic mods + the essence mod.
+        # Result: 2-3 mods total (1-2 from Magic + 1 essence).
 
     def _apply_essence_swap(
         self, essence_family: str, del_gentype_only: int = 0,

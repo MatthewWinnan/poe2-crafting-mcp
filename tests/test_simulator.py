@@ -155,12 +155,15 @@ class TestLesserNormalEssence:
         assert "IncreasedLife" in families
 
     def test_lesser_fills_to_4_mods(self):
-        """Lesser essence fills to 4 mods (same as greater)."""
+        """Lesser essence adds 1 guaranteed mod only (no random fill)."""
         sim = _make_sim()
         sim.item.rarity = "Magic"
+        _add_mod(sim, "FireResist")  # existing Magic mod
         random.seed(42)
         sim.apply_currency("lesser_essence", essence_family="IncreasedLife")
-        assert len(sim.item.mods) == 4
+        # Should have 2 mods: existing FireResist + guaranteed IncreasedLife
+        assert len(sim.item.mods) == 2
+        assert {m.family for m in sim.item.mods} == {"FireResist", "IncreasedLife"}
 
     def test_normal_essence_same_behavior(self):
         """Normal essence also upgrades Magic → Rare."""
@@ -200,12 +203,16 @@ class TestGreaterEssence:
         families = {m.family for m in sim.item.mods}
         assert "IncreasedLife" in families
 
-    def test_fills_to_4_mods(self):
+    def test_adds_only_guaranteed_mod(self):
+        """Greater essence adds 1 guaranteed mod, no random fill."""
         sim = _make_sim()
         sim.item.rarity = "Magic"
+        _add_mod(sim, "FireResist")
         random.seed(42)
         sim.apply_currency("greater_essence", essence_family="IncreasedLife")
-        assert len(sim.item.mods) == 4
+        # Should have 2 mods: existing + guaranteed
+        assert len(sim.item.mods) == 2
+        assert {m.family for m in sim.item.mods} == {"FireResist", "IncreasedLife"}
 
     def test_tracks_essence_mod(self):
         sim = _make_sim()
