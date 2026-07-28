@@ -339,15 +339,19 @@ class DesecrationEngine:
     ) -> list[DesecrationOption]:
         """Get the pool from which reveal options will be drawn.
         
-        If no desecrated mods exist for the determined affix_type,
-        falls back to the other type (some slots only have suffix desecrated mods).
+        The reveal pool is: normal mod pool + desecrated-exclusive (lich) mods.
+        This matches game behavior where reveals can show normal mods (Life, Res, etc.)
+        AND abyss-exclusive mods (Kurgal/Amanamu/Ulaman).
+        
+        If no mods exist for the determined affix_type in either pool,
+        falls back to the other type.
         """
         from poe2_crafting_mcp.crafting.simulator import OMENS
 
         bone_def = BONES.get(bone, {})
         min_mod_level = bone_def.get("min_mod_level", 0)
 
-        # Check for lich omen → faction filter
+        # Check for lich omen → faction filter (only applies to desecrated-exclusive mods)
         faction = ""
         if omens:
             for omen_key in omens:
@@ -358,30 +362,112 @@ class DesecrationEngine:
         # Family blocking: exclude families already on item
         blocked_families = item.families_on_item
 
-        pool = get_desecration_pool(
-            db_path=self._db_path,
-            item_class=item_class,
-            ilvl=ilvl,
-            affix_type=affix_type,
-            min_mod_level=min_mod_level,
-            faction=faction,
-            blocked_families=blocked_families,
-        )
-
-        # Fallback: if no mods exist for this affix type, try the other
-        if not pool:
-            other_type = "suffix" if affix_type == "prefix" else "prefix"
+        # If lich omen active, only draw from desecrated-exclusive pool (that faction)
+        if faction:
             pool = get_desecration_pool(
                 db_path=self._db_path,
                 item_class=item_class,
                 ilvl=ilvl,
-                affix_type=other_type,
+                affix_type=affix_type,
                 min_mod_level=min_mod_level,
                 faction=faction,
                 blocked_families=blocked_families,
             )
+        else:
+            # Normal reveal: combine normal pool + desecrated-exclusive pool
+            # Desecrated-exclusive mods (lich mods)
+            desecrated_mods = get_desecration_pool(
+                db_path=self._db_path,
+                item_class=item_class,
+                ilvl=ilvl,
+                affix_type=affix_type,
+                min_mod_level=min_mod_level,
+                faction="",
+                blocked_families=blocked_families,
+            )
+            # Normal pool mods (same as what exalts roll from)
+            normal_mods = self._get_normal_pool_as_desecration_options(
+                item_class, ilvl, affix_type, min_mod_level, blocked_families
+            )
+            pool = normal_mods + desecrated_mods
+
+        # Fallback: if no mods exist for this affix type, try the other
+        if not pool:
+            other_type = "suffix" if affix_type == "prefix" else "prefix"
+            if faction:
+                pool = get_desecration_pool(
+                    db_path=self._db_path,
+                    item_class=item_class,
+                    ilvl=ilvl,
+                    affix_type=other_type,
+                    min_mod_level=min_mod_level,
+                    faction=faction,
+                    blocked_families=blocked_families,
+                )
+            else:
+                desecrated_mods = get_desecration_pool(
+                    db_path=self._db_path,
+                    item_class=item_class,
+                    ilvl=ilvl,
+                    affix_type=other_type,
+                    min_mod_level=min_mod_level,
+                    faction="",
+                    blocked_families=blocked_families,
+                )
+                normal_mods = self._get_normal_pool_as_desecration_options(
+                    item_class, ilvl, other_type, min_mod_level, blocked_families
+                )
+                pool = normal_mods + desecrated_mods
 
         return pool
+
+    def _get_normal_pool_as_desecration_options(
+        self,
+        item_class: str,
+        ilvl: int,
+        affix_type: str,
+        min_mod_level: int,
+        blocked_families: set[str],
+    ) -> list[DesecrationOption]:
+        """Get normal pool mods formatted as DesecrationOptions for reveal merging."""
+        import json as _json
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+
+        q = """
+            SELECT mod_family, affix_type, stat_text, req_level, tags
+            FROM mod_weights
+            WHERE pool = 'normal'
+              AND item_class = ?
+              AND affix_type = ?
+              AND req_level <= ?
+              AND req_level >= ?
+        """
+        rows = conn.execute(q, (item_class, affix_type, ilvl, min_mod_level)).fetchall()
+        conn.close()
+
+        # Deduplicate by family (take best tier per family)
+        best_by_family: dict[str, dict] = {}
+        for row in rows:
+            family = row["mod_family"]
+            if family in blocked_families:
+                continue
+            if family not in best_by_family or row["req_level"] > best_by_family[family]["req_level"]:
+                best_by_family[family] = dict(row)
+
+        results: list[DesecrationOption] = []
+        for family, data in best_by_family.items():
+            results.append(DesecrationOption(
+                family=family,
+                affix_type=data["affix_type"],
+                tier=1,
+                req_level=data["req_level"],
+                stat_text=data["stat_text"],
+                faction="",  # normal mods have no faction
+                tags=_json.loads(data["tags"]) if data["tags"] else [],
+            ))
+
+        return results
 
     def reveal(
         self,

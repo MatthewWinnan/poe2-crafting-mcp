@@ -710,14 +710,49 @@ def cmd_sim(argv: list[str]) -> int:
         elif cmd == "pool":
             # Show available pool summary
             affix = parts[1] if len(parts) > 1 else ""
-            pool = sim.get_available_pool(gentype_only=1 if affix == "prefix" else 2 if affix == "suffix" else 0)
+            min_lv_str = _parse_flag(parts, "--min")
+            min_lv = int(min_lv_str) if min_lv_str else 0
+            pool = sim.get_available_pool(
+                min_mod_level=min_lv,
+                gentype_only=1 if affix == "prefix" else 2 if affix == "suffix" else 0,
+            )
             by_family: dict[str, list] = {}
             for m in pool:
                 by_family.setdefault(m['family'], []).append(m)
-            print(f"  {_BOLD}Available pool ({len(pool)} tiers, {len(by_family)} families):{_RESET}")
+            label = f"{affix + ' ' if affix else ''}pool"
+            if min_lv:
+                label += f" (min_lv={min_lv})"
+            print(f"  {_BOLD}Available {label} ({len(pool)} tiers, {len(by_family)} families):{_RESET}")
             for fam, mods in sorted(by_family.items(), key=lambda x: -sum(m['weight'] for m in x[1])):
                 total_w = sum(m['weight'] for m in mods)
-                print(f"    {fam:30} weight={total_w:5} ({len(mods)} tiers)")
+                best_stat = mods[0]['stat_text'] if mods else ""
+                print(f"    {fam:30} weight={total_w:5} ({len(mods)} tiers) {_DIM}{best_stat}{_RESET}")
+
+        elif cmd in ("dpool", "desecrate-pool"):
+            # Show desecration reveal pool (normal + desecrated-exclusive)
+            affix = parts[1] if len(parts) > 1 else ""
+            omens_str = _parse_flag(parts, "--omens")
+            active_omens = omens_str.split(",") if omens_str else []
+
+            # Determine affix type
+            if affix in ("prefix", "suffix"):
+                affix_type = affix
+            else:
+                affix_type = ""  # show both
+
+            from poe2_crafting_mcp.crafting.desecration import DesecrationEngine as _DE
+            _de = _DE()
+            
+            for at in ([affix_type] if affix_type else ["prefix", "suffix"]):
+                pool = _de.get_reveal_pool(item_class, ilvl, at, "preserved_rib", item, omens=active_omens or None)
+                normal_count = len([p for p in pool if not p.faction])
+                lich_count = len([p for p in pool if p.faction])
+                print(f"  {_BOLD}Desecrate reveal pool ({at}, {len(pool)} options: "
+                      f"{normal_count} normal + {lich_count} abyss-exclusive):{_RESET}")
+                for p in sorted(pool, key=lambda x: (x.faction or "zzz", x.family)):
+                    faction_tag = f" [{p.faction}]" if p.faction else ""
+                    print(f"    {p.affix_type:6} | {p.family:28} | {p.stat_text}{faction_tag}")
+                print()
 
         elif cmd == "currencies":
             # Show which currencies are valid for current item state
