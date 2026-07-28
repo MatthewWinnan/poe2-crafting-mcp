@@ -2011,6 +2011,140 @@ def _cmd_seed_all(argv: list[str]) -> int:
     return 0
 
 
+# ── Omens ──────────────────────────────────────────────────────────────────────
+
+def _cmd_omens(argv: list[str]) -> int:
+    """List and search omens with their effects and prices."""
+    from poe2_crafting_mcp.crafting.simulator import OMENS
+    from poe2_crafting_mcp.data.price_db import PriceDatabase
+
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup omens",
+        description="Search omens by name or keyword. Shows effect + price.",
+    )
+    p.add_argument("query", nargs="?", default="", help="Search term (e.g. 'sinistral', 'exalt', 'annul')")
+    p.add_argument("--crafting", action="store_true", help="Show only crafting-relevant omens")
+    args = p.parse_args(argv)
+
+    pdb = PriceDatabase()
+    query = args.query.lower()
+
+    # Build omen descriptions from OMENS dict
+    omen_info: dict[str, dict] = {}
+    for key, defn in OMENS.items():
+        display_name = "Omen of " + key.replace("_", " ").title()
+        # Fix common name patterns
+        display_name = display_name.replace("Sinistral ", "Sinistral ").replace("Dextral ", "Dextral ")
+
+        effects = []
+        if defn.get("gentype_only") == 1:
+            effects.append("forces PREFIX")
+        elif defn.get("gentype_only") == 2:
+            effects.append("forces SUFFIX")
+        if defn.get("del_gentype_only") == 1:
+            effects.append("removes PREFIX only")
+        elif defn.get("del_gentype_only") == 2:
+            effects.append("removes SUFFIX only")
+        if defn.get("qty_override"):
+            effects.append(f"adds {defn['qty_override']} mods")
+        if defn.get("homogenise"):
+            effects.append("shared tags only")
+        if defn.get("del_target"):
+            effects.append(f"removes {defn['del_target']}")
+        if defn.get("catalyse"):
+            effects.append("consumes catalyst quality → bias weights")
+        if defn.get("force_outcome"):
+            effects.append("Vaal always results in change")
+        if defn.get("implicit_only"):
+            effects.append("Divine rerolls implicits only")
+        if defn.get("sanctify"):
+            effects.append("Divine sanctifies (80-120% rolls, locks)")
+        if defn.get("lucky"):
+            effects.append("recombination rolls twice (lucky)")
+        if defn.get("desecrated_only"):
+            effects.append("annulment targets desecrated mods only")
+        if defn.get("reroll_reveal"):
+            effects.append("reveal gives reroll (6 choices)")
+        if defn.get("replace_all"):
+            effects.append("replace ALL mods with desecrated + corrupt")
+        if defn.get("lich_pool"):
+            effects.append(f"guarantees {defn['lich_pool']} mod")
+
+        applies_to = defn.get("applies_to", [])
+        effect_str = ", ".join(effects) if effects else "special"
+
+        omen_info[key] = {
+            "key": key,
+            "display_name": display_name,
+            "applies_to": applies_to,
+            "effect": effect_str,
+        }
+
+    # Get prices from DB
+    price_rows = pdb._conn.execute(
+        "SELECT name, chaos_value FROM prices WHERE name LIKE '%Omen%'"
+    ).fetchall()
+    price_map = {r[0].lower(): r[1] for r in price_rows}
+
+    # Match prices to our omens
+    for key, info in omen_info.items():
+        # Try to find price by display name
+        display_lower = info["display_name"].lower()
+        info["price"] = price_map.get(display_lower)
+        if info["price"] is None:
+            # Try fuzzy: "Omen of Sinistral Exaltation" matches price key
+            for pname, pval in price_map.items():
+                if key.replace("_", " ") in pname:
+                    info["price"] = pval
+                    break
+
+    # Also add omens from prices that aren't in our OMENS dict (non-crafting)
+    if not args.crafting:
+        for price_name, chaos in price_map.items():
+            # Check if already captured
+            matched = any(price_name in info["display_name"].lower() for info in omen_info.values())
+            if not matched and "omen" in price_name:
+                key = price_name.replace("omen of ", "").replace(" ", "_")
+                omen_info[f"_price_{key}"] = {
+                    "key": key,
+                    "display_name": price_name.title(),
+                    "applies_to": [],
+                    "effect": "(non-crafting)",
+                    "price": chaos,
+                }
+
+    # Filter by query
+    results = []
+    for info in omen_info.values():
+        if query:
+            searchable = f"{info['display_name']} {info['effect']} {' '.join(info['applies_to'])}".lower()
+            if query not in searchable:
+                continue
+        results.append(info)
+
+    # Sort: crafting omens first, then by name
+    results.sort(key=lambda x: (x["effect"] == "(non-crafting)", x["display_name"]))
+
+    if not results:
+        print(f"  No omens match '{query}'.")
+        return 0
+
+    print(f"  {_BOLD}Omens{' matching \"' + args.query + '\"' if query else ''} ({len(results)}):{_RESET}")
+    for info in results:
+        price_str = f"{info['price']:.1f}c" if info.get("price") else "???"
+        applies = ", ".join(info["applies_to"][:3]) if info["applies_to"] else ""
+        print(f"    {info['display_name']:38} {price_str:>8}  {info['effect']}")
+        if applies:
+            print(f"    {' ':38} {' ':8}  applies to: {applies}")
+
+    return 0
+
+
+_OMEN_CMDS = {
+    "omens": _cmd_omens,
+}
+
+
 _GLOBAL_CMDS = {
     "status":   _cmd_status,
     "seed-all": _cmd_seed_all,
@@ -2069,7 +2203,7 @@ def main() -> None:
     # Pre-dispatch: management subcommands bypass the query parser
     if len(sys.argv) > 1:
         _cmd = sys.argv[1]
-        _dispatch = {**_GLOBAL_CMDS, **_CONCEPT_CMDS, **_ITEM_DESC_CMDS, **_MOD_POOL_CMDS}
+        _dispatch = {**_GLOBAL_CMDS, **_CONCEPT_CMDS, **_ITEM_DESC_CMDS, **_MOD_POOL_CMDS, **_OMEN_CMDS}
         if _cmd in _dispatch:
             sys.exit(_dispatch[_cmd](sys.argv[2:]) or 0)
 
