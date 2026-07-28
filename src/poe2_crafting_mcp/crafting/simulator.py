@@ -168,16 +168,20 @@ def _format_with_value(stat_text: str, value: float) -> str:
         prefix_char = result[start - 1] if start > 0 else ""
         suffix_char = result[end] if end < len(result) else ""
         
-        if prefix_char == "+":
-            # +val(range) — replace the + and range together
+        if prefix_char == "+" and suffix_char == "%":
+            # +val%(range) — e.g. +(24-27)% → +27%(24-27)
+            replacement = f"+{val_str}%{range_str}"
+            result = result[:start - 1] + replacement + result[end + 1:]
+        elif prefix_char == "+":
+            # +val(range) — e.g. +(25-27) to Dex → +26(25-27) to Dex
             replacement = f"+{val_str}{range_str}"
             result = result[:start - 1] + replacement + result[end:]
         elif suffix_char == "%":
-            # val%(range) — replace range and %
+            # val%(range) — e.g. (68-79)% → 72%(68-79)
             replacement = f"{val_str}%{range_str}"
             result = result[:start] + replacement + result[end + 1:]
         else:
-            # val(range) — just prepend value
+            # val(range) — plain number
             replacement = f"{val_str}{range_str}"
             result = result[:start] + replacement + result[end:]
     
@@ -954,7 +958,11 @@ class CraftingSimulator:
             self.item.rarity = cur["to_rarity"]
 
         if op == "add":
+            if self.item.open_affixes == 0:
+                raise ValueError(f"No open affix slots ({len(self.item.mods)} mods, item is full)")
             for _ in range(qty):
+                if self.item.open_affixes == 0:
+                    break
                 mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only, homogenise=homogenise)
                 if mod:
                     self.item.mods.append(mod)

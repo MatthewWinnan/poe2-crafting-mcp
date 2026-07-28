@@ -645,7 +645,10 @@ def cmd_sim(argv: list[str]) -> int:
                 min_mods = cur_def.get("min_mods", 0)
                 if min_mods and len(item.mods) < min_mods:
                     continue
-                op = cur_def["op"]
+                op = cur_def.get("op", "")
+                # Skip add/augment if no open slots
+                if op == "add" and item.open_affixes == 0:
+                    continue
                 to_r = cur_def.get("to_rarity", "")
                 rarity_change = f" → {to_r}" if to_r else ""
                 print(f"    {cur_name:25} op={op}{rarity_change}")
