@@ -312,6 +312,7 @@ class DesecrationEngine:
                 item.mods.remove(mark_mod)
                 item.has_abyss_mark = False
                 item.essence_mod_family = None
+                # abyss_mark_min_level stays set — used by get_reveal_pool
                 return item, affix_type
 
         affix_type = self.determine_affix_type(item, gentype_only)
@@ -350,6 +351,11 @@ class DesecrationEngine:
 
         bone_def = BONES.get(bone, {})
         min_mod_level = bone_def.get("min_mod_level", 0)
+
+        # If Abyss Mark was just removed, use its tier floor as minimum
+        # (reveal must be higher tier than the mod the mark replaced)
+        if hasattr(item, 'abyss_mark_min_level') and item.abyss_mark_min_level > min_mod_level:
+            min_mod_level = item.abyss_mark_min_level
 
         # Check for lich omen → faction filter (only applies to desecrated-exclusive mods)
         faction = ""

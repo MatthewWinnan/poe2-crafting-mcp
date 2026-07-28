@@ -202,6 +202,7 @@ class ItemState:
     max_sockets: int = 0                   # determined by slot type (can increase via Vaal)
     corruption_enchantment: str = ""       # DEPRECATED — use implicits list instead
     has_abyss_mark: bool = False           # True if "Mark of the Abyssal Lord" is on item
+    abyss_mark_min_level: int = 0          # req_level of the mod removed by Abyss essence (tier floor for reveal)
     implicits: list[ModInstance] = field(default_factory=list)  # corruption implicits, base implicits
 
     @property
@@ -267,6 +268,7 @@ class ItemState:
             max_sockets=self.max_sockets,
             corruption_enchantment=self.corruption_enchantment,
             has_abyss_mark=self.has_abyss_mark,
+            abyss_mark_min_level=self.abyss_mark_min_level,
             implicits=[ModInstance(**m.__dict__) for m in self.implicits],
         )
 
@@ -1309,6 +1311,9 @@ class CraftingSimulator:
             removable = self._get_removable(effective_del_gentype)
             if removable:
                 to_remove = random.choice(removable)
+                # Track removed mod's level for Abyss mark tier upgrade
+                if essence_family == "EssenceAbyss":
+                    self.item.abyss_mark_min_level = to_remove.req_level
                 self.item.mods.remove(to_remove)
 
         # Add guaranteed essence mod
