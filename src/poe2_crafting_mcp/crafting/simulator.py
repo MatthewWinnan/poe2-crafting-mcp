@@ -32,11 +32,16 @@ class ModInstance:
 
     @property
     def display_text(self) -> str:
-        """Show the rolled value with the range: '32: (31-33) to Dexterity'."""
-        if self.value is not None:
-            # Try to format with the rolled value replacing the range
-            return _format_with_value(self.stat_text, self.value)
-        return self.stat_text
+        """Show the rolled value inline with the range.
+        
+        Examples:
+            '+(25-27) to Dexterity' with value=26 → '+26(25-27) to Dexterity'
+            '(68-79)% increased Energy Shield' with value=72 → '72%(68-79) increased Energy Shield'
+            'Adds (4-6) to (7-11) Physical Damage' → 'Adds 5(4-6) to 9(7-11) Physical Damage'
+        """
+        if self.value is None:
+            return self.stat_text
+        return _format_with_value(self.stat_text, self.value)
 
     def divine(self) -> None:
         """Reroll the value within the stat range (Divine Orb)."""
@@ -49,20 +54,17 @@ class ModInstance:
 
 
 def _parse_stat_range(stat_text: str) -> tuple[float | None, float | None]:
-    """Extract (min, max) numeric range from stat_text.
+    """Extract (min, max) of the FIRST numeric range from stat_text.
     
     Examples:
         '+(25-27) to Dexterity' → (25, 27)
         '(68-79)% increased Energy Shield' → (68, 79)
-        'Adds (4-6) to (7-11) Physical Damage' → (4, 11)  # uses first range
+        'Adds (4-6) to (7-11) Physical Damage' → (4, 6)  # first range only
         '+45 to maximum Life' → (45, 45)  # single value
-        'Gain 5 Life per Enemy Hit' → (5, 5)
     """
     import re
-    # Find all (min-max) patterns
     ranges = re.findall(r'\((\d+(?:\.\d+)?)[—–-](\d+(?:\.\d+)?)\)', stat_text)
     if ranges:
-        # Use the first range found
         return float(ranges[0][0]), float(ranges[0][1])
     
     # Single value patterns: +45, 5%, etc.
@@ -74,33 +76,112 @@ def _parse_stat_range(stat_text: str) -> tuple[float | None, float | None]:
     return None, None
 
 
+def _parse_all_ranges(stat_text: str) -> list[tuple[float, float]]:
+    """Extract ALL (min, max) ranges from stat_text.
+    
+    'Adds (4-6) to (7-11) Physical Damage' → [(4, 6), (7, 11)]
+    '+(25-27) to Dexterity' → [(25, 27)]
+    """
+    import re
+    ranges = re.findall(r'\((\d+(?:\.\d+)?)[—–-](\d+(?:\.\d+)?)\)', stat_text)
+    return [(float(lo), float(hi)) for lo, hi in ranges]
+
+
 def _roll_stat_value(stat_text: str) -> float | None:
-    """Roll a random value within the stat_text range."""
+    """Roll a random value for the first range in stat_text."""
     import random as _rand
     lo, hi = _parse_stat_range(stat_text)
     if lo is None or hi is None:
         return None
     if lo == hi:
         return lo
-    # Roll integer for int ranges, float for decimal ranges
     if lo == int(lo) and hi == int(hi):
         return float(_rand.randint(int(lo), int(hi)))
     return round(_rand.uniform(lo, hi), 2)
 
 
+def _roll_all_values(stat_text: str) -> list[float]:
+    """Roll values for ALL ranges in stat_text."""
+    import random as _rand
+    ranges = _parse_all_ranges(stat_text)
+    values = []
+    for lo, hi in ranges:
+        if lo == hi:
+            values.append(lo)
+        elif lo == int(lo) and hi == int(hi):
+            values.append(float(_rand.randint(int(lo), int(hi))))
+        else:
+            values.append(round(_rand.uniform(lo, hi), 2))
+    return values
+
+
 def _format_with_value(stat_text: str, value: float) -> str:
-    """Format stat_text showing the rolled value alongside the range.
+    """Format stat_text showing rolled values inline with ranges.
     
-    '+(25-27) to Dexterity' with value=26 → '26: +(25-27) to Dexterity'
+    Replaces each (min-max) pattern with value(min-max):
+        '+(25-27) to Dexterity' → '+26(25-27) to Dexterity'
+        '(68-79)% increased ES' → '72%(68-79) increased ES'
+        'Adds (4-6) to (7-11) Phys' → 'Adds 5(4-6) to 9(7-11) Phys'
     """
     import re
-    # Check if it's an integer value
-    if value == int(value):
-        val_str = str(int(value))
-    else:
-        val_str = f"{value:.1f}"
     
-    return f"{val_str}: {stat_text}"
+    ranges = _parse_all_ranges(stat_text)
+    if not ranges:
+        return stat_text
+    
+    # Compute values for each range
+    values: list[float] = [value]
+    if len(ranges) > 1:
+        lo0, hi0 = ranges[0]
+        proportion = (value - lo0) / (hi0 - lo0) if hi0 > lo0 else 0.5
+        for lo, hi in ranges[1:]:
+            derived = lo + proportion * (hi - lo)
+            if lo == int(lo) and hi == int(hi):
+                derived = float(round(derived))
+            else:
+                derived = round(derived, 2)
+            values.append(derived)
+    
+    # Replace ranges right-to-left to preserve positions
+    # Find all range matches with their positions
+    range_pattern = re.compile(r'\((\d+(?:\.\d+)?)[—–-](\d+(?:\.\d+)?)\)')
+    matches = list(range_pattern.finditer(stat_text))
+    
+    if len(matches) != len(values):
+        return stat_text  # safety fallback
+    
+    # Process right-to-left so positions don't shift
+    result = stat_text
+    for match, val in reversed(list(zip(matches, values))):
+        start = match.start()
+        end = match.end()
+        range_str = match.group(0)  # e.g. "(25-27)"
+        
+        # Format value
+        if val == int(val):
+            val_str = str(int(val))
+        else:
+            # Use enough precision to distinguish
+            val_str = f"{val:.2f}".rstrip('0').rstrip('.')
+        
+        # Check context: what's before and after?
+        prefix_char = result[start - 1] if start > 0 else ""
+        suffix_char = result[end] if end < len(result) else ""
+        
+        if prefix_char == "+":
+            # +val(range) — replace the + and range together
+            replacement = f"+{val_str}{range_str}"
+            result = result[:start - 1] + replacement + result[end:]
+        elif suffix_char == "%":
+            # val%(range) — replace range and %
+            replacement = f"{val_str}%{range_str}"
+            result = result[:start] + replacement + result[end + 1:]
+        else:
+            # val(range) — just prepend value
+            replacement = f"{val_str}{range_str}"
+            result = result[:start] + replacement + result[end:]
+    
+    return result
 
 
 @dataclass
