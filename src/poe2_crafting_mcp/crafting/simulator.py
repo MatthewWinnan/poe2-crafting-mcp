@@ -129,8 +129,10 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     "normal_essence":    {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Magic", "from_rarity": ["Normal"]},
     "greater_essence":   {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Magic"]},
     "perfect_essence":   {"op": "essence_swap", "min_lv": 0, "from_rarity": ["Rare"]},
-    # Reforging bench — 3-to-1 recycling, modeled as cost-equivalent alchemy
-    "reforge":           {"op": "reroll", "qty": 4, "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Normal", "Magic", "Rare"]},
+    # Reforging bench — 3-to-1 recycling
+    # Requires 2 spare bases (reforge_stock >= 2). Consumes current item + 2 spares.
+    # Output: fresh Rare with 4 random mods (same base type, lowest ilvl).
+    "reforge":           {"op": "reforge", "qty": 4, "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Normal", "Magic", "Rare"]},
 }
 
 # Omen gentype_only: 1=prefix, 2=suffix
@@ -198,6 +200,11 @@ class CraftingSimulator:
         self.item_class = item_class
         self.ilvl = ilvl
         self.item = ItemState(item_class=item_class, ilvl=ilvl, rarity="Rare")
+
+        # Reforging: tracks spare bases available for 3-to-1 recycling.
+        # Each failed craft that gets scoured/discarded adds 1 to this count.
+        # Reforging consumes 2 spares (current item + 2 spares → 1 new item).
+        self.reforge_stock: int = 0
 
         # Flatten mod pool into a list of all tiers
         self._all_mods: list[dict] = []
@@ -758,6 +765,25 @@ class CraftingSimulator:
             self.item.rarity = "Normal"
             self.item.essence_mod_family = None
 
+        elif op == "reforge":
+            # Reforging bench: 3-to-1. Current item + 2 from stock → fresh Rare.
+            if self.reforge_stock < 2:
+                raise ValueError(
+                    f"Reforge requires 2 spare bases in stock (have {self.reforge_stock}). "
+                    f"Use 'stash' to add failed items to stock, or buy bases."
+                )
+            self.reforge_stock -= 2
+            # Reset item completely (all mods gone, fresh start)
+            self.item.mods = [m for m in self.item.mods if m.fractured]
+            self.item.rarity = "Rare"
+            self.item.essence_mod_family = None
+            # Roll 4 fresh mods (same as alchemy)
+            for _ in range(4):
+                if self.item.open_affixes > 0:
+                    mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
+                    if mod:
+                        self.item.mods.append(mod)
+
         elif op == "essence_upgrade":
             # Greater Essence: Magic → Rare with guaranteed mod + random fill
             self._apply_essence_upgrade(essence_family, min_lv, gentype_only, essence_stat_text)
@@ -776,6 +802,28 @@ class CraftingSimulator:
             pass  # Values reroll within tier — doesn't change mod structure
 
         return self.item
+
+
+    def stash_for_reforge(self) -> None:
+        """Stash current item as a spare base for reforging.
+
+        Increments reforge_stock and resets the item to a fresh Normal state.
+        Used when a craft attempt fails and the item should be recycled.
+        """
+        self.reforge_stock += 1
+        self.item = ItemState(
+            item_class=self.item_class,
+            ilvl=self.ilvl,
+            rarity="Normal",
+        )
+
+    def buy_base(self, count: int = 1) -> None:
+        """Buy fresh bases and add to reforge stock.
+
+        Represents purchasing white bases from trade to fuel reforging.
+        Cost tracking is handled by the caller (optimizer/CLI).
+        """
+        self.reforge_stock += count
 
     def _get_removable(
         self, del_gentype_only: int = 0, del_target: str = ""

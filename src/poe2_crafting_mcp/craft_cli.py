@@ -588,6 +588,31 @@ def cmd_sim(argv: list[str]) -> int:
                         extra += f" bone={h['bone']}"
                     print(f"  {_DIM}{i}.{_RESET} {h['action']}{omens_str}{extra}")
 
+        elif cmd == "stock":
+            # Show reforge stock
+            print(f"  {_BOLD}Reforge stock:{_RESET} {sim.reforge_stock} spare base(s)")
+            if sim.reforge_stock >= 2:
+                print(f"  {_GREEN}Can reforge (need 2 spares + current item){_RESET}")
+            else:
+                need = 2 - sim.reforge_stock
+                print(f"  {_DIM}Need {need} more spare(s) to reforge{_RESET}")
+
+        elif cmd == "stash":
+            # Stash current item as reforge fodder, get fresh Normal
+            sim.stash_for_reforge()
+            item = sim.item
+            history.append({"action": "stash", "omens": []})
+            print(f"  {_DIM}Item stashed for reforging. Stock: {sim.reforge_stock}{_RESET}")
+            print()
+            _print_item(item, base_name)
+
+        elif cmd == "buy_base":
+            # Buy spare bases for reforge stock
+            count = int(parts[1]) if len(parts) > 1 else 1
+            sim.buy_base(count)
+            history.append({"action": f"buy_base:{count}", "omens": []})
+            print(f"  {_DIM}Bought {count} base(s). Stock: {sim.reforge_stock}{_RESET}")
+
         elif cmd == "pool":
             # Show available pool summary
             affix = parts[1] if len(parts) > 1 else ""

@@ -410,6 +410,7 @@ class TestReforge:
     def test_reforge_produces_rare_with_4_mods(self):
         sim = _make_sim()
         sim.item.rarity = "Normal"
+        sim.reforge_stock = 2
         random.seed(42)
         sim.apply_currency("reforge")
         assert sim.item.rarity == "Rare"
@@ -419,6 +420,7 @@ class TestReforge:
         """Reforge accepts Rare items (unlike alchemy which requires Normal)."""
         sim = _make_sim()
         sim.item.rarity = "Rare"
+        sim.reforge_stock = 2
         _add_mod(sim, "IncreasedLife")
         _add_mod(sim, "FireResist")
         random.seed(42)
@@ -429,11 +431,40 @@ class TestReforge:
     def test_reforge_preserves_fractured(self):
         sim = _make_sim()
         sim.item.rarity = "Rare"
+        sim.reforge_stock = 2
         _add_mod(sim, "IncreasedLife", fractured=True)
         _add_mod(sim, "FireResist")
         random.seed(42)
         sim.apply_currency("reforge")
         assert any(m.family == "IncreasedLife" and m.fractured for m in sim.item.mods)
+
+    def test_reforge_requires_stock(self):
+        """Reforge fails without 2 spare bases in stock."""
+        sim = _make_sim()
+        sim.item.rarity = "Rare"
+        sim.reforge_stock = 1  # not enough
+        import pytest
+        with pytest.raises(ValueError, match="Reforge requires 2 spare bases"):
+            sim.apply_currency("reforge")
+
+    def test_reforge_consumes_stock(self):
+        """Reforge decrements stock by 2."""
+        sim = _make_sim()
+        sim.item.rarity = "Rare"
+        sim.reforge_stock = 5
+        random.seed(42)
+        sim.apply_currency("reforge")
+        assert sim.reforge_stock == 3
+
+    def test_stash_for_reforge(self):
+        """Stashing increments stock and resets item."""
+        sim = _make_sim()
+        sim.item.rarity = "Rare"
+        _add_mod(sim, "IncreasedLife")
+        sim.stash_for_reforge()
+        assert sim.reforge_stock == 1
+        assert sim.item.rarity == "Normal"
+        assert len(sim.item.mods) == 0
 
 
 # ── Annulment clears essence tracking ──────────────────────────────────────
