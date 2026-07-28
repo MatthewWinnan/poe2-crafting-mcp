@@ -815,8 +815,9 @@ class CraftingSimulator:
         if not cur:
             raise ValueError(f"Unknown currency: {currency}")
 
-        # Validate: corrupted items can't be modified
-        if self.item.corrupted:
+        # Validate: corrupted items can't be modified (except scour/stash which are conceptual resets)
+        op = cur["op"]
+        if self.item.corrupted and op not in ("scour", "architect_corrupt"):
             raise ValueError("Cannot apply currency to corrupted item")
 
         # Validate: rarity constraint
@@ -865,7 +866,6 @@ class CraftingSimulator:
             if "qty_override" in omen_def:
                 qty = omen_def["qty_override"]
 
-        op = cur["op"]
         min_lv = cur.get("min_lv", 0)
 
         # Rarity change
@@ -913,9 +913,14 @@ class CraftingSimulator:
                         self.item.mods.append(mod)
 
         elif op == "scour":
+            # "Scour" = discard current mods, start over with this base.
+            # This is a conceptual reset, not a PoE2 currency (Orb of Scouring doesn't exist).
+            # Works even on corrupted items (you're discarding it as reforge fodder).
             self.item.mods = [m for m in self.item.mods if m.fractured]
             self.item.rarity = "Normal"
             self.item.essence_mod_family = None
+            self.item.corrupted = False
+            self.item.corruption_enchantment = ""
 
         elif op == "reforge":
             # Reforging bench: 3-to-1. Current item + 2 from stock → fresh Rare.
