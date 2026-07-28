@@ -137,31 +137,45 @@ class TestAlteration:
 # ── Lesser / Normal Essence ──────────────────────────────────────────────────
 
 class TestLesserNormalEssence:
-    def test_lesser_upgrades_normal_to_magic(self):
+    def test_lesser_upgrades_magic_to_rare(self):
+        """Lesser essence upgrades Magic → Rare with guaranteed mod + fill."""
         sim = _make_sim()
-        sim.item.rarity = "Normal"
+        sim.item.rarity = "Magic"
+        random.seed(42)
         sim.apply_currency("lesser_essence", essence_family="IncreasedLife")
-        assert sim.item.rarity == "Magic"
+        assert sim.item.rarity == "Rare"
 
-    def test_lesser_gives_guaranteed_mod_only(self):
-        """Lesser essence gives 1 guaranteed mod, no random fill."""
+    def test_lesser_gives_guaranteed_mod(self):
+        """Lesser essence guarantees the specified mod family."""
         sim = _make_sim()
-        sim.item.rarity = "Normal"
+        sim.item.rarity = "Magic"
+        random.seed(42)
         sim.apply_currency("lesser_essence", essence_family="IncreasedLife")
-        assert len(sim.item.mods) == 1
-        assert sim.item.mods[0].family == "IncreasedLife"
+        families = {m.family for m in sim.item.mods}
+        assert "IncreasedLife" in families
 
-    def test_normal_essence_same_as_lesser(self):
+    def test_lesser_fills_to_4_mods(self):
+        """Lesser essence fills to 4 mods (same as greater)."""
         sim = _make_sim()
-        sim.item.rarity = "Normal"
+        sim.item.rarity = "Magic"
+        random.seed(42)
+        sim.apply_currency("lesser_essence", essence_family="IncreasedLife")
+        assert len(sim.item.mods) == 4
+
+    def test_normal_essence_same_behavior(self):
+        """Normal essence also upgrades Magic → Rare."""
+        sim = _make_sim()
+        sim.item.rarity = "Magic"
+        random.seed(42)
         sim.apply_currency("normal_essence", essence_family="FireResist")
-        assert sim.item.rarity == "Magic"
-        assert len(sim.item.mods) == 1
-        assert sim.item.mods[0].family == "FireResist"
+        assert sim.item.rarity == "Rare"
+        families = {m.family for m in sim.item.mods}
+        assert "FireResist" in families
 
     def test_tracks_essence_mod(self):
         sim = _make_sim()
-        sim.item.rarity = "Normal"
+        sim.item.rarity = "Magic"
+        random.seed(42)
         sim.apply_currency("lesser_essence", essence_family="IncreasedLife")
         assert sim.item.essence_mod_family == "IncreasedLife"
 

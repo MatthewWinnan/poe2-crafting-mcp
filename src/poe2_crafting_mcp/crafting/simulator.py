@@ -137,8 +137,8 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     "perfect_chaos":     {"op": "del_add", "qty": 1, "min_lv": 50, "from_rarity": ["Rare"]},
     "perfect_exalted":   {"op": "add", "qty": 1, "min_lv": 50, "from_rarity": ["Rare"]},
     # Essences — special ops, not standard currency
-    "lesser_essence":    {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Magic", "from_rarity": ["Normal"]},
-    "normal_essence":    {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Magic", "from_rarity": ["Normal"]},
+    "lesser_essence":    {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Magic"]},
+    "normal_essence":    {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Magic"]},
     "greater_essence":   {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Magic"]},
     "perfect_essence":   {"op": "essence_swap", "min_lv": 0, "from_rarity": ["Rare"]},
     # Reforging bench — 3-to-1 recycling
