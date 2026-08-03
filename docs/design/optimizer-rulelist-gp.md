@@ -376,7 +376,11 @@ Rule-list size is a **parsimony tiebreaker**: within the same Pareto rank and
 same crowding distance, prefer the shorter rule-list. This prevents bloat
 without distorting the cost/success/consistency trade-off.
 
-### NSGA-II Selection
+### NSGA-II Selection + QD Archive (hybrid, from BASIL)
+
+Two complementary selection pressures work together:
+
+**A. NSGA-II (main population, 200 individuals)**
 
 Standard non-dominated sorting with crowding distance:
 
@@ -390,6 +394,60 @@ Standard non-dominated sorting with crowding distance:
 4. When a front partially fits, prefer individuals in sparse regions of the
    objective space (crowding distance). At equal crowding, prefer fewer rules
    (parsimony tiebreaker).
+
+**B. QD Archive (MAP-Elites-style, maintains strategy diversity)**
+
+A separate archive indexed by behavioral descriptors. Each cell stores the
+best individual (lowest expected_cost) that exhibits that behavior.
+
+Behavioral descriptor axes (3D grid):
+- **Primary early currency** (4 buckets): transmute-spam / alteration / alchemy / essence
+  Determined by: which currency fires most in the first 20 steps across MC trials
+- **Restart aggressiveness** (4 buckets): scour threshold <50c / 50-200c / 200-500c / >500c
+  Determined by: the cost_spent_gte threshold on the first SCOUR/BUY_BASE rule
+- **Omen usage** (3 buckets): none / targeted (1-2 omen rules) / heavy (3+ omen rules)
+  Determined by: count of rules with omen != NONE
+
+Archive size: 4 × 4 × 3 = 48 cells (small, cheap to maintain).
+
+**Integration:**
+- Every generation, all evaluated individuals are offered to the archive.
+- If an individual's behavioral descriptor maps to an empty cell, it's stored.
+- If the cell is occupied, the individual replaces the incumbent only if it has
+  lower expected_cost (within same behavior niche, we want cheapest).
+- Every 5 generations, inject 10% of archive members into the NSGA-II population
+  (replacing worst-ranked individuals). This seeds the main population with
+  diverse strategies discovered by the archive.
+- At convergence, output strategies from BOTH the Pareto front AND the archive.
+
+**Why both NSGA-II and QD?**
+- NSGA-II optimizes the Pareto front (cost vs reliability vs consistency).
+- QD prevents the population from collapsing to one strategy type. Without QD,
+  NSGA-II might fill the entire front with variants of alt-regal (cheapest) and
+  never discover that omen-targeted or fractured-base strategies exist.
+- The archive acts as long-term memory — even if a strategy family is temporarily
+  outcompeted, its best representative survives in the archive for re-injection.
+
+### Per-Rule Credit Assignment (from PPL-ST)
+
+Extend Rust fire_counts to track success/failure context:
+
+```rust
+/// Per-rule counters returned from MC evaluation
+struct RuleCredits {
+    fire_on_success: Vec<u32>,  // times rule fired in trials that ended SUCCESS
+    fire_on_failure: Vec<u32>,  // times rule fired in trials that ended FAIL/timeout
+}
+```
+
+Used in Python for:
+- **Dead rule detection**: fire_on_success == 0 AND fire_on_failure == 0 → prune
+- **Harmful rule detection**: fire_on_failure >> fire_on_success → candidate for
+  mutation (this rule leads to bad outcomes more than good ones)
+- **Key rule protection**: fire_on_success >> fire_on_failure → protect from
+  deletion mutations (this rule is critical to the strategy's success)
+- **Mutation targeting**: prefer mutating rules with low success correlation
+  over rules with high success correlation
 
 ### Genetic Operators
 
@@ -883,6 +941,7 @@ src/poe2_crafting_mcp/crafting/
     gene.py              # Rule, RuleList, Condition, Action dataclasses (Python)
     conditions.py        # Predicate vocabulary + serialization to Rust-compatible format
     nsga2.py             # NSGA-II selection, Pareto ranking, crowding distance (Python)
+    qd_archive.py        # MAP-Elites QD archive — behavioral diversity (from BASIL)
     operators.py         # Crossover + mutation operators (Python — called once/gen)
     seeds.py             # Phase 3 heuristic rule-lists (initial population)
     clustering.py        # Post-convergence strategy family grouping
@@ -911,7 +970,7 @@ crates/
 - Currency application (weighted random from pool, family blocking)
 - MC trial loop (step through rules until DONE/FAIL/timeout)
 - Batch evaluation of entire population in parallel (rayon thread pool)
-- Returns: Fitness struct + fire_counts per rule-list
+- Returns: Fitness struct + per-rule credit (fire_on_success, fire_on_failure)
 
 **Python (cold path — called once per generation):**
 - NSGA-II selection (200 individuals, Pareto sorting, crowding distance)
@@ -1194,6 +1253,83 @@ Hypervolume = area dominated by the front relative to a reference point
 consecutive generations, stop early. Saves compute when the front stabilizes
 at generation 25 instead of running to 100.
 
+## Research: Representation Choice (August 2026)
+
+Seven candidate representations were evaluated for evolving crafting policies:
+
+### Representations Considered
+
+| Representation | Expressiveness | Interpretability | Crossover Quality | Rust Serialization | Verdict |
+|---|---|---|---|---|---|
+| **Rule-list (Pittsburgh LCS)** | ★★★ | ★★★★★ | ★★★★ | ★★★★★ | ✓ Selected |
+| Decision tree | ★★★ | ★★★★ | ★★ | ★★★★ | Equivalent power, worse crossover |
+| Behaviour tree | ★★★★★ | ★★★ | ★★ | ★★ | Overkill for sequential domain |
+| Linear GP (register machine) | ★★★★ | ★ | ★★★★ | ★★★★★ | Not interpretable |
+| Finite state machine | ★★★★ | ★★★ | ★★ | ★★★ | Subsumed by rule-list priorities |
+| Grammatical evolution | ★★★★ | ★★★★ | ★★ | ★★★ | Locality problem hurts convergence |
+| MCTS | ★★★★★ | ★★ | N/A | ★★★ | Produces plans, not policies |
+
+### Key Papers Supporting Rule-Lists
+
+**PPL-ST (Bishop et al., 2023)** — "Pittsburgh Learning Classifier Systems for
+Explainable Reinforcement Learning." A Pittsburgh-style LCS using Monte Carlo
+estimation of rule strength for stochastic RL domains. Outperforms Michigan-style
+XCS in environments with high uncertainty, producing more compact/interpretable
+solutions. Validates that rule-lists + MC evaluation is the right combination for
+stochastic sequential decision problems.
+- *Borrow:* per-rule credit assignment — track fire_counts_on_success vs
+  fire_counts_on_failure separately. Gives signal for which rules HELP vs which
+  are neutral passengers.
+
+**BASIL (Shahnazari et al., May 2025)** — "Best-Action Symbolic Interpretable
+Learning for Evolving Compact RL Policies." Independently arrives at ordered
+lists of symbolic predicates as the representation. Uses Quality-Diversity (QD)
+optimization via MAP-Elites archive to maintain behavioral diversity. Matches
+deep RL performance on classic control with compact, interpretable rule-sets.
+- *Borrow:* QD archive alongside NSGA-II. Maintain a MAP-Elites-style archive
+  keyed by behavioral descriptor (e.g. "primary currency used" × "restart
+  frequency"). Ensures the optimizer discovers DIVERSE strategy families
+  (alt-regal, chaos-spam, omen-targeted, fractured-base) rather than converging
+  to 200 minor variants of one approach.
+
+**Hyper-heuristic Dispatching Rules (Branke et al., 2015)** — Compared linear
+combination, neural network, and tree representations for evolved scheduling
+rules. Tree representation won for interpretability; linear sequences of rules
+(NELLI-GP, 2016) extended this to ensembles. Confirms rule-based representations
+are standard for stochastic scheduling optimization.
+
+**BT vs FSM (2024 comparison)** — Behaviour trees beat FSMs for modularity and
+reactiveness but are harder to evolve from scratch. For strictly sequential
+domains (no interruption, no parallel actions) like crafting, the added complexity
+of BTs provides no benefit over rule-lists.
+
+### Design Implications
+
+1. **Rule-list confirmed as optimal representation** for our constraints:
+   sequential decisions, stochastic outcomes, human-readable output, compact
+   Rust serialization.
+
+2. **Add QD archive (from BASIL)** — MAP-Elites behavioral archive alongside
+   the NSGA-II population. Behavioral descriptors:
+   - Primary early-game currency (transmute/alteration/alchemy/essence)
+   - Restart aggressiveness (scour threshold bucket: <50c, 50-200c, 200-500c, >500c)
+   - Omen usage (none / targeted / heavy)
+   This ensures we discover all viable strategy families, not just the one with
+   lowest expected cost.
+
+3. **Add per-rule credit assignment (from PPL-ST)** — Extend fire_counts to
+   (fire_on_success, fire_on_failure) pairs. Rules that fire frequently on
+   failed trials but rarely on successes are candidates for deletion/mutation.
+   Rules that fire on successes but not failures are "key rules" protected
+   from mutation. This gives the GP stronger signal than pure fire_counts.
+
+4. **MCTS for mid-craft entry (future)** — When the player already has an item
+   with mods and asks "what now?", MCTS from that specific state may outperform
+   a general rule-list. The rule-list optimizer handles the "plan from blank"
+   case; MCTS handles the "react from HERE" case. Complementary, not competing.
+
+---
+
 ## Resolved Design Decisions
 
 ### 1. Pareto objectives: exactly 3
@@ -1203,9 +1339,13 @@ most players. Steps correlates with cost so it's reported but not optimized.
 Rule-list size is a parsimony tiebreaker, not an objective. Hard prune only
 for degenerates (success < 5%, infinite loops).
 
-### 2. Encoding: rule-list GP (not templates, not free-form trees)
+### 2. Encoding: rule-list GP (Pittsburgh-style, validated by research)
 Expressiveness of decision trees, interpretability of linear recipes,
 natural bloat bounds. The evolved rule-list IS the crafting guide.
+Confirmed by PPL-ST (2023) and BASIL (2025) as the optimal representation
+for stochastic sequential decision problems requiring interpretable output.
+Seven alternatives evaluated (decision tree, BT, FSM, linear GP, GE, MCTS) —
+none provide both interpretability AND compact Rust serialization.
 
 ### 3. Restart cost: includes base item price via PriceCache
 SCOUR costs a scouring orb. BUY_BASE costs the trade price. BUY_MAGIC and
@@ -1259,3 +1399,5 @@ in the test suite for correctness validation.
    already has an item with some mods, they want "what do I do from HERE?"
    Model as ItemState with pre-set mods. The rule-list still works — it just
    starts evaluating from a non-Normal state. Need a CLI/MCP input for this.
+   Future: MCTS from the specific state may outperform a general rule-list
+   for one-shot "what now?" queries (see Research section).
