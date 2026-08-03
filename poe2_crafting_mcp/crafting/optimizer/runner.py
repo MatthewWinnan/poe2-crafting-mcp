@@ -56,14 +56,20 @@ class CraftingStrategy:
     fitness: Fitness
     family_name: str = ""
     verdict: str = ""              # "CRAFT" or "BUY"
-    expected_cost: float = 0.0
+    expected_cost: float = 0.0     # Total: base + all currency/omens (chaos equiv)
     success_rate: float = 0.0
     cost_p90: float = 0.0
     savings_vs_trade: float = 0.0
 
     # Starting point
-    starting_state: str = "blank"  # "blank", "magic_with_X", "fractured_X"
+    starting_state: str = "blank"  # "blank", "magic_with_target", "fractured_target"
     base_acquisition_cost: float = 0.0
+
+    # Cost breakdown (all in chaos)
+    currency_cost: float = 0.0     # expected_cost - base_acquisition_cost (approx)
+    # Note: expected_cost from MC includes ALL costs (base purchases on restart,
+    # currency usage, omens). The breakdown is approximate since restarts mean
+    # multiple base purchases can happen in one craft attempt.
 
     # Human-readable steps
     steps: list[str] = field(default_factory=list)
@@ -71,9 +77,11 @@ class CraftingStrategy:
     def __str__(self) -> str:
         lines = [
             f"Strategy: {self.family_name}",
-            f"  Verdict: {self.verdict} | Cost: {self.expected_cost:.0f}c | "
+            f"  Verdict: {self.verdict} | Total cost: {self.expected_cost:.0f}c | "
             f"Success: {self.success_rate:.0%} | p90: {self.cost_p90:.0f}c",
-            f"  Start: {self.starting_state} (base cost: {self.base_acquisition_cost:.0f}c)",
+            f"  Start: {self.starting_state} (base: {self.base_acquisition_cost:.0f}c) | "
+            f"Currency: ~{self.currency_cost:.0f}c",
+            f"  vs Trade ({self.savings_vs_trade:+.0f}c)",
             f"  Rules:",
         ]
         lines.append(str(self.rulelist))
@@ -183,6 +191,7 @@ def _label_strategy(rl: RuleList, fitness: Fitness, prices: PriceCache) -> Craft
         savings_vs_trade=savings,
         starting_state=starting_state,
         base_acquisition_cost=base_cost,
+        currency_cost=max(0.0, fitness.expected_cost - base_cost),
         steps=steps,
     )
 
