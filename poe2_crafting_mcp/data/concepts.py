@@ -2035,15 +2035,14 @@ CONCEPTS: list[dict] = [
         "summary": "Blue item rarity — 1–2 affixes (1 prefix + 1 suffix maximum).",
         "mechanics": (
             "Magic (blue) items have 1–2 explicit modifiers: at most 1 prefix and 1 suffix. "
-            "Magic items are the primary target for alteration-spam crafting: "
-            "use Orb of Alteration to reroll until target mod(s) appear, "
-            "then Regal Orb to upgrade to Rare and add a third mod. "
+            "Magic items are crafted with Orb of Transmutation (Normal → Magic, 1-2 mods). "
+            "To reroll a Magic item, buy a new white base and transmute again — there is no reroll orb for Magic in PoE2. "
             "Orb of Augmentation adds a missing affix (prefix or suffix) to a Magic item with only 1 mod. "
-            "Essences can be applied to Magic items (guarantees one mod, fills the other slot randomly). "
+            "Essences can be applied to Magic items (guarantees one mod, upgrades to Rare). "
             "The trade rarity filter for Magic is rarity=magic."
         ),
         "formula": "1–2 explicit affixes: ≤1 prefix + ≤1 suffix.",
-        "see_also": ["Rarity", "Rare", "Orb of Alteration", "Orb of Augmentation", "Regal Orb", "Affix"],
+        "see_also": ["Rarity", "Rare", "Orb of Transmutation", "Orb of Augmentation", "Regal Orb", "Affix"],
     },
     {
         "name": "Rare",
@@ -2053,9 +2052,9 @@ CONCEPTS: list[dict] = [
             "Rare (yellow) items have 3–6 explicit modifiers: up to 3 prefixes and 3 suffixes. "
             "The most powerful endgame crafting target. "
             "Key crafting methods for Rare items: "
-            "Chaos Orb rerolls all affixes randomly; "
-            "Alteration-spam → Regal is cheaper for targeting 1–2 specific mods; "
-            "Essence guarantees one mod on a Rare item (Chaos-equivalent); "
+            "Chaos Orb removes one and adds one random affix; "
+            "Transmute-spam → Regal is the budget approach for targeting specific mods; "
+            "Essence guarantees one mod when upgrading Magic → Rare; "
             "Exalted Orb adds a new affix to an item with fewer than 6 (open prefix or suffix required); "
             "Annulment Orb removes a random affix; "
             "Divine Orb re-rolls the numeric values of existing mods. "
@@ -2070,7 +2069,7 @@ CONCEPTS: list[dict] = [
         "summary": "Orange item rarity — fixed predefined modifiers, not craftable with standard orbs.",
         "mechanics": (
             "Unique (orange) items have fixed modifiers defined by the game — they cannot be rerolled "
-            "with Chaos Orb or Alteration. "
+            "with standard crafting currency. "
             "Divine Orb re-rolls the NUMERIC VALUES of Unique item mods within their allowed ranges. "
             "Fractured Unique items are not a thing (fracts only apply to Rares). "
             "Unique items are found by name on the trade site (search by name, not by mods). "

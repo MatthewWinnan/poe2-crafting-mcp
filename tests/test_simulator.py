@@ -121,17 +121,8 @@ class TestScour:
 
 
 # ── Alteration ──────────────────────────────────────────────────────────────
-
-class TestAlteration:
-    def test_alteration_rerolls_magic(self):
-        sim = _make_sim()
-        sim.item.rarity = "Magic"
-        _add_mod(sim, "IncreasedLife")
-        random.seed(42)
-        sim.apply_currency("alteration")
-        # Should reroll to Magic with up to 2 mods (1P + 1S)
-        assert sim.item.rarity == "Magic"
-        assert 1 <= len(sim.item.mods) <= 2
+# NOTE: Orb of Alteration does NOT exist in PoE2 (not obtainable in game).
+# Tests removed.
 
 
 # ── Lesser / Normal Essence ──────────────────────────────────────────────────
@@ -713,7 +704,8 @@ class TestMCVerification:
 class TestCurrencyDefinitions:
     def test_all_new_currencies_present(self):
         assert "scour" in CURRENCIES
-        assert "alteration" in CURRENCIES
+        # NOTE: "alteration" does NOT exist in PoE2
+        assert "alteration" not in CURRENCIES
         assert "lesser_essence" in CURRENCIES
         assert "normal_essence" in CURRENCIES
         assert "greater_essence" in CURRENCIES

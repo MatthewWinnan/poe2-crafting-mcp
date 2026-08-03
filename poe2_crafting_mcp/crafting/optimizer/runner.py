@@ -40,7 +40,7 @@ class OptimizerConfig:
     mc_trials: int = 500
     max_steps: int = 500
     seed_fraction: float = 0.4
-    elite_fraction: float = 0.1
+    elite_fraction: float = 0.2
     archive_injection_interval: int = 5
     archive_injection_fraction: float = 0.1
     convergence_threshold: float = 0.001  # hypervolume change threshold
@@ -286,13 +286,13 @@ def optimize(
 
         population = [ind for ind in elites] + offspring
 
-        # Convergence check
-        evaluated_costs = [
+        # Convergence check — track best VIABLE (>50% success) cost
+        viable_costs = [
             ind.fitness.expected_cost for ind in survivors
-            if ind.fitness.expected_cost < float("inf")
+            if ind.fitness.expected_cost < float("inf") and ind.fitness.success_rate > 0.5
         ]
-        if evaluated_costs:
-            best_cost = min(evaluated_costs)
+        if viable_costs:
+            best_cost = min(viable_costs)
             best_cost_history.append(best_cost)
 
             if len(best_cost_history) >= config.convergence_patience:
@@ -323,15 +323,26 @@ def optimize(
 
     archive_strategies.sort(key=lambda s: s.expected_cost)
 
-    # Best verdict
-    if strategies:
-        best = strategies[0]
-        if best.verdict == "CRAFT":
-            best_verdict = f"CRAFT (saves ~{best.savings_vs_trade:.0f}c vs trade)"
+    # Best verdict: find cheapest strategy with >50% success rate
+    # (considers both Pareto front and archive)
+    all_strategies = strategies + archive_strategies
+    viable = [s for s in all_strategies if s.success_rate > 0.5]
+    if not viable:
+        # Fall back to any strategy with >0% success
+        viable = [s for s in all_strategies if s.success_rate > 0]
+    if viable:
+        best = min(viable, key=lambda s: s.expected_cost)
+        if best.expected_cost < prices.trade_finished:
+            best_verdict = f"CRAFT (saves ~{prices.trade_finished - best.expected_cost:.0f}c vs trade)"
         else:
-            best_verdict = f"BUY (crafting costs {-best.savings_vs_trade:.0f}c more than trade)"
+            best_verdict = f"BUY (crafting costs {best.expected_cost - prices.trade_finished:.0f}c more than trade)"
     else:
         best_verdict = "NO VIABLE STRATEGY FOUND"
+
+    # Reorder: put best viable first, then rest of Pareto front
+    if viable:
+        best_strategy = min(viable, key=lambda s: s.expected_cost)
+        strategies = [best_strategy] + [s for s in strategies if s is not best_strategy]
 
     return OptimizationResult(
         target=target,

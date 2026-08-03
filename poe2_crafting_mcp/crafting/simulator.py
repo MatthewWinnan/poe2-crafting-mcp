@@ -291,7 +291,7 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     "divine":            {"op": "divine", "min_lv": 0, "from_rarity": ["Magic", "Rare"]},
     "fracturing":        {"op": "fracture", "min_lv": 0, "from_rarity": ["Rare"], "min_mods": 4},
     "scour":             {"op": "scour", "min_lv": 0},
-    "alteration":        {"op": "reroll", "qty": 2, "min_lv": 0, "to_rarity": "Magic", "from_rarity": ["Magic"]},
+    # NOTE: Orb of Alteration does NOT exist in PoE2 (not obtainable in game)
     # Greater
     "greater_transmute": {"op": "add", "qty": 1, "min_lv": 44, "to_rarity": "Magic", "from_rarity": ["Normal"]},
     "greater_augment":   {"op": "add", "qty": 1, "min_lv": 44, "from_rarity": ["Magic"]},

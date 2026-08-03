@@ -1153,7 +1153,7 @@ def get_item_description(name: str) -> str:
     Fetch crafting context and description for a specific item by name.
 
     Covers key bases (Gold Gloves, Vaal Regalia, Imbued Wand, etc.), currencies
-    (Orb of Alteration, Essence, Fracture Orb, etc.), runes, catalysts, and
+    (Exalted Orb, Essence, Fracture Orb, etc.), runes, catalysts, and
     mechanic items. Returns crafting notes (best ilvl, target mods, which method
     to use) and drop notes alongside a plain-English description.
 
@@ -1161,7 +1161,7 @@ def get_item_description(name: str) -> str:
     Add custom entries with poe2-lookup item-desc-add or update_item_description().
 
     Args:
-        name: Item name — e.g. "Gold Gloves", "Orb of Alteration", "Stygian Vise".
+        name: Item name — e.g. "Gold Gloves", "Exalted Orb", "Stygian Vise".
 
     Returns:
         JSON with name, category, description, crafting_notes, drop_notes, see_also,
@@ -1488,7 +1488,7 @@ def get_currency_rate(name: str, league: str = "") -> str:
     needed by its chaos value to get total chaos cost.
 
     Args:
-        name:   Currency name — e.g. "Divine Orb", "Orb of Alteration",
+        name:   Currency name — e.g. "Divine Orb", "Exalted Orb",
                 "Lesser Essence of Electricity", "Chaos Orb".
         league: League name. Defaults to the active league.
 

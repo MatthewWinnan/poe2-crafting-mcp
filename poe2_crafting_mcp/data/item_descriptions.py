@@ -30,7 +30,7 @@ ITEM_DESCRIPTIONS: list[dict] = [
             "They cannot have Rune Sockets."
         ),
         "crafting_notes": (
-            "Key crafting currency: Orb of Alteration (Magic reroll), Chaos Orb (Rare reroll), "
+            "Key crafting currency: Orb of Transmutation (Normal → Magic), Chaos Orb (Rare reroll), "
             "Catalysts (quality on a stat type), Divine Orb (re-roll values). "
             "Best endgame bases: Opal Ring, Two-Stone Ring, Prismatic Ring, Onyx Amulet, "
             "Jade Amulet, Stygian Vise."
@@ -290,7 +290,7 @@ ITEM_DESCRIPTIONS: list[dict] = [
             "Stack size: 10. Use poe2-lookup <essence name> for exact mod per item class."
         ),
         "drop_notes": "Drop from Essence monsters found in maps and acts.",
-        "see_also": ["Chaos Orb", "Orb of Alteration", "Mod Weight"],
+        "see_also": ["Chaos Orb", "Orb of Transmutation", "Mod Weight"],
         "source": "manual",
     },
 

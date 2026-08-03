@@ -314,7 +314,6 @@ _CURRENCY_SYMBOLS: dict[str, str] = {
     "chaos":     "c",
     "transmute": "t",
     "augment":   "aug",
-    "alteration":"alt",
     "regal":     "regal",
     "annulment": "ann",
     "vaal":      "vaal",

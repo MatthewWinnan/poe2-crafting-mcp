@@ -86,7 +86,7 @@ class Currency(IntEnum):
     TRANSMUTE = 10
     GREATER_TRANSMUTE = 11
     PERFECT_TRANSMUTE = 12
-    ALTERATION = 13
+    # 13 reserved (Alteration does NOT exist in PoE2)
     AUGMENT = 14
     GREATER_AUGMENT = 15
     PERFECT_AUGMENT = 16
@@ -400,7 +400,7 @@ class RuleList:
         for rule in self.rules[:5]:
             c = rule.action.currency
             if c in (Currency.TRANSMUTE, Currency.GREATER_TRANSMUTE,
-                     Currency.PERFECT_TRANSMUTE, Currency.ALTERATION):
+                     Currency.PERFECT_TRANSMUTE):
                 early_currencies.append("transmute")
             elif c == Currency.ALCHEMY:
                 early_currencies.append("alchemy")
@@ -631,6 +631,12 @@ class PriceCache:
             _name_to_cid[c.name.lower()] = int(c)
             # Also map common poe.ninja names
             _name_to_cid[c.name.lower().replace("_", " ")] = int(c)
+
+        # Additional aliases for names that differ between preflight and enum
+        _name_to_cid["greater_essence"] = int(Currency.ESSENCE_UPGRADE)
+        _name_to_cid["lesser_essence"] = int(Currency.ESSENCE_UPGRADE)
+        _name_to_cid["normal_essence"] = int(Currency.ESSENCE_UPGRADE)
+        _name_to_cid["perfect_essence"] = int(Currency.ESSENCE_SWAP)
 
         for name, price in self.currency.items():
             key = name.lower().replace(" ", "_")

@@ -102,23 +102,34 @@ pub fn apply_currency(
         }
 
         TRANSMUTE | GREATER_TRANSMUTE | PERFECT_TRANSMUTE => {
+            // Only works on Normal items. Normal → Magic with 1-2 mods.
+            if item.rarity != 0 {
+                return;
+            }
             item.rarity = 1;
             let min_lv = min_level_for_currency(currency);
-            add_random_mod(item, pool, min_lv, omen, rng);
+            let n_mods = rng.gen_range(1u8..=2u8);
+            for _ in 0..n_mods {
+                add_random_mod(item, pool, min_lv, omen, rng);
+            }
         }
 
-        ALTERATION => {
-            // Reroll magic: clear non-fractured + add 1
-            clear_mods(item);
-            add_random_mod(item, pool, 0, NO_OMEN, rng);
-        }
+        // ALTERATION: Does NOT exist in PoE2. ID 13 reserved but unused.
 
         AUGMENT | GREATER_AUGMENT | PERFECT_AUGMENT => {
+            // Only works on Magic items
+            if item.rarity != 1 {
+                return;
+            }
             let min_lv = min_level_for_currency(currency);
             add_random_mod(item, pool, min_lv, omen, rng);
         }
 
         REGAL | GREATER_REGAL | PERFECT_REGAL => {
+            // Only works on Magic items → Rare
+            if item.rarity != 1 {
+                return;
+            }
             item.rarity = 2;
             let min_lv = min_level_for_currency(currency);
             let effective_omen = match omen {
@@ -130,15 +141,27 @@ pub fn apply_currency(
         }
 
         EXALTED | GREATER_EXALTED | PERFECT_EXALTED => {
+            // Only works on Rare items
+            if item.rarity != 2 {
+                return;
+            }
             let min_lv = min_level_for_currency(currency);
             add_random_mod(item, pool, min_lv, omen, rng);
         }
 
         ANNULMENT => {
+            // Only works on Magic or Rare items
+            if item.rarity == 0 {
+                return;
+            }
             remove_random_mod(item, omen, rng);
         }
 
         CHAOS | GREATER_CHAOS | PERFECT_CHAOS => {
+            // Only works on Rare items
+            if item.rarity != 2 {
+                return;
+            }
             let min_lv = min_level_for_currency(currency);
             // Whittling omen: remove lowest-req mod (deterministic)
             if omen == WHITTLING {
@@ -150,6 +173,10 @@ pub fn apply_currency(
         }
 
         ALCHEMY => {
+            // Only works on Normal items → Rare
+            if item.rarity != 0 {
+                return;
+            }
             item.rarity = 2;
             clear_mods(item);
             let n_mods = rng.gen_range(4u8..=6u8);
@@ -162,6 +189,10 @@ pub fn apply_currency(
         }
 
         FRACTURING => {
+            // Only works on Rare items
+            if item.rarity != 2 {
+                return;
+            }
             // Lock a random non-fractured mod
             let total = item.mod_count();
             if total > 0 {
@@ -178,7 +209,8 @@ pub fn apply_currency(
             // Greater Essence: Magic → Rare, adds ONLY the 1 guaranteed mod.
             // NO random fill. Item keeps existing magic mods + essence mod.
             // Result: 2-3 mods total (1-2 from magic + 1 essence).
-            if item.has_essence_mod() {
+            // MUST be used on a Magic item (rarity == 1).
+            if item.rarity != 1 || item.has_essence_mod() {
                 return;
             }
             item.rarity = 2;
@@ -190,10 +222,11 @@ pub fn apply_currency(
         }
 
         ESSENCE_SWAP => {
-            // Remove one non-fractured, non-essence mod; add first MISSING target
-            // Only works if item doesn't already have an essence mod
-            if item.has_essence_mod() {
-                return; // Already has crafted mod
+            // Perfect Essence: Remove one non-fractured mod; add first MISSING target.
+            // Only works on Rare items that already HAVE an essence mod (swaps it).
+            // In-game: "Use on a Rare Item to swap the Crafted Modifier"
+            if item.rarity != 2 || !item.has_essence_mod() {
+                return;
             }
             remove_random_mod(item, NO_OMEN, rng);
             if let Some(fam) = find_first_missing_target(item, pool) {

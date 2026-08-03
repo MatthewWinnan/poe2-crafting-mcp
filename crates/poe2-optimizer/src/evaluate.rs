@@ -84,7 +84,10 @@ pub fn evaluate_rulelist(
 
                 match rule.currency {
                     DONE => {
-                        trial_success = true;
+                        // Only succeed if all targets are actually hit
+                        if item.all_targets_at_tier(&pool.all_target_families, &pool.target_max_tiers) {
+                            trial_success = true;
+                        }
                         break 'trial;
                     }
                     FAIL => {

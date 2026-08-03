@@ -9,9 +9,8 @@ Add new currencies as GGG releases patches.
 CURRENCIES: list[tuple[str, str, str, str, str]] = [
 
     # ── General Item Orbs ────────────────────────────────────────────────────
-    ("Orb of Transmutation",   "Orb", "Upgrade",  "Upgrades a Normal item to Magic with 1 random modifier",    "orb-of-transmutation"),
+    ("Orb of Transmutation",   "Orb", "Upgrade",  "Upgrades a Normal item to Magic with 1-2 random modifiers",    "orb-of-transmutation"),
     ("Orb of Augmentation",    "Orb", "Upgrade",  "Adds a random modifier to a Magic item with an open slot",  "orb-of-augmentation"),
-    ("Orb of Alteration",      "Orb", "Reroll",   "Rerolls the explicit mods on a Magic item (1-2 mods)",      "orb-of-alteration"),
     ("Regal Orb",              "Orb", "Upgrade",  "Upgrades a Magic item to Rare, adding one random mod",      "regal-orb"),
     ("Orb of Alchemy",         "Orb", "Upgrade",  "Upgrades a Normal or Magic item to Rare with 4 random modifiers. Current modifiers are not retained.", "orb-of-alchemy"),
     ("Chaos Orb",              "Orb", "Reroll",   "Removes 1 random mod and adds 1 random mod on a Rare item", "chaos-orb"),

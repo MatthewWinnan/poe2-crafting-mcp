@@ -30,7 +30,6 @@ _CURRENCY_NAME_MAP: dict[str, str] = {
     "Divine Orb": "divine",
     "Orb Of Annulment": "annulment",
     "Orb Of Transmutation": "transmute",
-    "Orb Of Alteration": "alteration",
     "Regal Orb": "regal",
     "Orb Of Alchemy": "alchemy",
     "Orb Of Augmentation": "augment",
@@ -191,11 +190,11 @@ def preflight(
 
     # Default prices for common currencies not tracked by poe.ninja (too cheap)
     _DEFAULTS: dict[str, float] = {
-        "alteration": 0.05,
         "transmute": 0.01,
         "augment": 0.01,
         "alchemy": 0.02,
         "regal": 0.02,
+        "scouring": 0.5,
         "greater_transmute": 0.5,
         "greater_augment": 0.5,
         "greater_regal": 0.5,
@@ -205,6 +204,13 @@ def preflight(
         "perfect_regal": 2.0,
         "perfect_chaos": 3.0,
         "perfect_exalted": 5.0,
+        # Essences (Greater Essence of X ~ 1c, varies by type but cheap)
+        "lesser_essence": 0.2,
+        "normal_essence": 0.5,
+        "greater_essence": 1.0,
+        "perfect_essence": 10.0,
+        # Reforge (3-to-1 recycling ~ 0.5c in materials)
+        "reforge": 0.5,
     }
     for name, default_price in _DEFAULTS.items():
         if name not in currency_prices:

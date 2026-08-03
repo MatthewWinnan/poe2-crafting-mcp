@@ -125,34 +125,34 @@ _EXCHANGE_DIVINE = {
     "item": {"id": "divine", "name": "Divine Orb"},
     "pairs": [{"id": "exalted", "rate": 460, "volumePrimaryValue": 6000}],
 }
-_EXCHANGE_ALT = {
-    "item": {"id": "orb-of-alteration", "name": "Orb of Alteration"},
+_EXCHANGE_TRANSMUTE = {
+    "item": {"id": "orb-of-transmutation", "name": "Orb of Transmutation"},
     "pairs": [{"id": "divine", "rate": 0.05, "volumePrimaryValue": 2000}],
 }
 
 
 class TestFetchCurrencyRates:
     def test_returns_rows_with_divine_and_chaos_values(self):
-        responses = [_EXCHANGE_CHAOS, _EXCHANGE_DIVINE, _EXCHANGE_ALT]
+        responses = [_EXCHANGE_CHAOS, _EXCHANGE_DIVINE, _EXCHANGE_TRANSMUTE]
         with patch.object(NinjaClient, "fetch_currency_rate", side_effect=[
-            {"trade_id": "chaos-orb",         "divine_value": 0.1129, "volume": 58000},
-            {"trade_id": "divine-orb",         "divine_value": 1.0,   "volume": 6000},
-            {"trade_id": "orb-of-alteration",  "divine_value": 0.05,  "volume": 2000},
+            {"trade_id": "chaos-orb",             "divine_value": 0.1129, "volume": 58000},
+            {"trade_id": "divine-orb",             "divine_value": 1.0,   "volume": 6000},
+            {"trade_id": "orb-of-transmutation",  "divine_value": 0.05,  "volume": 2000},
         ]):
             result = NinjaClient().fetch_currency_rates(
                 "Runes of Aldur",
-                ["chaos-orb", "divine-orb", "orb-of-alteration"],
+                ["chaos-orb", "divine-orb", "orb-of-transmutation"],
             )
 
         assert len(result) == 3
         chaos_row = next(r for r in result if r["trade_id"] == "chaos-orb")
         divine_row = next(r for r in result if r["trade_id"] == "divine-orb")
-        alt_row    = next(r for r in result if r["trade_id"] == "orb-of-alteration")
+        transmute_row = next(r for r in result if r["trade_id"] == "orb-of-transmutation")
 
         # chaos_value for divine orb = 1 / chaos_divine_rate = 1 / 0.1129 ≈ 8.85
         assert divine_row["chaos_value"] == pytest.approx(1 / 0.1129, rel=0.01)
-        # alt divine_value = 0.05 → chaos = 0.05 / 0.1129 ≈ 0.443
-        assert alt_row["chaos_value"] == pytest.approx(0.05 / 0.1129, rel=0.01)
+        # transmute divine_value = 0.05 → chaos = 0.05 / 0.1129 ≈ 0.443
+        assert transmute_row["chaos_value"] == pytest.approx(0.05 / 0.1129, rel=0.01)
         assert chaos_row["category"] == "currency"
 
     def test_skips_none_returns(self):
@@ -195,11 +195,11 @@ class TestPriceDatabaseMeta:
 # ── PriceDatabase: upsert + reads ─────────────────────────────────────────────
 
 SAMPLE_ROWS = [
-    {"name": "Divine Orb",         "category": "currency", "chaos_value": 200.0,  "divine_value": None, "listing_count": 5000},
-    {"name": "Orb of Alteration",  "category": "currency", "chaos_value": 0.5,    "divine_value": None, "listing_count": 3000},
-    {"name": "Kaom's Heart",        "category": "unique",   "chaos_value": 500.0,  "divine_value": 2.5,  "listing_count": 50},
-    {"name": "Titan Greaves",       "category": "base",     "chaos_value": 30.0,   "divine_value": None, "listing_count": 200},
-    {"name": "Ice Nova",            "category": "gem",      "chaos_value": 5.0,    "divine_value": None, "listing_count": 300},
+    {"name": "Divine Orb",             "category": "currency", "chaos_value": 200.0,  "divine_value": None, "listing_count": 5000},
+    {"name": "Orb of Transmutation",   "category": "currency", "chaos_value": 0.5,    "divine_value": None, "listing_count": 3000},
+    {"name": "Kaom's Heart",            "category": "unique",   "chaos_value": 500.0,  "divine_value": 2.5,  "listing_count": 50},
+    {"name": "Titan Greaves",           "category": "base",     "chaos_value": 30.0,   "divine_value": None, "listing_count": 200},
+    {"name": "Ice Nova",                "category": "gem",      "chaos_value": 5.0,    "divine_value": None, "listing_count": 300},
 ]
 
 
@@ -230,7 +230,7 @@ class TestUpsertAndRead:
         results = tmp_db.search_prices("Orb", "Dawn of the Hunt")
         names = [r["name"] for r in results]
         assert "Divine Orb" in names
-        assert "Orb of Alteration" in names
+        assert "Orb of Transmutation" in names
 
     def test_search_prices_with_category(self, tmp_db: PriceDatabase):
         tmp_db.upsert_prices(SAMPLE_ROWS, "Dawn of the Hunt")
@@ -241,7 +241,7 @@ class TestUpsertAndRead:
         tmp_db.upsert_prices(SAMPLE_ROWS, "Dawn of the Hunt")
         results = tmp_db.get_bulk_prices("currency", "Dawn of the Hunt")
         assert len(results) == 2
-        # sorted by listing_count desc: Divine Orb (5000) > Orb of Alteration (3000)
+        # sorted by listing_count desc: Divine Orb (5000) > Orb of Transmutation (3000)
         assert results[0]["name"] == "Divine Orb"
 
     def test_upsert_updates_existing(self, tmp_db: PriceDatabase):
@@ -263,15 +263,15 @@ class TestUpsertAndRead:
 class TestFillDivineValues:
     def test_fills_currency_divine_values(self, tmp_db: PriceDatabase):
         rows = [
-            {"name": "Divine Orb",        "category": "currency", "chaos_value": 200.0, "divine_value": None, "listing_count": 100},
-            {"name": "Orb of Alteration", "category": "currency", "chaos_value": 1.0,   "divine_value": None, "listing_count": 50},
+            {"name": "Divine Orb",            "category": "currency", "chaos_value": 200.0, "divine_value": None, "listing_count": 100},
+            {"name": "Orb of Transmutation",  "category": "currency", "chaos_value": 1.0,   "divine_value": None, "listing_count": 50},
         ]
         tmp_db.upsert_prices(rows, "Dawn of the Hunt")
         tmp_db.fill_divine_values("Dawn of the Hunt")
 
-        alt = tmp_db.get_price("Orb of Alteration", "Dawn of the Hunt", "currency")
+        transmute = tmp_db.get_price("Orb of Transmutation", "Dawn of the Hunt", "currency")
         # SQLite ROUND(1.0/200.0, 2) = 0.01 (rounds half away from zero)
-        assert alt["divine_value"] == pytest.approx(0.01, rel=0.01)
+        assert transmute["divine_value"] == pytest.approx(0.01, rel=0.01)
 
     def test_no_crash_if_divine_orb_missing(self, tmp_db: PriceDatabase):
         rows = [{"name": "Chaos Orb", "category": "currency", "chaos_value": 1.0,

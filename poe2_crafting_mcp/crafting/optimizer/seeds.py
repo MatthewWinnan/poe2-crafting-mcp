@@ -22,17 +22,17 @@ from .gene import (
 
 
 def seed_alt_regal_exalt() -> RuleList:
-    """Seed 1: Alt-Regal-Exalt (budget, conservative).
+    """Seed 1: Transmute-Regal-Exalt (budget, conservative).
 
-    The classic SSF/budget approach: transmute spam until a target mod appears,
+    The classic SSF/budget approach: transmute until a target mod appears,
     regal to rare, then exalt to fill. Cheap per attempt, many restarts.
+    In PoE2 there's no Alteration or Scouring — "scour" = buy a new white base.
     """
     rl = RuleList()
-    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
-    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION), "reroll magic")
-    rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL), "promote to rare")
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
-    rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.SCOUR), "restart: over budget")
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
+    rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL), "promote to rare")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.SCOUR), "bad magic → new base")
     rl.add_rule(Condition.open_prefix_gte(1), Action(Currency.EXALTED), "exalt prefix")
     rl.add_rule(Condition.open_suffix_gte(1), Action(Currency.EXALTED), "exalt suffix")
     rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
@@ -43,15 +43,14 @@ def seed_alt_regal_exalt() -> RuleList:
 def seed_greater_alt_regal() -> RuleList:
     """Seed 2: Greater Currency Variant.
 
-    Same structure as alt-regal but with Greater currencies. Narrowed mod pool
+    Same structure but with Greater currencies. Narrowed mod pool
     (min_lv 35-44) means higher chance of T1-T3. Costs more per use.
     """
     rl = RuleList()
-    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.GREATER_TRANSMUTE), "start")
-    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION), "reroll magic")
-    rl.add_rule(Condition.has_any_target(), Action(Currency.GREATER_REGAL), "promote")
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
-    rl.add_rule(Condition.cost_spent_gte(600), Action(Currency.SCOUR), "restart")
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.GREATER_TRANSMUTE), "start")
+    rl.add_rule(Condition.has_any_target(), Action(Currency.GREATER_REGAL), "promote")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.SCOUR), "bad magic → new base")
     rl.add_rule(Condition.open_prefix_gte(1), Action(Currency.GREATER_EXALTED), "greater exalt")
     rl.add_rule(Condition.open_suffix_gte(1), Action(Currency.GREATER_EXALTED), "greater exalt")
     rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
@@ -67,11 +66,10 @@ def seed_perfect_currency() -> RuleList:
     on ilvl 82+ bases.
     """
     rl = RuleList()
-    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.PERFECT_TRANSMUTE), "start")
-    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION), "reroll magic")
-    rl.add_rule(Condition.has_any_target(), Action(Currency.PERFECT_REGAL), "promote")
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
-    rl.add_rule(Condition.cost_spent_gte(800), Action(Currency.SCOUR), "restart")
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.PERFECT_TRANSMUTE), "start")
+    rl.add_rule(Condition.has_any_target(), Action(Currency.PERFECT_REGAL), "promote")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.SCOUR), "no target → new base")
     rl.add_rule(Condition.open_prefix_gte(1), Action(Currency.PERFECT_EXALTED), "perfect exalt")
     rl.add_rule(Condition.open_suffix_gte(1), Action(Currency.PERFECT_EXALTED), "perfect exalt")
     rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
@@ -164,11 +162,10 @@ def seed_omen_targeted_exalts() -> RuleList:
     target mod on the correct side. The control-oriented approach.
     """
     rl = RuleList()
-    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
-    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION), "reroll magic")
-    rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL), "promote")
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
-    rl.add_rule(Condition.cost_spent_gte(800), Action(Currency.SCOUR), "restart")
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
+    rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL), "promote")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.SCOUR), "no target → new base")
     rl.add_rule(
         Condition.missing_target_prefix(),
         Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
@@ -264,10 +261,11 @@ def seed_aggressive_restart() -> RuleList:
     """
     rl = RuleList()
     rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
-    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION), "reroll")
     rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL), "promote")
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
-    rl.add_rule(Condition.cost_spent_gte(100), Action(Currency.SCOUR), "quick restart")
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
+    rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL), "promote")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.SCOUR), "no target → new base")
     rl.add_rule(Condition.open_prefix_gte(1), Action(Currency.EXALTED), "one exalt try")
     rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "give up fast")
     return rl

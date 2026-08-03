@@ -373,7 +373,7 @@ class TestBehavioralDescriptors:
     def test_primary_early_currency_transmute(self):
         rl = RuleList()
         rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE))
-        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION))
+        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.SCOUR))
         rl.add_rule(Condition.always_true(), Action(Currency.SCOUR))
         assert rl.primary_early_currency == "transmute"
 
@@ -546,7 +546,7 @@ class TestFullStrategy:
         """Classic alt-regal-exalt flow."""
         rl = RuleList()
         rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
-        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION), "reroll")
+        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.SCOUR), "reroll")
         rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL), "promote")
         rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
         rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.SCOUR), "restart")
@@ -584,7 +584,7 @@ class TestFullStrategy:
         """Omen-targeted exalts with sinistral/dextral."""
         rl = RuleList()
         rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE))
-        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION))
+        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.SCOUR))
         rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL))
         rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE))
         rl.add_rule(Condition.cost_spent_gte(800), Action(Currency.SCOUR))
@@ -611,7 +611,7 @@ class TestFullStrategy:
         """
         rl = RuleList()
         rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
-        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION), "reroll")
+        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.SCOUR), "reroll")
         rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL), "promote")
         rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
         rl.add_rule(Condition.cost_spent_gte(600), Action(Currency.SCOUR), "restart")
@@ -709,7 +709,7 @@ class TestFullStrategy:
         """
         rl = RuleList()
         rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE))
-        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION))
+        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.SCOUR))
         rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL))
         rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE))
         rl.add_rule(Condition.cost_spent_gte(800), Action(Currency.SCOUR))

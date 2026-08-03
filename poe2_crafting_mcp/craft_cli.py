@@ -656,7 +656,6 @@ def cmd_sim(argv: list[str]) -> int:
                     "augment": "Orb of Augmentation",
                     "greater_augment": "Greater Orb of Augmentation",
                     "perfect_augment": "Perfect Orb of Augmentation",
-                    "alteration": "Orb of Alteration",
                     "regal": "Regal Orb",
                     "greater_regal": "Greater Regal Orb",
                     "perfect_regal": "Perfect Regal Orb",
