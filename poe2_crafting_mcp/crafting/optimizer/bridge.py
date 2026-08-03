@@ -36,10 +36,23 @@ try:
     _RUST_AVAILABLE = True
     log.info("Rust poe2_optimizer loaded — fast MC evaluation available")
 except ImportError:
-    log.warning(
-        "Rust poe2_optimizer not available — using Python stub (slow). "
-        "Build with: cd crates/poe2-optimizer && maturin develop --release"
-    )
+    # Try loading from the build directory (development mode)
+    import sys
+    from pathlib import Path
+    _so_dir = Path(__file__).resolve().parent.parent.parent.parent / "target" / "release"
+    if _so_dir.exists():
+        sys.path.insert(0, str(_so_dir))
+        try:
+            from poe2_optimizer import evaluate_population as _rust_evaluate  # type: ignore
+            _RUST_AVAILABLE = True
+            log.info("Rust poe2_optimizer loaded from target/release/")
+        except ImportError:
+            pass
+    if not _RUST_AVAILABLE:
+        log.warning(
+            "Rust poe2_optimizer not available — using Python stub (slow). "
+            "Build with: cd crates/poe2-optimizer && maturin develop --release"
+        )
 
 
 # ── Pool Encoding ─────────────────────────────────────────────────────────────
