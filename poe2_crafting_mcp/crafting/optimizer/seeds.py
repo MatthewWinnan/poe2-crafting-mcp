@@ -290,17 +290,23 @@ def seed_deterministic_multimod() -> RuleList:
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "all targets done")
     rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate for abyss")
     rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL), "reveal abyss mod")
+    # Annul junk to make room BEFORE exalting (critical for multi-prefix targets)
     rl.add_rule(
-        Condition.missing_target_prefix(),
+        Condition.has_non_target_removable(),
+        Action(Currency.ANNULMENT),
+        "annul any junk to make room",
+    )
+    # Targeted exalts (only fire when there's open slots after annulling)
+    rl.add_rule(
+        Condition.open_prefix_gte(1),
         Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
         "sinistral exalt for prefix",
     )
     rl.add_rule(
-        Condition.missing_target_suffix(),
+        Condition.open_suffix_gte(1),
         Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
         "dextral exalt for suffix",
     )
-    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
     rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.SCOUR), "restart if stuck")
     rl.add_rule(Condition.always_true(), Action(Currency.EXALTED), "blind exalt")
     return rl

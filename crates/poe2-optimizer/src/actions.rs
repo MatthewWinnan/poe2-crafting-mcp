@@ -175,8 +175,9 @@ pub fn apply_currency(
         }
 
         ESSENCE_UPGRADE => {
-            // Greater Essence: Magic → Rare, guaranteed target + fills to 4 total mods
-            // In reality: 1 guaranteed + 3 random = 4 mods on the item (leaving 2 open!)
+            // Greater Essence: Magic → Rare, adds ONLY the 1 guaranteed mod.
+            // NO random fill. Item keeps existing magic mods + essence mod.
+            // Result: 2-3 mods total (1-2 from magic + 1 essence).
             if item.has_essence_mod() {
                 return;
             }
@@ -185,10 +186,7 @@ pub fn apply_currency(
             if let Some(fam) = find_first_missing_target(item, pool) {
                 add_specific_mod(item, fam, pool, rng);
             }
-            // Fill to 4 mods total (not 6!) — leaves 2 open slots for exalting
-            while item.mod_count() < 4 {
-                add_random_mod(item, pool, 0, NO_OMEN, rng);
-            }
+            // NO fill — this is the correct behavior per the crafting simulator
         }
 
         ESSENCE_SWAP => {
