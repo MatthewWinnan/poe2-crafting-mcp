@@ -115,13 +115,17 @@ class Currency(IntEnum):
 class Omen(IntEnum):
     """Omen modifiers applied alongside a currency."""
     NONE = 0
-    SINISTRAL_EXALTATION = 1
-    DEXTRAL_EXALTATION = 2
-    GREATER_EXALTATION = 3
-    SINISTRAL_ANNULMENT = 4
-    DEXTRAL_ANNULMENT = 5
-    SINISTRAL_CORONATION = 6
-    DEXTRAL_CORONATION = 7
+    SINISTRAL_EXALTATION = 1   # force prefix on exalt
+    DEXTRAL_EXALTATION = 2     # force suffix on exalt
+    GREATER_EXALTATION = 3     # add 2 mods on exalt
+    SINISTRAL_ANNULMENT = 4    # remove prefix only
+    DEXTRAL_ANNULMENT = 5      # remove suffix only
+    SINISTRAL_CORONATION = 6   # regal adds prefix
+    DEXTRAL_CORONATION = 7     # regal adds suffix
+    WHITTLING = 8              # chaos targets lowest-req mod for removal
+    ABYSSAL_ECHOES = 9         # re-roll desecration reveal options
+    SINISTRAL_NECROMANCY = 10  # desecration reveal targets prefixes only
+    DEXTRAL_NECROMANCY = 11    # desecration reveal targets suffixes only
 
 
 # ── Condition ─────────────────────────────────────────────────────────────────
