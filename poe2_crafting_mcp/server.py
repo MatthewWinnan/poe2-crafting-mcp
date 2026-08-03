@@ -2173,6 +2173,111 @@ def simulate_trade_item(
     return _to_json(out)
 
 
+# ── Crafting Optimizer ────────────────────────────────────────────────────────
+
+@mcp.tool()
+def optimize_craft_path(
+    item_class: str,
+    targets: str,
+    ilvl: int = 82,
+    trade_price: float = 0,
+    base_item: str = "",
+    quick: bool = True,
+) -> str:
+    """
+    Find the optimal crafting strategy for an item using evolutionary optimization.
+
+    Runs a GP (Genetic Programming) optimizer that evolves rule-list strategies,
+    evaluates them via Monte Carlo simulation, and returns the best approaches
+    ranked by cost, reliability, and consistency.
+
+    Args:
+        item_class: poe2db item class (e.g. "Gloves_int", "Boots_dex", "Amulets")
+        targets:    Comma-separated "Family:affix:tier" specs.
+                    Example: "IncreasedEnergyShield:prefix:1, FireResistance:suffix:2"
+                    affix = "prefix" or "suffix", tier = 1 for T1 only, 2 for T1-T2, etc.
+        ilvl:       Item level (determines mod pool eligibility, default 82)
+        trade_price: Known trade price for the finished item (for CRAFT vs BUY verdict).
+                     Set to 0 to skip verdict (optimizer just finds cheapest strategy).
+        base_item:  Starting base specification:
+                    - "fractured:FamilyName:220" = start from fractured base (220c)
+                    - "magic:FamilyName:35" = start from magic with mod (35c)
+                    - "white:2" = start from white base (2c, default)
+                    - "" = use default white base pricing
+        quick:      If true (default), use fast settings (pop=50, gen=10, trials=200).
+                    Set false for thorough optimization (pop=200, gen=50, trials=500).
+
+    Returns:
+        JSON with:
+        - strategies: ranked list of discovered crafting strategies
+        - best_verdict: "CRAFT (saves Xc)" or "BUY (costs Xc more)"
+        - metadata: generations, evaluations, wall_time, archive_coverage
+    """
+    from poe2_crafting_mcp.crafting.optimizer.preflight import preflight
+    from poe2_crafting_mcp.crafting.optimizer.runner import optimize, OptimizerConfig
+    from poe2_crafting_mcp.crafting.optimizer.cli import _parse_targets, _apply_base_item
+
+    # Parse targets
+    target_mods = _parse_targets(targets)
+    if not target_mods:
+        return _to_json({"error": "No valid targets. Format: 'Family:prefix|suffix:tier'"})
+
+    # Preflight
+    pool_data, prices, target = preflight(item_class, ilvl, target_mods)
+
+    # Apply options
+    if trade_price > 0:
+        prices.trade_finished = trade_price
+    if base_item:
+        _apply_base_item(base_item, prices, target)
+
+    # Config
+    if quick:
+        config = OptimizerConfig(pop_size=50, max_generations=10, mc_trials=200)
+    else:
+        config = OptimizerConfig(pop_size=200, max_generations=50, mc_trials=500)
+
+    # Run
+    result = optimize(pool_data, target, prices, config)
+
+    # Format output
+    strategies_out = []
+    seen: set[str] = set()
+    for s in result.strategies:
+        if s.family_name in seen:
+            continue
+        seen.add(s.family_name)
+        strategies_out.append({
+            "family_name": s.family_name,
+            "verdict": s.verdict,
+            "expected_cost": round(s.expected_cost, 1),
+            "base_acquisition_cost": round(s.base_acquisition_cost, 1),
+            "currency_cost": round(s.currency_cost, 1),
+            "success_rate": round(s.success_rate, 3),
+            "cost_p90": round(s.cost_p90, 1),
+            "savings_vs_trade": round(s.savings_vs_trade, 1),
+            "starting_state": s.starting_state,
+            "steps": s.steps,
+            "rule_count": s.rulelist.size,
+        })
+
+    return _to_json({
+        "target": str(target),
+        "trade_price": prices.trade_finished if prices.trade_finished < float("inf") else None,
+        "best_verdict": result.best_verdict,
+        "strategies": strategies_out,
+        "metadata": {
+            "generations": result.generations,
+            "evaluations": result.evaluations,
+            "wall_time_seconds": round(result.wall_time_seconds, 2),
+            "archive_coverage": round(result.archive_coverage, 3),
+            "rust_available": result.rust_available,
+            "strategy_families": len(strategies_out),
+            "archive_strategies": len(result.archive_strategies),
+        },
+    })
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:

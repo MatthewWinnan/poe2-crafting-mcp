@@ -34,6 +34,7 @@ poe2-mcp = "poe2_crafting_mcp.server:main"
 pob-inspect = "poe2_crafting_mcp.engine.cli:main"
 poe2-lookup = "poe2_crafting_mcp.data.lookup_cli:main"
 poe2-price = "poe2_crafting_mcp.data.price_cli:main"
+poe2-optimize = "poe2_crafting_mcp.crafting.optimizer.cli:main"
 
 [build-system]
 requires = ["hatchling", "editables"]
