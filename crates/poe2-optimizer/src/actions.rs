@@ -76,10 +76,8 @@ pub fn apply_currency(
             item.cost_spent = cost;
             item.step_count = steps;
             item.rarity = 1;
-            // Add one target mod (simulates buying magic with target)
-            if let Some(&fam) = pool.target_prefix_families.first()
-                .or(pool.target_suffix_families.first())
-            {
+            // Add first MISSING target mod (simulates buying magic with that mod)
+            if let Some(fam) = find_first_missing_target(item, pool) {
                 add_specific_mod(item, fam, pool, rng);
             }
         }
@@ -91,10 +89,8 @@ pub fn apply_currency(
             item.cost_spent = cost;
             item.step_count = steps;
             item.rarity = 2;
-            // Add one target mod as fractured
-            if let Some(&fam) = pool.target_prefix_families.first()
-                .or(pool.target_suffix_families.first())
-            {
+            // Add first MISSING target mod as fractured
+            if let Some(fam) = find_first_missing_target(item, pool) {
                 add_specific_mod(item, fam, pool, rng);
                 // Fracture it
                 if item.prefix_count > 0 {
@@ -180,12 +176,13 @@ pub fn apply_currency(
 
         ESSENCE_UPGRADE => {
             // Magic → Rare + guaranteed target mod + fill
+            // Only works if item doesn't already have an essence mod (one per item!)
+            if item.has_essence_mod() {
+                return; // Already has crafted mod — can't apply another
+            }
             item.rarity = 2;
             item.set_essence_mod(true);
-            // Add a target mod as the guaranteed one
-            if let Some(&fam) = pool.target_prefix_families.first()
-                .or(pool.target_suffix_families.first())
-            {
+            if let Some(fam) = find_first_missing_target(item, pool) {
                 add_specific_mod(item, fam, pool, rng);
             }
             // Fill remaining (3-5 more mods)
@@ -199,11 +196,13 @@ pub fn apply_currency(
         }
 
         ESSENCE_SWAP => {
-            // Remove one non-fractured, non-essence mod; add guaranteed target
+            // Remove one non-fractured, non-essence mod; add first MISSING target
+            // Only works if item doesn't already have an essence mod
+            if item.has_essence_mod() {
+                return; // Already has crafted mod
+            }
             remove_random_mod(item, NO_OMEN, rng);
-            if let Some(&fam) = pool.target_prefix_families.first()
-                .or(pool.target_suffix_families.first())
-            {
+            if let Some(fam) = find_first_missing_target(item, pool) {
                 add_specific_mod(item, fam, pool, rng);
             }
             item.set_essence_mod(true);
@@ -384,6 +383,18 @@ fn add_random_mod(
             item.suffix_count += 1;
         }
     }
+}
+
+/// Find the first target family that is NOT yet on the item.
+/// This enables sequential crafting: buy target 0, essence target 1, exalt target 2.
+fn find_first_missing_target(item: &ItemState, pool: &ModPool) -> Option<u16> {
+    for &fam in pool.all_target_families.iter() {
+        if !item.has_family(fam) {
+            return Some(fam);
+        }
+    }
+    // All targets already present — return first target anyway (for tier upgrade attempts)
+    pool.all_target_families.first().copied()
 }
 
 fn add_specific_mod(item: &mut ItemState, family: u16, pool: &ModPool, rng: &mut impl Rng) {
