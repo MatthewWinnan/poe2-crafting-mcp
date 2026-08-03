@@ -55,6 +55,11 @@ class Predicate(IntEnum):
     REMOVABLE_GT_TARGETS = 15
     PREFIX_FULL_NO_TARGET_PREFIX = 16
     SUFFIX_FULL_NO_TARGET_SUFFIX = 17
+    # Advanced state checks
+    HAS_FRACTURED_MOD = 18       # item has at least one fractured mod
+    HAS_ESSENCE_MOD = 19         # item has an essence-guaranteed mod (only 1 allowed)
+    NO_ESSENCE_MOD = 20          # item does NOT have an essence mod (can apply essence)
+    FRACTURED_IS_TARGET = 21     # the fractured mod is one of our targets
     ALWAYS_TRUE = 255
 
 
@@ -62,12 +67,16 @@ class Predicate(IntEnum):
 
 class Currency(IntEnum):
     """Crafting currency actions."""
+    # Terminal
     DONE = 0
     FAIL = 1
+    # Restart
     SCOUR = 2
     BUY_BASE = 3
     BUY_MAGIC = 4
     BUY_FRACTURED = 5
+    REFORGE = 6
+    # Basic crafting
     TRANSMUTE = 10
     GREATER_TRANSMUTE = 11
     PERFECT_TRANSMUTE = 12
@@ -86,6 +95,12 @@ class Currency(IntEnum):
     GREATER_CHAOS = 25
     PERFECT_CHAOS = 26
     ALCHEMY = 27
+    # Advanced crafting
+    FRACTURING = 30
+    ESSENCE_UPGRADE = 31   # Greater Essence: Magic → Rare + guaranteed mod
+    ESSENCE_SWAP = 32      # Perfect Essence: remove 1, add 1 guaranteed
+    DIVINE = 33            # Reroll mod values within tier ranges
+    VAAL = 34              # Corruption (terminal — no further mods)
 
 
 class Omen(IntEnum):
@@ -203,6 +218,22 @@ class Condition:
     def always_true(cls) -> Self:
         return cls(Predicate.ALWAYS_TRUE)
 
+    @classmethod
+    def has_fractured_mod(cls) -> Self:
+        return cls(Predicate.HAS_FRACTURED_MOD)
+
+    @classmethod
+    def has_essence_mod(cls) -> Self:
+        return cls(Predicate.HAS_ESSENCE_MOD)
+
+    @classmethod
+    def no_essence_mod(cls) -> Self:
+        return cls(Predicate.NO_ESSENCE_MOD)
+
+    @classmethod
+    def fractured_is_target(cls) -> Self:
+        return cls(Predicate.FRACTURED_IS_TARGET)
+
     def to_array(self) -> tuple[int, int, int]:
         """Serialize for Rust: (predicate_id, arg1, arg2)."""
         return (int(self.predicate), self.arg1, self.arg2)
@@ -250,7 +281,8 @@ class Action:
     @property
     def is_restart(self) -> bool:
         return self.currency in (Currency.SCOUR, Currency.BUY_BASE,
-                                 Currency.BUY_MAGIC, Currency.BUY_FRACTURED)
+                                 Currency.BUY_MAGIC, Currency.BUY_FRACTURED,
+                                 Currency.REFORGE)
 
     @property
     def has_omen(self) -> bool:
