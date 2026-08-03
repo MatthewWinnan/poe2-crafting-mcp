@@ -216,7 +216,7 @@ pub fn apply_currency(
             item.rarity = 2;
             item.set_essence_mod(true);
             if let Some(fam) = find_first_missing_target(item, pool) {
-                add_specific_mod(item, fam, pool, rng);
+                add_specific_mod_best_tier(item, fam, pool);
             }
             // NO fill — this is the correct behavior per the crafting simulator
         }
