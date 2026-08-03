@@ -175,22 +175,18 @@ pub fn apply_currency(
         }
 
         ESSENCE_UPGRADE => {
-            // Magic → Rare + guaranteed target mod + fill
-            // Only works if item doesn't already have an essence mod (one per item!)
+            // Greater Essence: Magic → Rare, guaranteed target + fills to 4 total mods
+            // In reality: 1 guaranteed + 3 random = 4 mods on the item (leaving 2 open!)
             if item.has_essence_mod() {
-                return; // Already has crafted mod — can't apply another
+                return;
             }
             item.rarity = 2;
             item.set_essence_mod(true);
             if let Some(fam) = find_first_missing_target(item, pool) {
                 add_specific_mod(item, fam, pool, rng);
             }
-            // Fill remaining (3-5 more mods)
-            let fill = rng.gen_range(3u8..=5u8);
-            for _ in 0..fill {
-                if item.mod_count() >= 6 {
-                    break;
-                }
+            // Fill to 4 mods total (not 6!) — leaves 2 open slots for exalting
+            while item.mod_count() < 4 {
                 add_random_mod(item, pool, 0, NO_OMEN, rng);
             }
         }
@@ -227,75 +223,55 @@ pub fn apply_currency(
         }
 
         REVEAL => {
-            // Well of Souls: reveal 3 options, player picks the best one.
-            // Model: roll 3 random mods from pool, if any is a target family
-            // at acceptable tier, place it. Otherwise place the first one.
-            item.set_desecrated(false); // consumed
-            item.flags |= 0x08; // mark "has been desecrated ever" — can't desecrate again
+            // Well of Souls: reveal 3 options from the DESECRATED pool (small, ~14 mods).
+            // Player picks the best one. P(specific target) ≈ 1-(13/14)^3 ≈ 20%.
+            //
+            // Simplified model: 20% chance of placing the target abyss mod directly,
+            // 80% chance of placing a random suffix (non-target abyss mod).
+            // This is more accurate than drawing from the full 80k-weight pool.
+            item.set_desecrated(false);
+            item.flags |= 0x08; // mark has_been_desecrated_ever
 
-            let max_p = if item.rarity == 1 { 1 } else { pool.max_prefixes };
             let max_s = if item.rarity == 1 { 1 } else { pool.max_suffixes };
-            let prefix_open = item.prefix_count < max_p;
-            let suffix_open = item.suffix_count < max_s;
-
-            if !prefix_open && !suffix_open {
-                return;
+            if item.suffix_count >= max_s {
+                return; // no room
             }
 
-            // Collect blocked families
-            let mut blocked = Vec::with_capacity(6);
-            for i in 0..item.prefix_count as usize {
-                if item.prefix_families[i] != 0 { blocked.push(item.prefix_families[i]); }
-            }
-            for i in 0..item.suffix_count as usize {
-                if item.suffix_families[i] != 0 { blocked.push(item.suffix_families[i]); }
-            }
+            // Check if there's a suffix target we're missing
+            let missing_suffix_target = pool.target_suffix_families.iter()
+                .find(|&&fam| !item.has_family(fam))
+                .copied();
 
-            // Roll 3 options (suffix-biased since most desecrated mods are suffixes)
-            let mut best_option: Option<(u16, u8, bool)> = None; // (family, tier, is_prefix)
-            for _ in 0..3 {
-                let rng_val = rng.gen::<u64>();
-                // Try suffix first (desecrated pool is mostly suffixes)
-                if suffix_open {
+            if let Some(target_fam) = missing_suffix_target {
+                // ~20% chance to get the specific target from pick-from-3
+                // (14 options, pick 3, roughly 1 - (13/14)^3)
+                if rng.gen::<f32>() < 0.20 {
+                    // Success: place the target at a random tier
+                    add_specific_mod(item, target_fam, pool, rng);
+                } else {
+                    // Got a non-target abyss mod — place a random suffix
+                    let blocked: Vec<u16> = (0..item.suffix_count as usize)
+                        .map(|i| item.suffix_families[i])
+                        .filter(|&f| f != 0)
+                        .collect();
+                    let rng_val = rng.gen::<u64>();
                     if let Some((fam, tier)) = pool.sample_suffix(&blocked, 0, rng_val) {
-                        // Prefer target families
-                        if pool.all_target_families.contains(&fam) {
-                            // Check tier acceptability
-                            let is_acceptable = pool.target_max_tiers.iter()
-                                .zip(pool.all_target_families.iter())
-                                .any(|(max_t, tf)| *tf == fam && tier <= *max_t);
-                            if is_acceptable {
-                                best_option = Some((fam, tier, false));
-                                break; // Found a target — take it immediately
-                            }
-                        }
-                        if best_option.is_none() {
-                            best_option = Some((fam, tier, false));
-                        }
-                    }
-                } else if prefix_open {
-                    if let Some((fam, tier)) = pool.sample_prefix(&blocked, 0, rng_val) {
-                        if pool.all_target_families.contains(&fam) {
-                            best_option = Some((fam, tier, true));
-                            break;
-                        }
-                        if best_option.is_none() {
-                            best_option = Some((fam, tier, true));
-                        }
+                        let idx = item.suffix_count as usize;
+                        item.suffix_families[idx] = fam;
+                        item.suffix_tiers[idx] = tier;
+                        item.suffix_count += 1;
                     }
                 }
-            }
-
-            // Place the best option found
-            if let Some((family, tier, is_prefix)) = best_option {
-                if is_prefix && prefix_open {
-                    let idx = item.prefix_count as usize;
-                    item.prefix_families[idx] = family;
-                    item.prefix_tiers[idx] = tier;
-                    item.prefix_count += 1;
-                } else if !is_prefix && suffix_open {
+            } else {
+                // No suffix target missing — place any random suffix
+                let blocked: Vec<u16> = (0..item.suffix_count as usize)
+                    .map(|i| item.suffix_families[i])
+                    .filter(|&f| f != 0)
+                    .collect();
+                let rng_val = rng.gen::<u64>();
+                if let Some((fam, tier)) = pool.sample_suffix(&blocked, 0, rng_val) {
                     let idx = item.suffix_count as usize;
-                    item.suffix_families[idx] = family;
+                    item.suffix_families[idx] = fam;
                     item.suffix_tiers[idx] = tier;
                     item.suffix_count += 1;
                 }
