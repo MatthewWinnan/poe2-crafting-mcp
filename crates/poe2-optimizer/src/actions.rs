@@ -62,28 +62,40 @@ pub fn apply_currency(
 ) {
     match currency {
         SCOUR | BUY_BASE | REFORGE => {
+            let cost = item.cost_spent;
+            let steps = item.step_count;
             *item = ItemState::blank();
+            item.cost_spent = cost;
+            item.step_count = steps;
         }
 
         BUY_MAGIC => {
+            let cost = item.cost_spent;
+            let steps = item.step_count;
             *item = ItemState::blank();
+            item.cost_spent = cost;
+            item.step_count = steps;
             item.rarity = 1;
             // Add one target mod (simulates buying magic with target)
             if let Some(&fam) = pool.target_prefix_families.first()
                 .or(pool.target_suffix_families.first())
             {
-                add_specific_mod(item, fam, 1, pool);
+                add_specific_mod(item, fam, pool, rng);
             }
         }
 
         BUY_FRACTURED => {
+            let cost = item.cost_spent;
+            let steps = item.step_count;
             *item = ItemState::blank();
+            item.cost_spent = cost;
+            item.step_count = steps;
             item.rarity = 2;
             // Add one target mod as fractured
             if let Some(&fam) = pool.target_prefix_families.first()
                 .or(pool.target_suffix_families.first())
             {
-                add_specific_mod(item, fam, 1, pool);
+                add_specific_mod(item, fam, pool, rng);
                 // Fracture it
                 if item.prefix_count > 0 {
                     item.fractured_mask |= 1;
@@ -174,7 +186,7 @@ pub fn apply_currency(
             if let Some(&fam) = pool.target_prefix_families.first()
                 .or(pool.target_suffix_families.first())
             {
-                add_specific_mod(item, fam, 1, pool);
+                add_specific_mod(item, fam, pool, rng);
             }
             // Fill remaining (3-5 more mods)
             let fill = rng.gen_range(3u8..=5u8);
@@ -192,7 +204,7 @@ pub fn apply_currency(
             if let Some(&fam) = pool.target_prefix_families.first()
                 .or(pool.target_suffix_families.first())
             {
-                add_specific_mod(item, fam, 1, pool);
+                add_specific_mod(item, fam, pool, rng);
             }
             item.set_essence_mod(true);
         }
@@ -305,9 +317,15 @@ fn add_random_mod(
     }
 }
 
-fn add_specific_mod(item: &mut ItemState, family: u16, tier: u8, pool: &ModPool) {
-    // Determine if this family is a prefix or suffix target
+fn add_specific_mod(item: &mut ItemState, family: u16, pool: &ModPool, rng: &mut impl Rng) {
+    // Place a mod from the specified family at a random tier (weighted)
     let is_prefix = pool.target_prefix_families.contains(&family);
+
+    let tier = if is_prefix {
+        pick_random_tier_for_family(family, &pool.prefix_families, &pool.prefix_tiers, &pool.prefix_weights, rng)
+    } else {
+        pick_random_tier_for_family(family, &pool.suffix_families, &pool.suffix_tiers, &pool.suffix_weights, rng)
+    };
 
     if is_prefix && item.prefix_count < pool.max_prefixes {
         let idx = item.prefix_count as usize;
@@ -320,6 +338,30 @@ fn add_specific_mod(item: &mut ItemState, family: u16, tier: u8, pool: &ModPool)
         item.suffix_tiers[idx] = tier;
         item.suffix_count += 1;
     }
+}
+
+fn pick_random_tier_for_family(family: u16, families: &[u16], tiers: &[u8], weights: &[u32], rng: &mut impl Rng) -> u8 {
+    let mut total_weight: u64 = 0;
+    let mut family_entries: Vec<(u8, u32)> = Vec::new();
+    for i in 0..families.len() {
+        if families[i] == family {
+            family_entries.push((tiers[i], weights[i]));
+            total_weight += weights[i] as u64;
+        }
+    }
+    if family_entries.is_empty() || total_weight == 0 {
+        return 1;
+    }
+    // Weighted random selection
+    let target = rng.gen::<u64>() % total_weight;
+    let mut cumulative: u64 = 0;
+    for (tier, weight) in &family_entries {
+        cumulative += *weight as u64;
+        if cumulative > target {
+            return *tier;
+        }
+    }
+    family_entries.last().map(|(t, _)| *t).unwrap_or(1)
 }
 
 fn remove_random_mod(item: &mut ItemState, omen: u16, rng: &mut impl Rng) {

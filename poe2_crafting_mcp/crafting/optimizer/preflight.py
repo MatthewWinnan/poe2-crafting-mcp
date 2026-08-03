@@ -189,6 +189,27 @@ def preflight(
     if "scouring" not in currency_prices:
         currency_prices["scouring"] = 0.5
 
+    # Default prices for common currencies not tracked by poe.ninja (too cheap)
+    _DEFAULTS: dict[str, float] = {
+        "alteration": 0.05,
+        "transmute": 0.01,
+        "augment": 0.01,
+        "alchemy": 0.02,
+        "regal": 0.02,
+        "greater_transmute": 0.5,
+        "greater_augment": 0.5,
+        "greater_regal": 0.5,
+        "greater_chaos": 1.0,
+        "greater_exalted": 1.0,
+        "perfect_augment": 2.0,
+        "perfect_regal": 2.0,
+        "perfect_chaos": 3.0,
+        "perfect_exalted": 5.0,
+    }
+    for name, default_price in _DEFAULTS.items():
+        if name not in currency_prices:
+            currency_prices[name] = default_price
+
     # ── Phase 5: Base item prices (from cache, no trade API calls) ──
     # Try to find the base item price from ninja
     base_white = 1.0  # default: white bases are nearly free

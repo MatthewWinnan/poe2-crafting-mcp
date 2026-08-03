@@ -49,7 +49,7 @@ pub fn evaluate_condition(
 
         HAS_TARGET => item.has_family(arg1),
 
-        ALL_TARGETS_HIT => item.all_targets_hit(&pool.all_target_families),
+        ALL_TARGETS_HIT => item.all_targets_at_tier(&pool.all_target_families, &pool.target_max_tiers),
 
         ALL_TARGETS_AT_TIER => {
             item.all_targets_at_tier(&pool.all_target_families, &pool.target_max_tiers)
