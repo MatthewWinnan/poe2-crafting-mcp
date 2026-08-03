@@ -288,27 +288,27 @@ def seed_deterministic_multimod() -> RuleList:
     rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.REGAL), "regal to rare")
     rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_UPGRADE), "essence target 2")
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "all targets done")
-    rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate for abyss")
-    rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL), "reveal abyss mod")
-    # Annul junk to make room BEFORE exalting (critical for multi-prefix targets)
-    rl.add_rule(
-        Condition.has_non_target_removable(),
-        Action(Currency.ANNULMENT),
-        "annul any junk to make room",
-    )
-    # Targeted exalts (only fire when there's open slots after annulling)
+    # Targeted exalts — only when open slots exist
     rl.add_rule(
         Condition.open_prefix_gte(1),
         Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
-        "sinistral exalt for prefix",
+        "sinistral exalt for prefix target",
     )
+    # Desecrate + reveal for abyss suffix target
+    rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate for abyss")
+    rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL), "reveal abyss mod")
+    # Dextral exalt for suffix targets (attack speed)
     rl.add_rule(
         Condition.open_suffix_gte(1),
         Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
-        "dextral exalt for suffix",
+        "dextral exalt for suffix target",
     )
-    rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.SCOUR), "restart if stuck")
-    rl.add_rule(Condition.always_true(), Action(Currency.EXALTED), "blind exalt")
+    # If prefixes are full but we're missing a target prefix → SCOUR AND RESTART
+    # (don't annul — too risky to lose target mods we already have)
+    rl.add_rule(Condition.missing_target_prefix(), Action(Currency.SCOUR), "restart: bad prefix fill")
+    rl.add_rule(Condition.missing_target_suffix(), Action(Currency.SCOUR), "restart: bad suffix fill")
+    rl.add_rule(Condition.cost_spent_gte(2000), Action(Currency.FAIL), "budget exceeded")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
     return rl
 
 
