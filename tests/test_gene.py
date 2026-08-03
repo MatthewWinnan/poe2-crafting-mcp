@@ -82,6 +82,8 @@ class TestCondition:
             (Condition.fractured_is_target(), Predicate.FRACTURED_IS_TARGET),
             (Condition.is_desecrated(), Predicate.IS_DESECRATED),
             (Condition.not_desecrated(), Predicate.NOT_DESECRATED),
+            (Condition.has_been_divined(), Predicate.HAS_BEEN_DIVINED),
+            (Condition.not_divined(), Predicate.NOT_DIVINED),
         ]
         for cond, expected_pred in cases:
             arr = cond.to_array()
@@ -647,3 +649,83 @@ class TestFullStrategy:
         rl.add_rule(Condition.always_true(), Action(Currency.SCOUR))
         assert rl.size == 8
         assert rl.omen_count == 1
+
+    def test_divine_before_fracture_strategy(self):
+        """Divine → Fracture workflow: max the roll value THEN lock it.
+
+        The GP learns this sequence because:
+        - Fractured mods CANNOT be divined afterward
+        - Max-rolled fractured mods are worth significantly more on trade
+        - Divine is cheap (8c) relative to the value uplift on a T1 mod
+
+        The key conditions:
+        - NOT_DIVINED + has_target → divine (optimize values first)
+        - HAS_BEEN_DIVINED + mod_count_lte(4) → fracture (safe to lock)
+        - The annul-to-isolate step happens BEFORE divine (strip garbage first)
+        """
+        rl = RuleList()
+        rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.ALCHEMY), "start rare")
+        rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+        rl.add_rule(Condition.cost_spent_gte(1000), Action(Currency.FAIL), "budget exceeded")
+        # Phase 1: Get target mod on the item (alt-regal or chaos)
+        rl.add_rule(Condition.missing_target_prefix(), Action(Currency.EXALTED), "slam for target")
+        # Phase 2: Strip non-targets to isolate the good mod
+        rl.add_rule(
+            Condition.has_non_target_removable(),
+            Action(Currency.ANNULMENT, Omen.SINISTRAL_ANNULMENT),
+            "annul junk (prefix side)",
+        )
+        # Phase 3: Divine to max the roll BEFORE fracturing
+        rl.add_rule(
+            Condition.not_divined(),
+            Action(Currency.DIVINE),
+            "divine to max roll",
+        )
+        # Phase 4: Fracture the max-rolled target mod
+        rl.add_rule(
+            Condition.has_been_divined(),
+            Action(Currency.FRACTURING),
+            "lock the max roll",
+        )
+        # Phase 5: Fill remaining slots around the fractured mod
+        rl.add_rule(
+            Condition.open_prefix_gte(1),
+            Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
+            "fill prefix",
+        )
+        rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart if stuck")
+        assert rl.size == 9
+        # Verify divine and fracture actions serialize correctly
+        _, acts, _ = rl.serialize()
+        assert acts[5, 0] == int(Currency.DIVINE)
+        assert acts[6, 0] == int(Currency.FRACTURING)
+
+    def test_divine_fracture_with_isolation_trick(self):
+        """The isolation trick: fracture + side-targeted annulment.
+
+        After fracturing, the fractured mod is protected. Use sinistral/dextral
+        annulment to deterministically remove the ONE remaining unwanted mod on
+        the same side, because the fractured mod can't be hit.
+        """
+        rl = RuleList()
+        rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE))
+        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION))
+        rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL))
+        rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE))
+        rl.add_rule(Condition.cost_spent_gte(800), Action(Currency.SCOUR))
+        # Divine before fracture
+        rl.add_rule(Condition.not_divined(), Action(Currency.DIVINE))
+        # Fracture the target
+        rl.add_rule(Condition.has_been_divined(), Action(Currency.FRACTURING))
+        # Isolation trick: after fracture, the fractured mod is safe,
+        # so side-targeted annul removes garbage deterministically
+        rl.add_rule(
+            Condition.has_fractured_mod(),
+            Action(Currency.ANNULMENT, Omen.DEXTRAL_ANNULMENT),
+            "isolate: remove suffix junk (fracture protects the good one)",
+        )
+        # Fill with exalts
+        rl.add_rule(Condition.open_suffix_gte(1), Action(Currency.EXALTED))
+        rl.add_rule(Condition.always_true(), Action(Currency.SCOUR))
+        assert rl.size == 10
+        assert rl.omen_count == 1  # the dextral annulment

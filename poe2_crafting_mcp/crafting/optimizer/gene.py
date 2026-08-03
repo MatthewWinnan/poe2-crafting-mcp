@@ -63,6 +63,9 @@ class Predicate(IntEnum):
     # Abyss / desecration state
     IS_DESECRATED = 22           # item is in desecrated state (can reveal)
     NOT_DESECRATED = 23          # item is NOT desecrated (can desecrate)
+    # Divine / fracture workflow
+    HAS_BEEN_DIVINED = 24        # item has been divined (values optimized, ready to fracture)
+    NOT_DIVINED = 25             # item has NOT been divined (should divine before fracturing)
     ALWAYS_TRUE = 255
 
 
@@ -247,6 +250,14 @@ class Condition:
     @classmethod
     def not_desecrated(cls) -> Self:
         return cls(Predicate.NOT_DESECRATED)
+
+    @classmethod
+    def has_been_divined(cls) -> Self:
+        return cls(Predicate.HAS_BEEN_DIVINED)
+
+    @classmethod
+    def not_divined(cls) -> Self:
+        return cls(Predicate.NOT_DIVINED)
 
     def to_array(self) -> tuple[int, int, int]:
         """Serialize for Rust: (predicate_id, arg1, arg2)."""
