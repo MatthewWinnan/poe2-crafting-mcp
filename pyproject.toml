@@ -13,6 +13,7 @@ dependencies = [
     "mcp>=1.0",
     "aiohttp>=3.9",
     "aiosqlite>=0.19",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
