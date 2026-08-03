@@ -110,8 +110,8 @@ pub fn evaluate_rulelist(
                         step += 1;
                         item.step_count = step as u16;
 
-                        // Check target satisfaction
-                        if item.all_targets_hit(&pool.all_target_families) {
+                        // Check target satisfaction (family + tier)
+                        if item.all_targets_at_tier(&pool.all_target_families, &pool.target_max_tiers) {
                             trial_success = true;
                             break 'trial;
                         }

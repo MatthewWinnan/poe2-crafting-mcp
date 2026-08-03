@@ -122,18 +122,18 @@ def preflight(
 
     for group in pool_result["prefixes"]:
         fam_id = get_family_id(group["family"])
-        for tier in group["tiers"]:
+        for tier_idx, tier in enumerate(group["tiers"]):
             prefix_weights.append(tier["weight"])
             prefix_families.append(fam_id)
-            prefix_tiers.append(len(group["tiers"]) - group["tiers"].index(tier))  # T1=1, T2=2...
+            prefix_tiers.append(tier_idx + 1)  # T1=1 (best), T2=2, T3=3, ...
             prefix_req_levels.append(tier["req_level"])
 
     for group in pool_result["suffixes"]:
         fam_id = get_family_id(group["family"])
-        for tier in group["tiers"]:
+        for tier_idx, tier in enumerate(group["tiers"]):
             suffix_weights.append(tier["weight"])
             suffix_families.append(fam_id)
-            suffix_tiers.append(len(group["tiers"]) - group["tiers"].index(tier))
+            suffix_tiers.append(tier_idx + 1)  # T1=1, T2=2, ...
             suffix_req_levels.append(tier["req_level"])
 
     # ── Phase 2: Build CraftTarget with resolved IDs ──
