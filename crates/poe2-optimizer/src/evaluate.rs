@@ -162,10 +162,14 @@ fn compute_fitness(
 ) -> Fitness {
     let success_rate = successes as f32 / n_trials as f32;
 
-    let expected_cost = if successful_costs.is_empty() {
+    // expected_cost = amortized: total spend across ALL trials / number of successes
+    // This gives "how much will I spend on average before getting 1 success"
+    // Including the cost of failed attempts (wasted currency on bad crafts)
+    let total_cost: f32 = all_costs.iter().sum();
+    let expected_cost = if successes == 0 {
         f32::INFINITY
     } else {
-        successful_costs.iter().sum::<f32>() / successful_costs.len() as f32
+        total_cost / successes as f32
     };
 
     let (cost_median, cost_p90, cost_std) = if successful_costs.is_empty() {
