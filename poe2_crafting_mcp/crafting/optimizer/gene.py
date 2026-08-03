@@ -60,6 +60,9 @@ class Predicate(IntEnum):
     HAS_ESSENCE_MOD = 19         # item has an essence-guaranteed mod (only 1 allowed)
     NO_ESSENCE_MOD = 20          # item does NOT have an essence mod (can apply essence)
     FRACTURED_IS_TARGET = 21     # the fractured mod is one of our targets
+    # Abyss / desecration state
+    IS_DESECRATED = 22           # item is in desecrated state (can reveal)
+    NOT_DESECRATED = 23          # item is NOT desecrated (can desecrate)
     ALWAYS_TRUE = 255
 
 
@@ -101,6 +104,9 @@ class Currency(IntEnum):
     ESSENCE_SWAP = 32      # Perfect Essence: remove 1, add 1 guaranteed
     DIVINE = 33            # Reroll mod values within tier ranges
     VAAL = 34              # Corruption (terminal — no further mods)
+    # Abyss crafting (desecration / Well of Souls)
+    DESECRATE = 35         # Apply bone — item enters desecrated state
+    REVEAL = 36            # At Well of Souls — place an abyss mod (uses open slot)
 
 
 class Omen(IntEnum):
@@ -233,6 +239,14 @@ class Condition:
     @classmethod
     def fractured_is_target(cls) -> Self:
         return cls(Predicate.FRACTURED_IS_TARGET)
+
+    @classmethod
+    def is_desecrated(cls) -> Self:
+        return cls(Predicate.IS_DESECRATED)
+
+    @classmethod
+    def not_desecrated(cls) -> Self:
+        return cls(Predicate.NOT_DESECRATED)
 
     def to_array(self) -> tuple[int, int, int]:
         """Serialize for Rust: (predicate_id, arg1, arg2)."""

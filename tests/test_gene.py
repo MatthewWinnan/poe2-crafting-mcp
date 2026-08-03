@@ -80,6 +80,8 @@ class TestCondition:
             (Condition.has_essence_mod(), Predicate.HAS_ESSENCE_MOD),
             (Condition.no_essence_mod(), Predicate.NO_ESSENCE_MOD),
             (Condition.fractured_is_target(), Predicate.FRACTURED_IS_TARGET),
+            (Condition.is_desecrated(), Predicate.IS_DESECRATED),
+            (Condition.not_desecrated(), Predicate.NOT_DESECRATED),
         ]
         for cond, expected_pred in cases:
             arr = cond.to_array()
@@ -597,3 +599,51 @@ class TestFullStrategy:
         assert rl.size == 9
         assert rl.omen_count == 2
         assert rl.primary_early_currency == "transmute"
+
+    def test_desecration_abyss_strategy(self):
+        """Abyss crafting: desecrate, reserve slot, reveal abyss mod.
+
+        The key insight: REVEAL rules must appear BEFORE EXALTED rules in
+        priority so the GP learns to reserve an open slot for the abyss mod
+        rather than filling it with a random exalt.
+        """
+        rl = RuleList()
+        rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
+        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.ALTERATION), "reroll")
+        rl.add_rule(Condition.has_any_target(), Action(Currency.REGAL), "promote")
+        rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+        rl.add_rule(Condition.cost_spent_gte(600), Action(Currency.SCOUR), "restart")
+        # Abyss path: desecrate first, then reveal before exalting
+        rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "apply bone")
+        rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL), "reveal abyss mod")
+        # Only exalt AFTER reveal has been used (reveal fires first due to priority)
+        rl.add_rule(Condition.open_prefix_gte(1), Action(Currency.EXALTED), "exalt remaining")
+        rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+        rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "fallback")
+        assert rl.size == 10
+        # Verify the strategy serializes correctly
+        conds, acts, n = rl.serialize()
+        assert n == 10
+        # DESECRATE and REVEAL are at the right IDs
+        assert acts[5, 0] == int(Currency.DESECRATE)
+        assert acts[6, 0] == int(Currency.REVEAL)
+
+    def test_combined_abyss_and_essence(self):
+        """Complex strategy combining essence + abyss crafting.
+
+        Essence provides guaranteed prefix, abyss reveals provide abyss suffix,
+        exalts fill remaining slots.
+        """
+        rl = RuleList()
+        rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE))
+        rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_UPGRADE))
+        rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE))
+        rl.add_rule(Condition.cost_spent_gte(400), Action(Currency.SCOUR))
+        # Abyss for suffix targets
+        rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE))
+        rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL))
+        # Fill remaining with exalts
+        rl.add_rule(Condition.open_suffix_gte(1), Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION))
+        rl.add_rule(Condition.always_true(), Action(Currency.SCOUR))
+        assert rl.size == 8
+        assert rl.omen_count == 1
