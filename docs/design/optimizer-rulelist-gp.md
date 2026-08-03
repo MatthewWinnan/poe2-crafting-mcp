@@ -449,9 +449,21 @@ Used in Python for:
 - **Mutation targeting**: prefer mutating rules with low success correlation
   over rules with high success correlation
 
-### Genetic Operators
+### Genetic Operators (Simplified — informed by BASIL 2025)
 
-#### Crossover: One-Point Splice
+Research finding: BASIL (2025) achieved state-of-the-art performance with only
+4 mutation types + 1 crossover type, relying on the QD archive (not operator
+diversity) for exploration. MPLCS (Bacardit et al.) showed that credit-guided
+local search on individual rules dramatically improves convergence.
+
+Our design: 1 crossover + 6 mutation types, with credit-guided targeting from
+PPL-ST's fire_on_success/fire_on_failure signal. Simpler than the original
+10-type design, equally expressive, and faster to implement.
+
+NSGA-II crossover proven mathematically to provide exponential speedup for
+Pareto front coverage (2023 formal proof). Crossover rate 0.7, mutation 0.3.
+
+#### Crossover: One-Point Splice (the only crossover operator)
 
 ```
 Parent A (8 rules):  [A1, A2, A3, A4, A5, A6, A7, A8]
@@ -460,156 +472,101 @@ Parent B (6 rules):  [B1, B2, B3, B4, B5, B6]
 Cut point A: after rule 3
 Cut point B: after rule 4
 
-Child 1: [A1, A2, A3, B5, B6]          (3 from A + 2 from B)
-Child 2: [B1, B2, B3, B4, A4, A5, A6, A7, A8]  (4 from B + 5 from A)
+Child: [A1, A2, A3, B5, B6]          (3 from A + 2 from B)
 ```
 
-This combines the "early game" logic of one parent with the "late game" logic
-of another. Natural for crafting: parent A might be great at getting to Rare
-with a target mod, parent B might be great at filling remaining slots.
+Natural for crafting: parent A's "early game" (get to Rare) combined with
+parent B's "late game" (fill slots around fractured mod). Result capped at
+MAX_RULES, minimum 3.
 
-#### Crossover: Uniform Rule Swap
+#### Mutation Types (6 types, weighted probabilities)
 
-For each position, randomly pick the rule from parent A or B. Handles parents
-of different lengths by padding with None (skip).
-
-#### Mutation: Point (change one rule's internals) — 25% of mutations
-
+**1. Mutate Action (30%)** — Change the currency or omen on a random rule.
+Credit-guided: preferentially target harmful/dead rules.
 ```
-Before: IF rarity == Magic AND has_any_target  THEN regal
-After:  IF rarity == Magic AND has_any_target  THEN greater_regal
-                                                    ^^^^^^^ mutated
+Before: IF open_prefix_gte(1) THEN exalted
+After:  IF open_prefix_gte(1) THEN greater_exalted + sinistral_exaltation
 ```
 
-Or mutate the condition:
-
+**2. Swap Priority (20%)** — Swap positions of two rules. The most powerful
+mutation for rule-lists: determines which conditions are checked first.
 ```
-Before: IF open_prefix_gte(1) AND missing_target_prefix  THEN exalted
-After:  IF open_prefix_gte(2) AND missing_target_prefix  THEN exalted
-                          ^ mutated threshold
-```
-
-#### Mutation: Insert Rule — 10% of mutations
-
-Add a new randomly-generated rule at a random position. Increases list length
-by 1 (up to max_rules cap of 20).
-
-#### Mutation: Delete Rule — 10% of mutations
-
-Remove a random rule (except DEFAULT). Decreases list length by 1 (minimum 3).
-
-#### Mutation: Swap Priority — 15% of mutations
-
-Swap the positions of two rules. Changes which one fires first.
-
-```
-Before: [... rule5: annulment, rule6: exalted ...]
-After:  [... rule5: exalted, rule6: annulment ...]
+Before: [rule5: annulment, rule6: exalted]
+After:  [rule5: exalted, rule6: annulment]
 ```
 
-This is a powerful mutation — moving a "scour restart" rule higher means the
-strategy gives up earlier and restarts more aggressively. Moving it lower means
-it commits harder to salvaging the current item.
-
-#### Mutation: Add/Remove Omen — 10% of mutations
-
-Toggle an omen on a currency action, or swap one omen for another.
-
+**3. Mutate Condition (15%)** — Change predicate type, or nudge numeric
+argument (cost threshold, slot count). Credit-guided: target rules with
+low success correlation.
 ```
-Before: THEN exalted
-After:  THEN exalted + sinistral_exaltation
+Before: IF cost_spent_gte(500) THEN scour
+After:  IF cost_spent_gte(200) THEN scour
 ```
 
-#### Mutation: Specialize (split rule) — 10% of mutations
+**4. Replace Rule (15%)** — Remove a harmful/dead rule, insert a new random
+one at the same position. Combines deletion + insertion in one step.
+Credit-guided: always targets the WORST rule (highest fire_on_failure ratio).
 
-Fork a general rule into two more specific versions at adjacent priorities.
+**5. Insert Rule (10%)** — Add a new randomly-generated rule at a random
+position. Increases complexity by 1 (up to MAX_RULES cap).
 
-```
-Before:
-  7. IF open_prefix AND missing_target_prefix  THEN exalted
+**6. Delete Rule (10%)** — Remove a rule. Credit-guided: prefer dead rules
+(fire_on_success == 0 AND fire_on_failure == 0). Minimum 3 rules enforced.
 
-After:
-  7. IF open_prefix AND missing_target_prefix AND targets_on_item_gte(2)  THEN greater_exalted
-  8. IF open_prefix AND missing_target_prefix  THEN exalted
-```
+#### Credit-Guided Mutation Targeting (from PPL-ST)
 
-The more specific rule fires first when the item is close to completion (use
-expensive currency when it matters most). The general rule catches the rest.
-This is a key discovery mechanism for learning when to escalate currency tier.
+When selecting WHICH rule to mutate, use fire_on_success/fire_on_failure:
 
-#### Mutation: Generalize (broaden condition) — 5% of mutations
-
-Remove one AND-clause from a compound condition. Makes a rule fire in more
-situations.
-
-```
-Before: IF rarity_is(Magic) AND has_any_target AND mod_count_lte(1)  THEN regal
-After:  IF rarity_is(Magic) AND has_any_target                        THEN regal
-```
-
-#### Mutation: Swap Restart Action — 5% of mutations
-
-Change a restart action between SCOUR, BUY_BASE, BUY_MAGIC(family), and
-BUY_FRACTURED(family). Explores whether paying more upfront for a better
-starting point saves money overall.
-
-```
-Before: IF cost_spent_gte(200)  THEN SCOUR
-After:  IF cost_spent_gte(200)  THEN BUY_MAGIC("IncreasedEnergyShield")
+```python
+def select_mutation_target(rulelist: RuleList, fitness: Fitness) -> int:
+    """Pick a rule index to mutate, weighted by harmfulness."""
+    weights = []
+    for i in range(rulelist.size):
+        if fitness.rule_is_dead(i):
+            weights.append(3.0)      # dead rules: high mutation priority
+        elif fitness.rule_is_harmful(i):
+            weights.append(5.0)      # harmful rules: highest priority
+        elif fitness.rule_is_key(i):
+            weights.append(0.1)      # key rules: protected from mutation
+        else:
+            weights.append(1.0)      # neutral rules: normal priority
+    # Weighted random selection
+    return random.choices(range(len(weights)), weights=weights, k=1)[0]
 ```
 
-#### Mutation: Adaptive Threshold Nudge — 10% of mutations
+This gives the GP much stronger signal than blind random mutation. Rules that
+actively hurt (fire on failures but not successes) get mutated first. Rules
+that are critical to success are protected.
 
-Instead of random threshold changes, bias toward values observed in successful
-simulations. During MC evaluation, record the cost_spent and step_count at
-each decision point. Nudge thresholds toward the median observed value.
+#### Random Rule Generation (for insert/replace)
 
-```
-Observed: successful crafts typically spent 80-150 chaos before hitting target
-Current rule: IF cost_spent_gte(500) THEN SCOUR
-Nudged to:    IF cost_spent_gte(180) THEN SCOUR     (toward observed p75)
-```
+New rules are drawn from the full vocabulary:
+- Condition: uniform random from all Predicate types, with valid argument ranges
+- Action: uniform random from all Currency types, optionally with a random Omen
+- Biased toward common patterns: 40% chance of using a condition/action pair
+  that appears in the seed strategies (seeding knowledge into random rules)
 
 ### Bloat Control
 
 Rule-lists are naturally bounded (max 20 rules), but can still accumulate
-dead or redundant rules. Three mechanisms keep lists lean:
+dead or redundant rules. Two mechanisms keep lists lean:
 
-#### 1. Hard Size Cap
+#### 1. Hard Size Cap + Credit-Guided Deletion
 
-Maximum 20 rules per list. Insert mutations rejected at cap. Minimum 3 rules.
+Maximum 20 rules per list. Minimum 3 rules. When at cap, insert mutations
+are rejected. Dead rule pruning happens via the Delete mutation targeting
+dead rules with higher probability.
 
-#### 2. Dead Rule Pruning
+#### 2. Dead Rule Pruning (post-evaluation)
 
-During MC evaluation, track which rules actually fired across 500 trials.
-After evaluation, any rule that fired 0 times is removed. Run once per
-generation on the entire population.
+After Rust evaluation returns fire_on_success/fire_on_failure, any rule where
+BOTH are zero across 500 MC trials is auto-removed (never fired = dead code).
+Run once per generation on the entire population. This is free — we already
+track per-rule credits.
 
-This is free — we're already evaluating every individual. Just add a fire
-counter per rule.
-
-#### 3. Semantic Equivalence Pruning
-
-Before selection, run every rule-list against a fixed "probe set" of 30-50
-representative item states:
-
-```python
-PROBE_STATES = [
-    ItemState(rarity="Normal"),                              # blank
-    ItemState(rarity="Magic", mods=[target_prefix]),         # magic with target
-    ItemState(rarity="Magic", mods=[junk_prefix]),           # magic without target
-    ItemState(rarity="Rare", mods=[target_p, target_s, junk]),  # rare 2/3 targets
-    ItemState(rarity="Rare", mods=[junk, junk, junk]),       # rare all junk
-    ItemState(rarity="Rare", mods=[t1, t2, t3, junk, junk, junk]),  # full, mixed
-    # ... ~30-50 states covering key decision points
-]
-```
-
-Compute action vector: `actions = [rl.evaluate(state, target) for state in PROBE_STATES]`
-
-If two rule-lists produce identical action vectors, they are semantically
-equivalent. Keep only the shorter one. This prevents population bloat from
-individuals that differ syntactically but behave identically.
+Note: Semantic equivalence pruning (from original design) is deferred to v2.
+The QD archive + credit-guided mutation already prevent effective bloat by
+removing useless rules and maintaining behavioral diversity.
 
 ### Initial Population Seeding (from Phase 3 Heuristics)
 
