@@ -20,7 +20,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-_REPO_ROOT = Path(__file__).parent.parent.parent.parent
+_REPO_ROOT = Path(__file__).parent.parent.parent
 _DEFAULT_DB = _REPO_ROOT / "data" / "poe2_craft.db"
 _DEFAULT_POB = _REPO_ROOT / "vendor" / "PathOfBuilding-PoE2"
 

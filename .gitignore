@@ -12,3 +12,10 @@ data/poe2_craft.db
 .pytest_cache/
 .ruff_cache/
 *.har
+
+# Rust
+target/
+Cargo.lock
+*.so
+*.dylib
+*.dll

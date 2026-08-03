@@ -11,7 +11,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).parent.parent.parent.parent
+_REPO_ROOT = Path(__file__).parent.parent.parent
 _DEFAULT_DB = _REPO_ROOT / "data" / "poe2_craft.db"
 _DEFAULT_TTL = 3600        # 1 hour in seconds
 _ETL_STALE_DAYS = 7        # warn if ETL is older than this

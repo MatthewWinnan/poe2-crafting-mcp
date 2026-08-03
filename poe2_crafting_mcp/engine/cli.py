@@ -5,11 +5,11 @@ Usage:
     pob-inspect <build_file> [options]
 
 Examples:
-    pob-inspect data/builds/martial_artist.txt
-    pob-inspect data/builds/martial_artist.txt --items --keystones
-    pob-inspect data/builds/martial_artist.txt --export
-    pob-inspect data/builds/martial_artist.txt --export --export-file out.txt
-    pob-inspect data/builds/martial_artist.txt --all
+    pob-inspect tests/fixtures/builds/martial_artist.txt
+    pob-inspect tests/fixtures/builds/martial_artist.txt --items --keystones
+    pob-inspect tests/fixtures/builds/martial_artist.txt --export
+    pob-inspect tests/fixtures/builds/martial_artist.txt --export --export-file out.txt
+    pob-inspect tests/fixtures/builds/martial_artist.txt --all
 """
 
 import argparse
@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 
-POB_PATH = Path(__file__).parent.parent.parent.parent / "vendor" / "PathOfBuilding-PoE2"
+POB_PATH = Path(__file__).parent.parent.parent / "vendor" / "PathOfBuilding-PoE2"
 
 
 def _fmt_res(value: float) -> str:

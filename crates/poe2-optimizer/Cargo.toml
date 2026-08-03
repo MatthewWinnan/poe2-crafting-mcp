@@ -1,0 +1,16 @@
+[package]
+name = "poe2-optimizer"
+version = "0.1.0"
+edition = "2021"
+description = "Monte Carlo crafting simulation engine for PoE2 optimizer"
+
+[lib]
+name = "poe2_optimizer"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
+rand = "0.8"
+rand_xoshiro = "0.6"
+rayon = "1.10"

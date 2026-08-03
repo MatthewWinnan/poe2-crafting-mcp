@@ -639,90 +639,169 @@ a lucky transmute→regal→exalt run quickly.
 
 ## Simulation Loop
 
+The MC evaluation runs entirely in Rust. Python never touches the hot path.
+
+### Rust: Single Rule-List Evaluation
+
+```rust
+/// Evaluate one rule-list over N independent Monte Carlo trials.
+/// Returns Fitness stats + per-rule fire counts.
+pub fn evaluate_rulelist(
+    rules: &[(Condition, u16, u16)],  // (condition, currency_id, omen_id) per rule
+    n_rules: usize,
+    pool: &ModPool,
+    prices: &PriceArray,               // flat f32 array indexed by currency_id
+    n_trials: u32,
+    max_steps: u32,
+    rng_seed: u64,
+) -> (Fitness, Vec<u32>) {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(rng_seed);
+    let mut fire_counts = vec![0u32; n_rules];
+    let mut costs: Vec<f32> = Vec::with_capacity(n_trials as usize);
+    let mut successes: u32 = 0;
+    let mut total_steps: u64 = 0;
+
+    for _ in 0..n_trials {
+        let mut item = ItemState::blank(pool.ilvl);
+        let mut cost: f32 = 0.0;
+        let mut step: u32 = 0;
+        let mut trial_success = false;
+
+        while step < max_steps {
+            // Evaluate rules top-to-bottom, first match fires
+            let mut fired = false;
+            for (rule_idx, (cond, currency, omen)) in rules[..n_rules].iter().enumerate() {
+                if !evaluate_condition(cond, &item, pool) {
+                    continue;
+                }
+                fire_counts[rule_idx] += 1;
+
+                match *currency {
+                    DONE => { trial_success = true; fired = true; break; }
+                    FAIL => { fired = true; break; }
+                    _ => {
+                        cost += prices.get(*currency, *omen);
+                        apply_currency(&mut item, *currency, *omen, pool, &mut rng);
+                        step += 1;
+
+                        // Check target satisfaction after currency application
+                        if item.all_targets_hit(pool) {
+                            trial_success = true;
+                        }
+                        fired = true;
+                        break;
+                    }
+                }
+            }
+
+            if trial_success || !fired {
+                break;  // DONE, FAIL, or no rule matched (implicit FAIL)
+            }
+        }
+
+        if trial_success {
+            successes += 1;
+        }
+        costs.push(cost);
+        total_steps += step as u64;
+    }
+
+    let fitness = compute_fitness(&costs, successes, n_trials, total_steps, n_rules);
+    (fitness, fire_counts)
+}
+```
+
+### Rust: Batch Population Evaluation (Rayon)
+
+```rust
+/// Evaluate entire population in parallel. Called once per generation from Python.
+#[pyfunction]
+fn evaluate_population(
+    py: Python<'_>,
+    rules_array: PyReadonlyArray3<u16>,    // (pop_size, max_rules, 5) — cond(3) + action(2)
+    rule_counts: PyReadonlyArray1<u8>,     // (pop_size,) — actual rule count per individual
+    pool_data: &PyModPool,                  // pre-built from Python arrays
+    prices: PyReadonlyArray1<f32>,          // (n_currencies + n_omens,)
+    n_trials: u32,
+    max_steps: u32,
+    base_seed: u64,
+) -> (Py<PyArray2<f32>>, Py<PyArray2<u32>>) {
+    // Release GIL for parallel execution
+    py.allow_threads(|| {
+        let pop_size = rule_counts.len();
+        let results: Vec<(Fitness, Vec<u32>)> = (0..pop_size)
+            .into_par_iter()
+            .map(|i| {
+                let seed = base_seed.wrapping_add(i as u64 * 7919);  // deterministic per-individual seed
+                evaluate_rulelist(
+                    &rules_array.slice(i),
+                    rule_counts[i] as usize,
+                    pool_data,
+                    &prices,
+                    n_trials,
+                    max_steps,
+                    seed,
+                )
+            })
+            .collect();
+
+        // Pack into numpy arrays for return to Python
+        // fitness_array: (pop_size, 7) — [expected_cost, success_rate, cost_p90, median, std, steps, step_median]
+        // fire_array: (pop_size, max_rules) — fire counts for dead rule pruning
+        pack_results(results)
+    })
+}
+```
+
+### Python: Generation Loop (Calls Rust)
+
 ```python
-def evaluate_rulelist(
-    rulelist: RuleList,
-    mod_pool: dict,          # from get_craftable_mods()
+def run_optimization(
+    pool: ModPool,
     target: CraftTarget,
-    prices: PriceCache,      # pre-flight cached prices
-    n_trials: int = 500,
-) -> Fitness:
+    prices: PriceCache,
+    config: OptimizerConfig,
+) -> list[StrategyFamily]:
+    """Top-level optimizer. GP logic in Python, MC evaluation in Rust."""
+    from poe2_optimizer import evaluate_population  # Rust via PyO3
 
-    costs, steps, successes = [], [], []
-    fire_counts = [0] * len(rulelist.rules)  # for dead rule detection
+    # Encode pool + prices as flat arrays (done once)
+    pool_data = encode_pool(pool, target)
+    price_array = encode_prices(prices)
 
-    for trial in range(n_trials):
-        item = ItemState(item_class, ilvl, rarity="Normal")
-        cost = 0.0
-        step = 0
+    # Initialize population (40% seeded heuristics, 60% random)
+    population = seed_population(config.pop_size, target)
 
-        while step < rulelist.max_steps:
-            action, rule_idx = rulelist.evaluate_with_index(item, target)
-            fire_counts[rule_idx] += 1
+    for gen in range(config.max_generations):
+        # ── Rust: evaluate ALL individuals in parallel ──
+        rules_array, rule_counts = serialize_population(population)
+        fitness_array, fire_counts = evaluate_population(
+            rules_array, rule_counts, pool_data, price_array,
+            n_trials=config.mc_trials,
+            max_steps=config.max_steps,
+            base_seed=gen * 100_000,
+        )
 
-            if action.currency == "DONE":
-                successes.append(True)
-                break
-            if action.currency == "FAIL":
-                successes.append(False)
-                break
+        # ── Python: assign fitness, prune, select, breed ──
+        assign_fitness(population, fitness_array, fire_counts)
+        prune_dead_rules(population, fire_counts)
 
-            # ── Restart actions ──
-            if action.currency == "SCOUR":
-                cost += prices.currency.get("scouring", 0.5)
-                item = ItemState(item_class, ilvl, rarity="Normal")
-                step += 1
-                continue
-            if action.currency == "BUY_BASE":
-                cost += prices.base_white
-                item = ItemState(item_class, ilvl, rarity="Normal")
-                step += 1
-                continue
-            if action.currency.startswith("BUY_MAGIC"):
-                family = action.argument
-                cost += prices.base_magic_with.get(family, float('inf'))
-                item = ItemState(item_class, ilvl, rarity="Magic")
-                item.mods = [roll_specific_mod(family, mod_pool)]
-                step += 1
-                continue
-            if action.currency.startswith("BUY_FRACTURED"):
-                family = action.argument
-                cost += prices.base_fractured_with.get(family, float('inf'))
-                item = ItemState(item_class, ilvl, rarity="Rare")
-                mod = roll_specific_mod(family, mod_pool)
-                mod.fractured = True
-                item.mods = [mod]
-                step += 1
-                continue
+        if gen % 5 == 0:
+            prune_semantic_equivalents(population, pool_data, price_array)
 
-            # ── Normal currency application ──
-            cost += prices.currency.get(action.currency, 1.0)
-            if action.omen:
-                cost += prices.omen.get(action.omen, 0)
-            simulator.apply_currency_to(item, action, mod_pool)
-            step += 1
+        # NSGA-II selection
+        fronts = non_dominated_sort(population)
+        next_gen = select_nsga2(fronts, config.pop_size)
 
-            if target.is_satisfied(item):
-                successes.append(True)
-                break
-        else:
-            successes.append(False)  # timeout
+        # Genetic operators
+        offspring = breed(next_gen, config)
+        population = next_gen[:config.elite_count] + offspring
 
-        costs.append(cost)
-        steps.append(step)
+        # Convergence check
+        if hypervolume_converged(fronts[0], config.hv_threshold):
+            break
 
-    successful_costs = [c for c, s in zip(costs, successes) if s]
-    return Fitness(
-        expected_cost=mean(successful_costs) if successful_costs else float('inf'),
-        success_rate=sum(successes) / len(successes),
-        cost_p90=percentile(successful_costs, 90) if successful_costs else float('inf'),
-        expected_steps=mean(steps),
-        cost_median=median(successful_costs) if successful_costs else float('inf'),
-        cost_std=stdev(successful_costs) if len(successful_costs) > 1 else 0,
-        step_median=median(steps),
-        rule_count=len(rulelist.rules),
-        _fire_counts=fire_counts,  # used by dead rule pruning
-    )
+    return cluster_strategies(fronts[0], target, prices)
 ```
 
 ## Output: Strategy Families
@@ -801,36 +880,311 @@ risk_note = "" if best_strategy.cost_p90 < prices.trade_finished else
 src/poe2_crafting_mcp/crafting/
   optimizer/
     __init__.py
-    gene.py              # Rule, RuleList, Condition, Action dataclasses
-    conditions.py        # Predicate implementations (all the IF checks)
-    fitness.py           # Monte Carlo evaluation -> Fitness + dead rule pruning
-    nsga2.py             # NSGA-II selection, Pareto ranking, crowding distance
-    operators.py         # Crossover + mutation operators (10 types)
+    gene.py              # Rule, RuleList, Condition, Action dataclasses (Python)
+    conditions.py        # Predicate vocabulary + serialization to Rust-compatible format
+    nsga2.py             # NSGA-II selection, Pareto ranking, crowding distance (Python)
+    operators.py         # Crossover + mutation operators (Python — called once/gen)
     seeds.py             # Phase 3 heuristic rule-lists (initial population)
     clustering.py        # Post-convergence strategy family grouping
     prices.py            # PriceCache + preflight_prices()
     runner.py            # Top-level: configure + run optimization + format output
+    bridge.py            # Python ↔ Rust serialization (RuleList → flat arrays, pool → arrays)
+
+crates/
+  poe2-optimizer/
+    Cargo.toml           # pyo3, rand, rayon dependencies
+    src/
+      lib.rs             # PyO3 module entry point (#[pymodule])
+      item_state.rs      # ItemState struct (compact: rarity u8, families [u16;6], fractured u8)
+      pool.rs            # ModPool: pre-encoded weight arrays, cumulative sums, family→affix mappings
+      conditions.rs      # Condition evaluation (match on predicate enum, fast integer comparisons)
+      actions.rs         # apply_currency logic (add/del/del_add/reroll using pool data)
+      evaluate.rs        # evaluate_rulelist() — N MC trials, returns Fitness + fire_counts
+      batch.rs           # evaluate_population() — parallel eval of M rule-lists via rayon
 ```
 
-## Performance Plan
+### Boundary: What's in Rust vs Python
 
-### Phase 1: Pure Python Prototype
-- Population 50, MC trials 100, generations 20
-- 50 * 100 * 20 = 100k simulation runs, each ~200 steps = ~20M pool lookups
-- Estimated: 30-60 seconds (acceptable for prototyping)
-- Validates correctness of GP operators, fitness, NSGA-II
+**Rust (hot path — called millions of times):**
+- ItemState representation + mutation
+- Condition predicate evaluation
+- Currency application (weighted random from pool, family blocking)
+- MC trial loop (step through rules until DONE/FAIL/timeout)
+- Batch evaluation of entire population in parallel (rayon thread pool)
+- Returns: Fitness struct + fire_counts per rule-list
 
-### Phase 2: Numpy Vectorization
-- Batch all 500 MC trials for one rule-list as array operations
-- Pre-encode mod pool as weight arrays, cumulative sums
-- Vectorized weighted random: `np.searchsorted(cumsum, np.random.rand(500) * total)`
-- Target: 200 pop x 500 MC x 50 gen in ~30 seconds
+**Python (cold path — called once per generation):**
+- NSGA-II selection (200 individuals, Pareto sorting, crowding distance)
+- Genetic operators (crossover, mutation — creates new RuleList objects)
+- Dead rule pruning (uses fire_counts returned from Rust)
+- Semantic equivalence pruning (probe states evaluated via Rust batch call)
+- Population management, convergence detection, output formatting
+- Pre-flight price fetching, trade API calls
+- CLI/MCP interface
 
-### Phase 3: Rust Inner Loop (PyO3)
-- Move ItemState + apply_currency + evaluate_rulelist to Rust
-- Pool data as fixed arrays passed once, simulations run in parallel (rayon)
-- Target: full optimization in <5 seconds
-- Rust toolchain already in Nix flake
+### Data Flow Across the Boundary
+
+```
+Python (per generation):
+  1. Serialize population: list[RuleList] → flat numpy arrays
+     - conditions: (pop_size, max_rules, 3) uint16 array [predicate_id, arg1, arg2]
+     - actions: (pop_size, max_rules, 2) uint16 array [currency_id, omen_id]
+     - rule_counts: (pop_size,) uint8 array
+  2. Call Rust: evaluate_population(rules_array, pool_data, target, prices, n_trials=500)
+  3. Rust returns: (pop_size,) array of Fitness structs + (pop_size, max_rules) fire counts
+  4. Python does selection, crossover, mutation → new population arrays
+  5. Repeat
+
+Pool data (passed once at optimization start):
+  - prefix_weights: (n_prefix_mods,) uint32 array
+  - prefix_families: (n_prefix_mods,) uint16 array
+  - prefix_tiers: (n_prefix_mods,) uint8 array
+  - prefix_req_levels: (n_prefix_mods,) uint8 array
+  - suffix_weights / families / tiers / req_levels: same structure
+  - prefix_cumsum: (n_prefix_mods,) uint64 array (for O(log n) weighted sampling)
+  - suffix_cumsum: (n_prefix_mods,) uint64 array
+  - family_to_target: (n_target_families,) uint16 array (which families are targets)
+
+Price data (passed once):
+  - currency_costs: (n_currencies,) f32 array (indexed by currency_id)
+  - omen_costs: (n_omens,) f32 array (indexed by omen_id)
+  - restart_costs: (n_restart_types,) f32 array [scour, buy_base, buy_magic_0..N, buy_frac_0..N]
+```
+
+This design means:
+- **Zero Python calls during MC simulation** — Rust owns the entire hot loop
+- **Rayon parallelism** — evaluate all 200 rule-lists across CPU cores simultaneously
+- **Cache-friendly** — ItemState is 32 bytes, fits in L1 cache line
+- **No allocation in the hot path** — ItemState mutated in place, pool is read-only
+
+## Performance Plan — Rust Inner Loop from Day One
+
+### Why Not Prototype in Python First
+
+The simulation loop is the defining component of this system — it runs 5M+
+times per optimization. Writing it in Python and then rewriting in Rust means:
+- Learning every edge case twice
+- Maintaining parity between two implementations during development
+- Temptation to "ship" the slow version and defer the rewrite indefinitely
+
+Instead: build the Rust crate first, validate correctness via Python tests
+calling through PyO3, and iterate on the Rust implementation directly.
+
+### Architecture: Rust Crate + PyO3 Bridge
+
+```
+crates/poe2-optimizer/
+  Cargo.toml
+    [dependencies]
+    pyo3 = { version = "0.22", features = ["extension-module"] }
+    rand = "0.8"
+    rayon = "1.10"
+    numpy = "0.22"         # pyo3-numpy for zero-copy array passing
+
+  src/
+    lib.rs               # #[pymodule] — exposes evaluate_population(), evaluate_single()
+    item_state.rs        # Compact ItemState (32 bytes, L1-friendly)
+    pool.rs              # ModPool from flat arrays, cumulative sum sampling
+    conditions.rs        # Predicate enum + evaluation (pure integer ops)
+    actions.rs           # apply_currency (all currency types modeled)
+    evaluate.rs          # Single MC trial loop + batch N trials for one RuleList
+    batch.rs             # Rayon parallel: evaluate M rule-lists across all cores
+```
+
+Build system: **maturin** (develop mode for iteration, build for release).
+Integrated into Nix flake as a buildInput.
+
+### Performance Targets
+
+```
+Full optimization (200 pop × 500 MC × 50 gen = 5M simulations):
+  Target: < 3 seconds on 8-core machine
+  Per-simulation budget: ~600ns (achievable — it's integer ops + 1 RNG call per step)
+
+Single rule-list evaluation (500 MC trials, ~200 steps each = 100k steps):
+  Target: < 300µs
+  Enables interactive "test this strategy" mode in CLI
+
+Population batch (200 × 500 MC via rayon):
+  Target: < 60ms per generation
+  50 generations = 3 seconds total
+```
+
+### Nix Flake Additions
+
+```nix
+# In devShell:
+buildInputs = [
+  pkgs.rustc
+  pkgs.cargo
+  pkgs.maturin
+  pkgs.rust-analyzer    # LSP for the crate
+];
+
+# For the Python package to find the built .so:
+shellHook = ''
+  # Build the Rust extension in development mode
+  (cd crates/poe2-optimizer && maturin develop --release)
+'';
+```
+
+### Development Workflow
+
+1. Write Rust crate with `#[pyfunction]` exports
+2. `maturin develop --release` compiles to importable Python module
+3. Python test suite calls `from poe2_optimizer import evaluate_population`
+4. Iterate on Rust code, re-run `maturin develop`, re-run pytest
+5. CI: `maturin build --release` produces wheel for distribution
+
+### Fallback: Pure Python Reference (Tests Only)
+
+A minimal Python implementation of `evaluate_rulelist()` exists ONLY in
+`tests/test_optimizer_reference.py` for:
+- Validating Rust output matches expected behavior
+- Debugging specific edge cases step-by-step
+- Running on systems without Rust toolchain (CI fallback)
+
+This is NOT a production path. The Python reference evaluates 1 trial at a
+time for assertion comparison, never used for actual optimization.
+
+### Compact ItemState (Rust)
+
+```rust
+/// 32 bytes — fits in one L1 cache line
+#[repr(C)]
+struct ItemState {
+    rarity: u8,                  // 0=Normal, 1=Magic, 2=Rare
+    prefix_count: u8,            // 0-3
+    suffix_count: u8,            // 0-3
+    fractured_mask: u8,          // bit per mod slot (6 bits used)
+    prefix_families: [u16; 3],   // family IDs (0 = empty slot)
+    suffix_families: [u16; 3],   // family IDs (0 = empty slot)
+    prefix_tiers: [u8; 3],       // tier of each prefix (0 = empty)
+    suffix_tiers: [u8; 3],       // tier of each suffix (0 = empty)
+    cost_spent: f32,             // cumulative chaos cost
+    step_count: u16,             // steps taken so far
+    _padding: [u8; 2],           // align to 32 bytes
+}
+```
+
+Key constraint: the optimizer only tracks mod FAMILIES and TIERS, not full
+stat values. This is sufficient for all condition predicates and strategy
+decisions. Actual stat values (for tier identification and PoB integration)
+are resolved AFTER the optimizer picks the winning strategy — not during
+the 5M simulation runs.
+
+### Pool Encoding (Rust)
+
+```rust
+/// Pre-computed mod pool passed once from Python
+struct ModPool {
+    // Prefix pool (sorted by cumulative weight for binary search sampling)
+    prefix_weights: Vec<u32>,      // raw weights
+    prefix_cumsum: Vec<u64>,       // cumulative sum for O(log n) sampling
+    prefix_families: Vec<u16>,     // which family each mod belongs to
+    prefix_tiers: Vec<u8>,         // tier of each mod entry
+    prefix_req_levels: Vec<u8>,    // min ilvl to roll this mod
+    prefix_total_weight: u64,      // sum of all prefix weights
+
+    // Suffix pool (same structure)
+    suffix_weights: Vec<u32>,
+    suffix_cumsum: Vec<u64>,
+    suffix_families: Vec<u16>,
+    suffix_tiers: Vec<u8>,
+    suffix_req_levels: Vec<u8>,
+    suffix_total_weight: u64,
+
+    // Target family set (for fast "is this a target?" checks)
+    target_prefix_families: Vec<u16>,
+    target_suffix_families: Vec<u16>,
+    target_max_tiers: Vec<u8>,     // acceptable tier per target
+
+    // Item metadata
+    ilvl: u8,
+    max_prefixes: u8,              // 1 for Magic, 3 for Rare
+    max_suffixes: u8,
+}
+```
+
+Weighted sampling: generate `rand_u64 % total_weight`, binary search in
+`cumsum` array. O(log n) where n ≈ 50-100 mods per affix type. With dynamic
+family blocking, maintain a per-item "blocked families" set and rejection-sample
+(reject if sampled mod's family is blocked, resample). Given blocking removes
+~1-5 families from ~30, rejection rate is low (<15%).
+
+### Condition Evaluation (Rust)
+
+```rust
+#[repr(u8)]
+enum Predicate {
+    RarityIs = 0,
+    HasAnyTarget = 1,
+    HasTarget = 2,
+    AllTargetsHit = 3,
+    AllTargetsAtTier = 4,
+    MissingTargetPrefix = 5,
+    MissingTargetSuffix = 6,
+    HasNonTargetRemovable = 7,
+    TargetsOnItemGte = 8,
+    OpenPrefixGte = 9,
+    OpenSuffixGte = 10,
+    ModCountGte = 11,
+    ModCountLte = 12,
+    CostSpentGte = 13,
+    StepCountGte = 14,
+    RemovableGtTargets = 15,
+    PrefixFullNoTargetPrefix = 16,
+    SuffixFullNoTargetSuffix = 17,
+    // Combinators encoded as separate rules (AND = adjacent rules, NOT = inverted)
+}
+
+/// A condition is just 3 u16s — predicate ID + up to 2 arguments
+#[repr(C)]
+struct Condition {
+    predicate: u16,
+    arg1: u16,          // e.g. rarity value, threshold, family_id
+    arg2: u16,          // second arg for compound predicates (unused for most)
+}
+
+/// Evaluation is a single match + integer comparison — branch-predictor friendly
+fn evaluate_condition(cond: &Condition, item: &ItemState, pool: &ModPool) -> bool {
+    match cond.predicate {
+        0 => item.rarity == cond.arg1 as u8,
+        1 => item.has_any_target(pool),
+        3 => item.all_targets_hit(pool),
+        9 => (pool.max_prefixes - item.prefix_count) >= cond.arg1 as u8,
+        13 => item.cost_spent >= f32::from_bits((cond.arg1 as u32) << 16 | cond.arg2 as u32),
+        // ... etc
+        _ => false,
+    }
+}
+```
+
+### Currency Application (Rust)
+
+All currency operations decompose into primitives:
+- `add_mod(item, pool, rng)` — weighted sample + family blocking + slot check
+- `remove_mod(item, idx)` — remove mod at index (uniform random for which)
+- `clear_all(item)` — reset to blank
+- `reroll(item, pool, rng)` — clear + add 4-6 mods (Rare)
+
+```rust
+fn apply_currency(item: &mut ItemState, currency: u16, omen: u16, pool: &ModPool, rng: &mut impl Rng) {
+    match currency {
+        TRANSMUTE => { item.rarity = 1; add_mod(item, pool, rng); }
+        ALTERATION => { clear_all(item); add_mod(item, pool, rng); }  // reroll magic (1 mod)
+        AUGMENT => { add_mod(item, pool, rng); }  // add 1 to magic
+        REGAL => { item.rarity = 2; add_mod(item, pool, rng); }
+        EXALTED => { add_mod_with_omen(item, pool, omen, rng); }
+        ANNULMENT => { remove_random_non_fractured(item, rng); }
+        CHAOS => { remove_random(item, rng); add_mod(item, pool, rng); }
+        ALCHEMY => { item.rarity = 2; add_mods_fill(item, pool, rng); }
+        SCOUR | BUY_BASE => { *item = ItemState::blank(pool.ilvl); }
+        // ... Greater/Perfect variants narrow pool via req_level filter
+        _ => {}
+    }
+}
+```
 
 ## Convergence Detection
 
@@ -872,6 +1226,18 @@ Currency/essence/omen prices come from poe.ninja SQLite cache (instant,
 zero network). Only base item trade lookups (~10 API calls) are fetched
 at optimization start and cached for the entire run. The 5M+ MC
 evaluations never touch the network.
+
+### 7. Rust inner loop from day one (no Python prototype phase)
+The MC simulation loop is written in Rust from the start, exposed via PyO3.
+Rationale: the loop runs 5M+ times per optimization — writing it in Python
+first means maintaining two implementations, debugging the same edge cases
+twice, and creating a temptation to ship the slow version. The GP operators
+(selection, crossover, mutation) stay in Python because they run once per
+generation (~200 calls) and benefit from rapid iteration. The Rust/Python
+boundary is clean: Python serializes population as flat numpy arrays, calls
+`evaluate_population()`, gets back fitness arrays. Rust owns everything
+inside the MC trials. A minimal Python reference implementation exists only
+in the test suite for correctness validation.
 
 ## Open Questions (remaining)
 

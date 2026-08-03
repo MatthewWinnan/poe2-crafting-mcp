@@ -15,7 +15,7 @@ from poe2_crafting_mcp.data.price_db import PriceDatabase
 
 # ── Bootstrap ────────────────────────────────────────────────────────────────
 
-POB_PATH = Path(os.environ.get("POB_PATH", Path(__file__).parent.parent.parent / "vendor" / "PathOfBuilding-PoE2"))
+POB_PATH = Path(os.environ.get("POB_PATH", Path(__file__).parent.parent / "vendor" / "PathOfBuilding-PoE2"))
 
 mcp: FastMCP = FastMCP("poe2-crafting")
 
@@ -57,31 +57,31 @@ def _to_json(obj: Any) -> str:
 
 # ── MCP Resources: Crafting Knowledge Base ────────────────────────────────────
 
-_DOCS_DIR = Path(__file__).resolve().parent.parent.parent / "docs"
+_DOCS_DIR = Path(__file__).resolve().parent.parent / "docs" / "guides"
 
 
 @mcp.resource("poe2://crafting-guide/methods")
 def crafting_guide_methods() -> str:
     """Crafting methods, currency orbs, and step-by-step crafting flow for PoE2."""
-    return (_DOCS_DIR / "crafting-guide-methods.md").read_text()
+    return (_DOCS_DIR / "crafting-methods.md").read_text()
 
 
 @mcp.resource("poe2://crafting-guide/modifiers")
 def crafting_guide_modifiers() -> str:
     """How item modifiers work: prefixes, suffixes, tiers, ilvl, tags, local vs global."""
-    return (_DOCS_DIR / "crafting-guide-modifiers.md").read_text()
+    return (_DOCS_DIR / "crafting-modifiers.md").read_text()
 
 
 @mcp.resource("poe2://crafting-guide/corruption")
 def crafting_guide_corruption() -> str:
     """Vaal Orb outcomes and corruption mechanics for items, gems, maps, and jewels."""
-    return (_DOCS_DIR / "crafting-guide-corruption.md").read_text()
+    return (_DOCS_DIR / "crafting-corruption.md").read_text()
 
 
 @mcp.resource("poe2://crafting-guide/defences")
 def crafting_guide_defences() -> str:
     """Layered defence system: avoidance, mitigation, HP, recovery. Attribute-defence mapping."""
-    return (_DOCS_DIR / "crafting-guide-defences.md").read_text()
+    return (_DOCS_DIR / "crafting-defences.md").read_text()
 
 
 # ── Build Loading ─────────────────────────────────────────────────────────────

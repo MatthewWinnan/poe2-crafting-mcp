@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 POB_PATH = Path(__file__).parent.parent / "vendor" / "PathOfBuilding-PoE2"
-BUILD_FIXTURE = Path(__file__).parent.parent / "data" / "builds" / "martial_artist.txt"
+BUILD_FIXTURE = Path(__file__).parent / "fixtures" / "builds" / "martial_artist.txt"
 
 
 @pytest.mark.skipif(

@@ -25,6 +25,10 @@
         nixpkgs.follows = "nixpkgs";
       };
     };
+
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+    };
   };
 
   outputs = {
@@ -38,8 +42,16 @@
       nixpkgs.lib.genAttrs supportedSystems (system: function system);
   in {
     devShells = forAllSystems (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [(import inputs.rust-overlay)];
+      };
       inherit (nixpkgs) lib;
+
+      # Rust toolchain (latest stable from oxalica overlay)
+      rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+        extensions = ["rust-src" "rust-analyzer"];
+      };
 
       # uv2nix workspace
       workspace = inputs.uv2nix.lib.workspace.loadWorkspace {workspaceRoot = ./.;};
@@ -106,6 +118,10 @@
           pkgs.lua51Packages.luautf8
           pkgs.sqlite
           pkgs.jq
+
+          # Rust toolchain (optimizer crate)
+          rustToolchain
+          pkgs.maturin
         ];
 
         env = {
@@ -118,7 +134,7 @@
           unset PYTHONPATH
 
           export REPO_ROOT=$(${pkgs.git}/bin/git rev-parse --show-toplevel)
-          export PYTHONPATH="$REPO_ROOT/src"
+          export PYTHONPATH="$REPO_ROOT"
           export POB_PATH="$REPO_ROOT/vendor/PathOfBuilding-PoE2"
           export POE2_CRAFT_DB="$REPO_ROOT/data/poe2_craft.db"
 
@@ -126,6 +142,7 @@
           echo "  PoE2 Crafting MCP - Dev Environment"
           echo "  ────────────────────────────────────"
           echo "  Python:  $(python --version 2>&1)"
+          echo "  Rust:    $(rustc --version 2>&1)"
           echo "  LuaJIT:  $(${pkgs.luajit}/bin/luajit -v 2>&1 | head -1)"
           echo "  PoB:     $POB_PATH"
           echo "  DB:      $POE2_CRAFT_DB"

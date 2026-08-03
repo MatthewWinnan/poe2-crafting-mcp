@@ -101,7 +101,23 @@ START (Normal item, 0 mods)
 
 ## Dependencies
 
-- Rust toolchain (already in Nix flake) for performance-critical simulation
-- numpy for batch random operations (fallback if not using Rust)
+- Rust toolchain + maturin + pyo3 (added to Nix flake) — MC inner loop from day one
+- rayon (Rust) — parallel evaluation of population across CPU cores
+- numpy (Python) — zero-copy array passing across PyO3 boundary
 - Existing mod_weights data (poe2db seeded)
 - Live economy prices (poe.ninja cached)
+
+## Implementation Order
+
+1. **Nix flake**: add rustc, cargo, maturin, rust-analyzer to devShell
+2. **Rust crate scaffold**: `crates/poe2-optimizer/` with PyO3 boilerplate
+3. **item_state.rs + pool.rs**: compact types, weighted sampling
+4. **conditions.rs + actions.rs**: predicate eval, currency application
+5. **evaluate.rs**: single rule-list MC evaluation (validate correctness)
+6. **batch.rs**: rayon parallel population evaluation
+7. **Python bridge.py**: serialize RuleList/pool/prices to flat arrays
+8. **Python gene.py**: dataclasses for Rule, RuleList, Condition, Action, CraftTarget
+9. **Python nsga2.py + operators.py**: selection + genetic operators
+10. **Python seeds.py**: hand-written heuristic rule-lists
+11. **Python runner.py + CLI**: end-to-end optimization flow
+12. **clustering.py**: post-convergence strategy family output

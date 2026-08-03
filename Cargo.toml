@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/poe2-optimizer"]
+resolver = "2"
