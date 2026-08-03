@@ -172,17 +172,20 @@ fn compute_fitness(
         total_cost / successes as f32
     };
 
-    let (cost_median, cost_p90, cost_std) = if successful_costs.is_empty() {
+    let (cost_median, cost_p90, cost_std) = if all_costs.is_empty() {
         (f32::INFINITY, f32::INFINITY, 0.0)
     } else {
-        let mut sorted = successful_costs.to_vec();
+        // Use ALL trial costs (success + failure) for percentiles
+        // This represents the TRUE player experience: "what will I actually spend?"
+        // Failed trials have their full wasted cost included
+        let mut sorted = all_costs.to_vec();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let median = sorted[sorted.len() / 2];
         let p90_idx = ((sorted.len() as f64) * 0.9) as usize;
         let p90 = sorted[p90_idx.min(sorted.len() - 1)];
 
-        let mean = expected_cost;
+        let mean = sorted.iter().sum::<f32>() / sorted.len() as f32;
         let variance = sorted.iter().map(|c| (c - mean).powi(2)).sum::<f32>()
             / sorted.len() as f32;
         let std = variance.sqrt();
