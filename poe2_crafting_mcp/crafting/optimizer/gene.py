@@ -653,6 +653,19 @@ class PriceCache:
         # Restart costs at their currency IDs
         prices[int(Currency.SCOUR)] = self.currency.get("scouring", 0.5)
         prices[int(Currency.BUY_BASE)] = self.base_white
+        # BUY_MAGIC / BUY_FRACTURED: use average of known prices
+        if self.base_magic_with:
+            avg_magic = sum(self.base_magic_with.values()) / len(self.base_magic_with)
+            prices[int(Currency.BUY_MAGIC)] = avg_magic
+        else:
+            prices[int(Currency.BUY_MAGIC)] = self.base_white * 10
+        if self.base_fractured_with:
+            avg_frac = sum(self.base_fractured_with.values()) / len(self.base_fractured_with)
+            prices[int(Currency.BUY_FRACTURED)] = avg_frac
+        else:
+            prices[int(Currency.BUY_FRACTURED)] = self.base_white * 50
+        # Reforge: costs 2 spare bases
+        prices[int(Currency.REFORGE)] = self.base_white * 2
 
         return prices
 
