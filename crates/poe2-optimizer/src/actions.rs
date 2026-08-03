@@ -223,9 +223,78 @@ pub fn apply_currency(
         }
 
         REVEAL => {
-            // Place an abyss mod (random from pool, treated like an exalt)
+            // Well of Souls: reveal 3 options, player picks the best one.
+            // Model: roll 3 random mods from pool, if any is a target family
+            // at acceptable tier, place it. Otherwise place the first one.
             item.set_desecrated(false); // consumed
-            add_random_mod(item, pool, 0, NO_OMEN, rng);
+
+            let max_p = if item.rarity == 1 { 1 } else { pool.max_prefixes };
+            let max_s = if item.rarity == 1 { 1 } else { pool.max_suffixes };
+            let prefix_open = item.prefix_count < max_p;
+            let suffix_open = item.suffix_count < max_s;
+
+            if !prefix_open && !suffix_open {
+                return;
+            }
+
+            // Collect blocked families
+            let mut blocked = Vec::with_capacity(6);
+            for i in 0..item.prefix_count as usize {
+                if item.prefix_families[i] != 0 { blocked.push(item.prefix_families[i]); }
+            }
+            for i in 0..item.suffix_count as usize {
+                if item.suffix_families[i] != 0 { blocked.push(item.suffix_families[i]); }
+            }
+
+            // Roll 3 options (suffix-biased since most desecrated mods are suffixes)
+            let mut best_option: Option<(u16, u8, bool)> = None; // (family, tier, is_prefix)
+            for _ in 0..3 {
+                let rng_val = rng.gen::<u64>();
+                // Try suffix first (desecrated pool is mostly suffixes)
+                if suffix_open {
+                    if let Some((fam, tier)) = pool.sample_suffix(&blocked, 0, rng_val) {
+                        // Prefer target families
+                        if pool.all_target_families.contains(&fam) {
+                            // Check tier acceptability
+                            let is_acceptable = pool.target_max_tiers.iter()
+                                .zip(pool.all_target_families.iter())
+                                .any(|(max_t, tf)| *tf == fam && tier <= *max_t);
+                            if is_acceptable {
+                                best_option = Some((fam, tier, false));
+                                break; // Found a target — take it immediately
+                            }
+                        }
+                        if best_option.is_none() {
+                            best_option = Some((fam, tier, false));
+                        }
+                    }
+                } else if prefix_open {
+                    if let Some((fam, tier)) = pool.sample_prefix(&blocked, 0, rng_val) {
+                        if pool.all_target_families.contains(&fam) {
+                            best_option = Some((fam, tier, true));
+                            break;
+                        }
+                        if best_option.is_none() {
+                            best_option = Some((fam, tier, true));
+                        }
+                    }
+                }
+            }
+
+            // Place the best option found
+            if let Some((family, tier, is_prefix)) = best_option {
+                if is_prefix && prefix_open {
+                    let idx = item.prefix_count as usize;
+                    item.prefix_families[idx] = family;
+                    item.prefix_tiers[idx] = tier;
+                    item.prefix_count += 1;
+                } else if !is_prefix && suffix_open {
+                    let idx = item.suffix_count as usize;
+                    item.suffix_families[idx] = family;
+                    item.suffix_tiers[idx] = tier;
+                    item.suffix_count += 1;
+                }
+            }
         }
 
         _ => {}
