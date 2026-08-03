@@ -1,8 +1,11 @@
+/// Condition predicate evaluation.
+///
+/// IDs must match Python gene.py Predicate enum exactly.
+
 use crate::item_state::ItemState;
 use crate::pool::ModPool;
 
-/// Predicate IDs matching the Python Condition.predicate field.
-/// Serialized as u16 in the rules array passed from Python.
+// Predicate IDs
 pub const RARITY_IS: u16 = 0;
 pub const HAS_ANY_TARGET: u16 = 1;
 pub const HAS_TARGET: u16 = 2;
@@ -21,12 +24,17 @@ pub const STEP_COUNT_GTE: u16 = 14;
 pub const REMOVABLE_GT_TARGETS: u16 = 15;
 pub const PREFIX_FULL_NO_TARGET_PREFIX: u16 = 16;
 pub const SUFFIX_FULL_NO_TARGET_SUFFIX: u16 = 17;
-pub const ALWAYS_TRUE: u16 = 255; // DEFAULT rule
+pub const HAS_FRACTURED_MOD: u16 = 18;
+pub const HAS_ESSENCE_MOD: u16 = 19;
+pub const NO_ESSENCE_MOD: u16 = 20;
+pub const FRACTURED_IS_TARGET: u16 = 21;
+pub const IS_DESECRATED: u16 = 22;
+pub const NOT_DESECRATED: u16 = 23;
+pub const HAS_BEEN_DIVINED: u16 = 24;
+pub const NOT_DIVINED: u16 = 25;
+pub const ALWAYS_TRUE: u16 = 255;
 
 /// Evaluate a condition predicate against the current item state.
-///
-/// Conditions are encoded as (predicate_id: u16, arg1: u16, arg2: u16).
-/// All evaluation is integer/float comparison — no allocations, branch-predictor friendly.
 pub fn evaluate_condition(
     predicate: u16,
     arg1: u16,
@@ -61,12 +69,12 @@ pub fn evaluate_condition(
 
         OPEN_PREFIX_GTE => {
             let max_p = if item.rarity == 1 { 1 } else { pool.max_prefixes };
-            (max_p - item.prefix_count) >= arg1 as u8
+            max_p.saturating_sub(item.prefix_count) >= arg1 as u8
         }
 
         OPEN_SUFFIX_GTE => {
             let max_s = if item.rarity == 1 { 1 } else { pool.max_suffixes };
-            (max_s - item.suffix_count) >= arg1 as u8
+            max_s.saturating_sub(item.suffix_count) >= arg1 as u8
         }
 
         MOD_COUNT_GTE => item.mod_count() >= arg1 as u8,
@@ -74,7 +82,6 @@ pub fn evaluate_condition(
         MOD_COUNT_LTE => item.mod_count() <= arg1 as u8,
 
         COST_SPENT_GTE => {
-            // Threshold encoded as f32 bits split across arg1 (high) and arg2 (low)
             let bits = (arg1 as u32) << 16 | arg2 as u32;
             item.cost_spent >= f32::from_bits(bits)
         }
@@ -103,8 +110,33 @@ pub fn evaluate_condition(
                 })
         }
 
-        ALWAYS_TRUE => true,
+        HAS_FRACTURED_MOD => item.has_fractured_mod(),
+        HAS_ESSENCE_MOD => item.has_essence_mod(),
+        NO_ESSENCE_MOD => !item.has_essence_mod(),
+        FRACTURED_IS_TARGET => {
+            // Check if any fractured mod is a target family
+            for i in 0..item.prefix_count as usize {
+                if (item.fractured_mask >> i) & 1 == 1
+                    && pool.all_target_families.contains(&item.prefix_families[i])
+                {
+                    return true;
+                }
+            }
+            for i in 0..item.suffix_count as usize {
+                if (item.fractured_mask >> (i + 3)) & 1 == 1
+                    && pool.all_target_families.contains(&item.suffix_families[i])
+                {
+                    return true;
+                }
+            }
+            false
+        }
+        IS_DESECRATED => item.is_desecrated(),
+        NOT_DESECRATED => !item.is_desecrated(),
+        HAS_BEEN_DIVINED => item.is_divined(),
+        NOT_DIVINED => !item.is_divined(),
 
+        ALWAYS_TRUE => true,
         _ => false,
     }
 }

@@ -1,3 +1,5 @@
+/// Monte Carlo evaluation of a single rule-list.
+
 use pyo3::prelude::*;
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -29,33 +31,47 @@ pub struct Rule {
     pub omen: u16,
 }
 
+/// Result of evaluating one rule-list.
+pub struct EvalResult {
+    pub fitness: Fitness,
+    pub fire_on_success: Vec<u32>,
+    pub fire_on_failure: Vec<u32>,
+}
+
 /// Evaluate a single rule-list over N Monte Carlo trials.
-/// Returns (Fitness, fire_counts per rule).
 pub fn evaluate_rulelist(
     rules: &[Rule],
     n_rules: usize,
     pool: &ModPool,
-    currency_prices: &[f32],
-    omen_prices: &[f32],
-    restart_prices: &[f32], // [scour, buy_base, buy_magic_0..N, buy_frac_0..N]
+    prices: &[f32],   // flat array: [currencies..., omens...]
+    max_currency_id: usize,
     n_trials: u32,
     max_steps: u32,
     seed: u64,
-) -> (Fitness, Vec<u32>) {
+) -> EvalResult {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
-    let mut fire_counts = vec![0u32; n_rules];
+    let mut fire_on_success = vec![0u32; n_rules];
+    let mut fire_on_failure = vec![0u32; n_rules];
+    let mut trial_fires = vec![0u32; n_rules];
+
     let mut costs: Vec<f32> = Vec::with_capacity(n_trials as usize);
-    let mut steps_vec: Vec<u32> = Vec::with_capacity(n_trials as usize);
+    let mut successful_costs: Vec<f32> = Vec::new();
+    let mut total_steps: u64 = 0;
     let mut successes: u32 = 0;
 
     for _ in 0..n_trials {
-        let mut item = ItemState::blank(pool.ilvl);
-        let mut cost: f32 = 0.0;
+        let mut item = ItemState::blank();
         let mut step: u32 = 0;
         let mut trial_success = false;
 
+        // Reset per-trial fire counts
+        for f in trial_fires.iter_mut() {
+            *f = 0;
+        }
+
         'trial: while step < max_steps {
             // Evaluate rules top-to-bottom, first match fires
+            let mut any_fired = false;
             for rule_idx in 0..n_rules {
                 let rule = &rules[rule_idx];
 
@@ -63,7 +79,8 @@ pub fn evaluate_rulelist(
                     continue;
                 }
 
-                fire_counts[rule_idx] += 1;
+                trial_fires[rule_idx] += 1;
+                any_fired = true;
 
                 match rule.currency {
                     DONE => {
@@ -74,106 +91,103 @@ pub fn evaluate_rulelist(
                         break 'trial;
                     }
                     _ => {
-                        // Add currency cost
-                        let c_cost = currency_prices
-                            .get(rule.currency as usize)
-                            .copied()
-                            .unwrap_or(1.0);
+                        // Get currency cost
+                        let c_cost = if (rule.currency as usize) < prices.len() {
+                            prices[rule.currency as usize]
+                        } else {
+                            1.0
+                        };
+                        // Get omen cost (offset by max_currency_id)
                         let o_cost = if rule.omen > 0 {
-                            omen_prices.get(rule.omen as usize).copied().unwrap_or(0.0)
+                            let omen_idx = max_currency_id + rule.omen as usize;
+                            if omen_idx < prices.len() { prices[omen_idx] } else { 0.0 }
                         } else {
                             0.0
                         };
-                        cost += c_cost + o_cost;
 
+                        item.cost_spent += c_cost + o_cost;
                         apply_currency(&mut item, rule.currency, rule.omen, pool, &mut rng);
-                        item.cost_spent = cost;
                         step += 1;
                         item.step_count = step as u16;
 
-                        // Check target satisfaction after currency application
+                        // Check target satisfaction
                         if item.all_targets_hit(&pool.all_target_families) {
                             trial_success = true;
                             break 'trial;
                         }
-                        break; // Rule fired, go back to top of rule-list
+                        break; // Rule fired, restart from top of rule-list
                     }
                 }
             }
-            // If no rule fired, implicit FAIL
-            if step == item.step_count as u32 {
-                break;
+
+            if !any_fired {
+                break; // No rule matched — implicit FAIL
             }
         }
 
+        // Accumulate per-rule credits
         if trial_success {
             successes += 1;
+            for i in 0..n_rules {
+                fire_on_success[i] += trial_fires[i];
+            }
+        } else {
+            for i in 0..n_rules {
+                fire_on_failure[i] += trial_fires[i];
+            }
         }
-        costs.push(cost);
-        steps_vec.push(step);
+
+        costs.push(item.cost_spent);
+        if trial_success {
+            successful_costs.push(item.cost_spent);
+        }
+        total_steps += step as u64;
     }
 
-    let fitness = compute_fitness(&costs, &steps_vec, successes, n_trials);
-    (fitness, fire_counts)
+    let fitness = compute_fitness(&successful_costs, &costs, successes, n_trials, total_steps);
+
+    EvalResult {
+        fitness,
+        fire_on_success,
+        fire_on_failure,
+    }
 }
 
-fn compute_fitness(costs: &[f32], steps: &[u32], successes: u32, n_trials: u32) -> Fitness {
+fn compute_fitness(
+    successful_costs: &[f32],
+    all_costs: &[f32],
+    successes: u32,
+    n_trials: u32,
+    total_steps: u64,
+) -> Fitness {
     let success_rate = successes as f32 / n_trials as f32;
 
-    let mut successful_costs: Vec<f32> = costs
-        .iter()
-        .enumerate()
-        .filter(|(_, &c)| c < f32::INFINITY) // rough proxy; real check uses success flags
-        .take(successes as usize)
-        .map(|(_, &c)| c)
-        .collect();
-
-    // Actually collect costs of successful trials properly
-    successful_costs.clear();
-    let mut successful_steps: Vec<u32> = Vec::new();
-    // We need to track which trials succeeded — simplify by using cost threshold
-    // In practice, the caller tracks success. For now, use a simpler approach:
-    // successful trials are the first `successes` lowest-cost trials
-    // TODO: Track success per trial properly with a bool vec
-
-    // Simplified: assume all costs are in order, and successes are tracked externally
-    // For correctness, we'd pass a success_flags vec. For now, use all costs for stats.
-    let all_costs = costs;
-
-    let expected_cost = if successes > 0 {
-        all_costs.iter().sum::<f32>() / n_trials as f32
-    } else {
-        f32::INFINITY
-    };
-
-    let mut sorted_costs = all_costs.to_vec();
-    sorted_costs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-    let cost_median = if sorted_costs.is_empty() {
+    let expected_cost = if successful_costs.is_empty() {
         f32::INFINITY
     } else {
-        sorted_costs[sorted_costs.len() / 2]
+        successful_costs.iter().sum::<f32>() / successful_costs.len() as f32
     };
 
-    let cost_p90 = if sorted_costs.is_empty() {
-        f32::INFINITY
+    let (cost_median, cost_p90, cost_std) = if successful_costs.is_empty() {
+        (f32::INFINITY, f32::INFINITY, 0.0)
     } else {
-        sorted_costs[(sorted_costs.len() as f64 * 0.9) as usize]
+        let mut sorted = successful_costs.to_vec();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let median = sorted[sorted.len() / 2];
+        let p90_idx = ((sorted.len() as f64) * 0.9) as usize;
+        let p90 = sorted[p90_idx.min(sorted.len() - 1)];
+
+        let mean = expected_cost;
+        let variance = sorted.iter().map(|c| (c - mean).powi(2)).sum::<f32>()
+            / sorted.len() as f32;
+        let std = variance.sqrt();
+
+        (median, p90, std)
     };
 
-    let cost_std = if sorted_costs.len() > 1 {
-        let mean = sorted_costs.iter().sum::<f32>() / sorted_costs.len() as f32;
-        let variance =
-            sorted_costs.iter().map(|c| (c - mean).powi(2)).sum::<f32>() / sorted_costs.len() as f32;
-        variance.sqrt()
-    } else {
-        0.0
-    };
-
-    let expected_steps = steps.iter().sum::<u32>() as f32 / n_trials as f32;
-    let mut sorted_steps = steps.to_vec();
-    sorted_steps.sort();
-    let step_median = sorted_steps[sorted_steps.len() / 2] as f32;
+    let expected_steps = total_steps as f32 / n_trials as f32;
+    let step_median = expected_steps; // approximation
 
     Fitness {
         expected_cost,
@@ -187,8 +201,8 @@ fn compute_fitness(costs: &[f32], steps: &[u32], successes: u32, n_trials: u32) 
 }
 
 /// Evaluate a single rule-list (exposed to Python for interactive testing).
+/// Currently a placeholder — real implementation via batch.rs.
 #[pyfunction]
 pub fn evaluate_single() -> PyResult<()> {
-    // TODO: Wire up with proper Python argument parsing
     Ok(())
 }
