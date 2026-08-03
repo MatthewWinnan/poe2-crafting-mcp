@@ -218,6 +218,11 @@ pub fn apply_currency(
         }
 
         DESECRATE => {
+            // Only desecrate once per item (one desecrated mod maximum in 0.5)
+            // Use bit 3 of flags as "has_been_desecrated_ever"
+            if item.flags & 0x08 != 0 {
+                return; // Already desecrated this item once
+            }
             item.set_desecrated(true);
         }
 
@@ -226,6 +231,7 @@ pub fn apply_currency(
             // Model: roll 3 random mods from pool, if any is a target family
             // at acceptable tier, place it. Otherwise place the first one.
             item.set_desecrated(false); // consumed
+            item.flags |= 0x08; // mark "has been desecrated ever" — can't desecrate again
 
             let max_p = if item.rarity == 1 { 1 } else { pool.max_prefixes };
             let max_s = if item.rarity == 1 { 1 } else { pool.max_suffixes };

@@ -132,7 +132,7 @@ pub fn evaluate_condition(
             false
         }
         IS_DESECRATED => item.is_desecrated(),
-        NOT_DESECRATED => !item.is_desecrated(),
+        NOT_DESECRATED => !item.is_desecrated() && (item.flags & 0x08 == 0), // never been desecrated
         HAS_BEEN_DIVINED => item.is_divined(),
         NOT_DIVINED => !item.is_divined(),
 

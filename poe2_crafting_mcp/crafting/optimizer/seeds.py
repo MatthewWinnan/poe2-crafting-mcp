@@ -273,6 +273,70 @@ def seed_aggressive_restart() -> RuleList:
     return rl
 
 
+def seed_deterministic_multimod() -> RuleList:
+    """Seed 11: Deterministic Multi-Target (endgame sequential recipe).
+
+    The sequential path endgame crafters use for mirror-tier items:
+    buy magic(target1) → regal → essence(target2) → targeted exalt(target3)
+    → desecrate+reveal(abyss target) → fill suffixes
+
+    The key insight: find_first_missing_target makes each action pursue
+    the NEXT unfilled target, so the rule priority encodes the crafting ORDER.
+    """
+    rl = RuleList()
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.BUY_MAGIC), "buy magic w/ target 1")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.REGAL), "regal to rare")
+    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_UPGRADE), "essence target 2")
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "all targets done")
+    rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate for abyss")
+    rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL), "reveal abyss mod")
+    rl.add_rule(
+        Condition.missing_target_prefix(),
+        Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
+        "sinistral exalt for prefix",
+    )
+    rl.add_rule(
+        Condition.missing_target_suffix(),
+        Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
+        "dextral exalt for suffix",
+    )
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.SCOUR), "restart if stuck")
+    rl.add_rule(Condition.always_true(), Action(Currency.EXALTED), "blind exalt")
+    return rl
+
+
+def seed_fracture_then_fill() -> RuleList:
+    """Seed 12: Fracture First → Essence Second → Fill (high-investment).
+
+    buy magic(target1) → regal → divine → fracture → essence(target2)
+    → desecrate → reveal → targeted exalts for rest
+    """
+    rl = RuleList()
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.BUY_MAGIC), "buy magic target 1")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.REGAL), "regal")
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "done")
+    rl.add_rule(Condition.cost_spent_gte(1000), Action(Currency.SCOUR), "restart")
+    rl.add_rule(Condition.not_divined(), Action(Currency.DIVINE), "divine to max")
+    rl.add_rule(Condition.has_been_divined(), Action(Currency.FRACTURING), "fracture target 1")
+    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_UPGRADE), "essence target 2")
+    rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate")
+    rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL), "reveal abyss")
+    rl.add_rule(
+        Condition.missing_target_prefix(),
+        Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
+        "exalt prefix",
+    )
+    rl.add_rule(
+        Condition.missing_target_suffix(),
+        Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
+        "exalt suffix",
+    )
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "fallback")
+    return rl
+
+
 # ── Population Seeding ────────────────────────────────────────────────────────
 
 ALL_SEEDS = [
@@ -286,6 +350,8 @@ ALL_SEEDS = [
     seed_fracture_workflow,
     seed_buy_fractured_base,
     seed_aggressive_restart,
+    seed_deterministic_multimod,
+    seed_fracture_then_fill,
 ]
 
 
