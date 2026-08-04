@@ -873,8 +873,8 @@ def cmd_sim(argv: list[str]) -> int:
         elif cmd == "omens":
             # Show omens applicable to a currency
             target_cur = parts[1] if len(parts) > 1 else ""
-            # Map bone names to "desecrate" for omen lookup
-            if target_cur in BONES:
+            # Map bone names and "reveal" to "desecrate" for omen lookup
+            if target_cur in BONES or target_cur == "reveal":
                 target_cur = "desecrate"
             if not target_cur:
                 print(f"  {_BOLD}Usage: omens <currency>{_RESET}")
