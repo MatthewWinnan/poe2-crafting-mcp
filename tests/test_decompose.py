@@ -112,6 +112,18 @@ def _make_target_3() -> CraftTarget:
     )
 
 
+def _make_prices() -> PriceCache:
+    """Create a PriceCache for testing."""
+    return PriceCache(
+        currency={"exalted": 3.0, "greater_exalted": 5.0, "chaos": 1.0},
+        omen={"sinistral_exaltation": 15.0, "dextral_exaltation": 15.0},
+        essence={"greater_essence": 1.0},
+        base_white=1.0,
+        base_magic_with={"FireDamage": 35.0},
+        trade_finished=500.0,
+    )
+
+
 def _default_prices() -> dict[str, float]:
     return {
         "exalted": 3.0,
@@ -603,3 +615,112 @@ class TestEncodeInitialState:
         assert data[11] == 1   # pt0
         assert data[12] == 3   # pt1
         assert data[14] == 2   # st0
+
+
+# ── Cooperative Coevolution ─────────────────────────────────────────────────
+
+class TestCooperativeCoevolution:
+    """Tests for optimize_cooperative (Tier 2).
+
+    Uses the Python stub evaluator (no Rust needed) to verify:
+    - Function accepts same interface as optimize_multi_target
+    - Returns DecomposedResult with correct structure
+    - Falls back to monolithic for small target counts
+    - Maintains per-phase sub-populations
+    """
+
+    def test_small_target_falls_back_to_monolithic(self):
+        """With < decompose_threshold targets, CC falls back to optimize()."""
+        from poe2_crafting_mcp.crafting.optimizer.runner import (
+            optimize_cooperative, OptimizerConfig,
+        )
+
+        pool = _make_pool_data()
+        target = CraftTarget(
+            targets=[ModTarget("FireDamage", 1, "prefix", 2)],
+            item_class="Gloves_int",
+            ilvl=82,
+        )
+        prices = _make_prices()
+        config = OptimizerConfig(pop_size=10, max_generations=2, mc_trials=10)
+
+        result = optimize_cooperative(pool, target, prices, config)
+
+        assert isinstance(result, DecomposedResult)
+        assert len(result.phases) == 1
+        assert "Monolithic" in result.ordering_rationale
+
+    def test_returns_decomposed_result(self):
+        """CC returns a properly structured DecomposedResult."""
+        from poe2_crafting_mcp.crafting.optimizer.runner import (
+            optimize_cooperative, OptimizerConfig,
+        )
+
+        pool = _make_pool_data()
+        target = _make_target_5()
+        prices = _make_prices()
+        config = OptimizerConfig(pop_size=10, max_generations=3, mc_trials=10)
+
+        result = optimize_cooperative(pool, target, prices, config)
+
+        assert isinstance(result, DecomposedResult)
+        assert len(result.phases) == 5
+        assert len(result.ordering) == 5
+        assert result.wall_time_seconds > 0
+        assert "CC:" in result.ordering_rationale
+
+    def test_phases_have_strategies(self):
+        """Each phase should have a strategy (even with stub evaluator)."""
+        from poe2_crafting_mcp.crafting.optimizer.runner import (
+            optimize_cooperative, OptimizerConfig,
+        )
+
+        pool = _make_pool_data()
+        target = _make_target_5()
+        prices = _make_prices()
+        config = OptimizerConfig(pop_size=10, max_generations=3, mc_trials=10)
+
+        result = optimize_cooperative(pool, target, prices, config)
+
+        for pr in result.phases:
+            assert pr.strategy is not None
+            assert pr.phase_target is not None
+            assert pr.restart_risk in ("safe", "destructive", "full_restart")
+
+    def test_cumulative_cost_increases(self):
+        """Cumulative cost should be monotonically increasing across phases."""
+        from poe2_crafting_mcp.crafting.optimizer.runner import (
+            optimize_cooperative, OptimizerConfig,
+        )
+
+        pool = _make_pool_data()
+        target = _make_target_5()
+        prices = _make_prices()
+        config = OptimizerConfig(pop_size=10, max_generations=3, mc_trials=10)
+
+        result = optimize_cooperative(pool, target, prices, config)
+
+        prev_cum = 0.0
+        for pr in result.phases:
+            assert pr.cumulative_cost >= prev_cum
+            prev_cum = pr.cumulative_cost
+
+    def test_total_cost_equals_sum_of_phases(self):
+        """Total cost should equal sum of individual phase costs."""
+        from poe2_crafting_mcp.crafting.optimizer.runner import (
+            optimize_cooperative, OptimizerConfig,
+        )
+
+        pool = _make_pool_data()
+        target = _make_target_5()
+        prices = _make_prices()
+        config = OptimizerConfig(pop_size=10, max_generations=3, mc_trials=10)
+
+        result = optimize_cooperative(pool, target, prices, config)
+
+        phase_sum = sum(pr.expected_cost for pr in result.phases)
+        # Both may be inf if stub evaluator didn't find viable strategies
+        if phase_sum == float("inf"):
+            assert result.total_expected_cost == float("inf")
+        else:
+            assert abs(result.total_expected_cost - phase_sum) < 0.01

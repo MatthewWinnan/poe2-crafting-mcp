@@ -54,6 +54,10 @@ def main() -> None:
         "--no-decompose", action="store_true",
         help="Force monolithic optimization (no decomposition)",
     )
+    parser.add_argument(
+        "--cooperative", "--cc", action="store_true",
+        help="Use cooperative coevolution (Tier 2) instead of sequential decomposition",
+    )
 
     args = parser.parse_args()
 
@@ -72,7 +76,7 @@ def main() -> None:
     # Import optimizer (deferred to avoid slow imports on --help)
     from poe2_crafting_mcp.crafting.optimizer.preflight import preflight
     from poe2_crafting_mcp.crafting.optimizer.runner import (
-        optimize, optimize_multi_target, OptimizerConfig,
+        optimize, optimize_multi_target, optimize_cooperative, OptimizerConfig,
     )
     from poe2_crafting_mcp.crafting.optimizer.bridge import is_rust_available
 
@@ -90,7 +94,8 @@ def main() -> None:
     print(f"  Engine:  {'Rust (fast)' if is_rust_available() else 'Python stub (slow)'}")
     print(f"  Config:  pop={args.pop_size} gen={args.generations} trials={args.trials}")
     if use_decompose:
-        print(f"  Mode:    Sub-goal decomposition ({len(target_mods)} targets)")
+        mode = "Cooperative coevolution" if args.cooperative else "Sequential decomposition"
+        print(f"  Mode:    {mode} ({len(target_mods)} targets)")
     print()
 
     # Preflight: fetch pool + prices from DB
@@ -118,7 +123,10 @@ def main() -> None:
     )
 
     if use_decompose:
-        _run_decomposed(pool_data, target, prices, config)
+        if args.cooperative:
+            _run_cooperative(pool_data, target, prices, config)
+        else:
+            _run_decomposed(pool_data, target, prices, config)
     else:
         _run_monolithic(pool_data, target, prices, config)
 
@@ -206,6 +214,52 @@ def _run_decomposed(pool_data, target, prices, config) -> None:
     print()
 
     # Show each phase's best strategy
+    for pr in result.phases:
+        target_name = pr.phase_target.targets[0].family if pr.phase_target.targets else "?"
+        print(f"  Phase {pr.phase_index}: {target_name} ({pr.expected_cost:.0f}c, {pr.success_rate:.0%})")
+        print(f"  Strategy: {pr.strategy.family_name}")
+        print(f"  {'─' * 40}")
+        for step in pr.strategy.steps:
+            print(f"    {step}")
+        print()
+
+
+def _run_cooperative(pool_data, target, prices, config) -> None:
+    """Run cooperative coevolution optimization."""
+    from poe2_crafting_mcp.crafting.optimizer.runner import optimize_cooperative
+
+    print("Running cooperative coevolution...")
+    start = time.time()
+    result = optimize_cooperative(pool_data, target, prices, config)
+    elapsed = time.time() - start
+
+    print()
+    print(f"{'═' * 60}")
+    print(f"  CC RESULTS ({elapsed:.1f}s)")
+    print(f"{'═' * 60}")
+    print()
+
+    print(f"  Ordering: {result.ordering_rationale}")
+    print()
+
+    # Per-phase breakdown (same format as sequential)
+    print(f"  {'Phase':<6s} {'Target':<25s} {'Cost':>8s} {'Success':>8s} {'Risk':<12s} {'Cumulative':>10s}")
+    print(f"  {'─' * 6} {'─' * 25} {'─' * 8} {'─' * 8} {'─' * 12} {'─' * 10}")
+    for pr in result.phases:
+        target_name = pr.phase_target.targets[0].family if pr.phase_target.targets else "?"
+        print(
+            f"  {pr.phase_index:<6d} {target_name:<25s} {pr.expected_cost:>7.0f}c "
+            f"{pr.success_rate:>7.0%} {pr.restart_risk:<12s} {pr.cumulative_cost:>9.0f}c"
+        )
+    print()
+
+    print(f"  Total expected cost: {result.total_expected_cost:.0f}c")
+    print(f"  Combined success rate: {result.total_success_rate:.2%}")
+    if result.trade_price < float("inf"):
+        print(f"  Trade price: {result.trade_price:.0f}c")
+    print(f"  Verdict: {result.verdict}")
+    print()
+
     for pr in result.phases:
         target_name = pr.phase_target.targets[0].family if pr.phase_target.targets else "?"
         print(f"  Phase {pr.phase_index}: {target_name} ({pr.expected_cost:.0f}c, {pr.success_rate:.0%})")

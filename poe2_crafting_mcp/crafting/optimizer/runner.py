@@ -3,8 +3,10 @@
 Orchestrates the full GP loop:
   init → evaluate → select → breed → archive → repeat → cluster → output
 
-Also provides optimize_multi_target() for sub-goal decomposition of
-complex multi-target crafts (Tier 1 sequential decomposition).
+Provides three multi-target strategies:
+- optimize(): monolithic single-population GP (best for 1-3 targets)
+- optimize_multi_target(): Tier 1 sequential decomposition (independent phases)
+- optimize_cooperative(): Tier 2 cooperative coevolution (co-adapting phases)
 
 Usage:
     from poe2_crafting_mcp.crafting.optimizer.runner import optimize, OptimizerConfig
@@ -13,6 +15,10 @@ Usage:
     # Multi-target decomposition:
     from poe2_crafting_mcp.crafting.optimizer.runner import optimize_multi_target
     result = optimize_multi_target(pool_data, target, prices, config)
+
+    # Cooperative coevolution:
+    from poe2_crafting_mcp.crafting.optimizer.runner import optimize_cooperative
+    result = optimize_cooperative(pool_data, target, prices, config)
 """
 
 from __future__ import annotations
@@ -868,4 +874,329 @@ def _run_gp_loop(
         archive_coverage=archive.coverage,
         rust_available=is_rust_available(),
         archive_strategies=archive_strategies,
+    )
+
+
+# ── Cooperative Coevolution (Tier 2) ────────────────────────────────────────
+
+@dataclass
+class _PhasePopulation:
+    """State for one sub-population in cooperative coevolution."""
+    phase: PhaseTarget
+    population: list[Individual]
+    archive: QDArchive
+    pool_data: dict
+    best_cost_history: list[float]
+    champion: Individual | None = None
+    total_evaluations: int = 0
+
+
+def optimize_cooperative(
+    pool_data: dict,
+    target: CraftTarget,
+    prices: PriceCache,
+    config: OptimizerConfig | None = None,
+    ordering: list[int] | None = None,
+    max_orderings: int = 120,
+    decompose_threshold: int = 4,
+) -> DecomposedResult:
+    """Cooperative coevolution: N sub-populations co-adapting simultaneously.
+
+    Unlike Tier 1 (optimize_multi_target) which optimizes phases independently
+    and sequentially, CC maintains all phase populations at once. Each
+    generation evaluates phases in order, where phase K uses the current
+    champion from phase K-1 as its starting state. This lets later phases
+    adapt to changes in earlier phase strategies.
+
+    Args:
+        pool_data: encoded mod pool from bridge.encode_pool()
+        target: full multi-target CraftTarget
+        prices: pre-fetched price cache
+        config: GP parameters (applied to each phase)
+        ordering: explicit phase order. If None, auto-detect via WSJF.
+        max_orderings: max permutations to evaluate for ordering search.
+        decompose_threshold: min targets before decomposing (default 4).
+
+    Returns:
+        DecomposedResult with per-phase strategies and total cost.
+    """
+    from .decompose import (
+        build_phases,
+        build_setup_rules,
+        classify_phase_risk,
+        optimal_ordering,
+    )
+    from .seeds import create_seeded_population_for_phase
+
+    if config is None:
+        config = OptimizerConfig()
+
+    start_time = time.time()
+    n_targets = len(target.targets)
+
+    # For small target counts, fall back to monolithic optimization
+    if n_targets < decompose_threshold:
+        mono_result = optimize(pool_data, target, prices, config)
+        if mono_result.strategies:
+            best = mono_result.strategies[0]
+            phase_result = PhaseResult(
+                phase_index=0,
+                phase_target=PhaseTarget(targets=target.targets),
+                strategy=best,
+                expected_cost=best.expected_cost,
+                success_rate=best.success_rate,
+                restart_risk="safe",
+                cumulative_cost=best.expected_cost,
+            )
+            return DecomposedResult(
+                phases=[phase_result],
+                total_expected_cost=best.expected_cost,
+                total_success_rate=best.success_rate,
+                ordering=list(range(n_targets)),
+                ordering_rationale=f"Monolithic (only {n_targets} targets)",
+                trade_price=prices.trade_finished,
+                verdict=mono_result.best_verdict,
+                wall_time_seconds=time.time() - start_time,
+                item_class=target.item_class,
+                ilvl=target.ilvl,
+            )
+        return DecomposedResult(
+            wall_time_seconds=time.time() - start_time,
+            item_class=target.item_class,
+            ilvl=target.ilvl,
+            verdict="NO VIABLE STRATEGY FOUND",
+        )
+
+    # ── Step 1: Determine phase ordering ──
+    price_dict = {**prices.currency, **prices.omen}
+    price_dict["buy_magic"] = prices.base_magic_with.get(
+        target.targets[0].family, prices.base_white * 10
+    )
+
+    if ordering is None:
+        best_ordering, rationale, candidates = optimal_ordering(
+            target, pool_data, price_dict, max_orderings
+        )
+    else:
+        best_ordering = ordering
+        rationale = "User-specified ordering"
+        candidates = []
+
+    log.info(
+        f"CC decomposition: {n_targets} targets, ordering={best_ordering}, "
+        f"rationale={rationale}"
+    )
+
+    # ── Step 2: Build phases and initialize sub-populations ──
+    phases = build_phases(target, best_ordering, pool_data, price_dict)
+
+    sub_pops: list[_PhasePopulation] = []
+    for phase in phases:
+        setup_rules = build_setup_rules(phase)
+        phase_craft_target = _build_phase_pool_target(phase, target)
+        phase_pool = _retarget_pool(pool_data, phase_craft_target)
+
+        primary_affix = phase.targets[0].affix_type
+        seeded = create_seeded_population_for_phase(
+            config.pop_size, config.seed_fraction,
+            primary_affix, setup_rules,
+        )
+        population: list[Individual] = [Individual(rl) for rl in seeded]
+        while len(population) < config.pop_size:
+            rl = _random_rulelist_for_phase(setup_rules)
+            population.append(Individual(rl))
+
+        sub_pops.append(_PhasePopulation(
+            phase=phase,
+            population=population,
+            archive=QDArchive(),
+            pool_data=phase_pool,
+            best_cost_history=[],
+        ))
+
+    # ── Step 3: Co-evolutionary loop ──
+    total_evaluations = 0
+    converged_count = 0
+
+    for gen in range(config.max_generations):
+        gen_converged = True
+
+        for sp in sub_pops:
+            # Build initial_state from phase definition.
+            # In CC, we use the static phase starting_mods — these encode
+            # which targets prior phases are responsible for. The co-adaptation
+            # comes from all phases evolving simultaneously: if phase K's
+            # champion changes strategy, phase K+1's population is re-evaluated
+            # in the same generation and adapts.
+            phase_initial_state = encode_initial_state(sp.phase)
+
+            # Evaluate this sub-population
+            evaluate_population_rust(
+                sp.population, sp.pool_data, prices,
+                n_trials=config.mc_trials,
+                max_steps=config.max_steps,
+                base_seed=gen * 100_000 + sp.phase.phase_index * 7919,
+                initial_state=phase_initial_state,
+            )
+            sp.total_evaluations += len(sp.population) * config.mc_trials
+
+            # Dead rule pruning
+            for ind in sp.population:
+                if ind.fitness.fire_on_success:
+                    ind.rulelist = prune_dead_rules(ind.rulelist, ind.fitness)
+
+            # Update archive
+            sp.archive.offer_population(sp.population)
+
+            # Archive injection
+            if gen > 0 and gen % config.archive_injection_interval == 0:
+                injection_size = int(config.pop_size * config.archive_injection_fraction)
+                injection = sp.archive.get_injection_set(injection_size)
+                if injection:
+                    sp.population.sort(
+                        key=lambda ind: (ind.pareto_rank, -ind.crowding_distance)
+                    )
+                    for i, inj_ind in enumerate(injection):
+                        if i < len(sp.population):
+                            sp.population[-(i + 1)] = inj_ind
+
+            # Selection + breeding
+            survivors = select_survivors(sp.population, config.pop_size)
+
+            offspring: list[Individual] = []
+            elite_count = int(config.pop_size * config.elite_fraction)
+            elites = survivors[:elite_count]
+
+            while len(offspring) < config.pop_size - elite_count:
+                parent_a = tournament_select(survivors)
+                parent_b = tournament_select(survivors)
+                child_rl = breed(
+                    parent_a.rulelist, parent_b.rulelist,
+                    parent_a.fitness, parent_b.fitness,
+                )
+                offspring.append(Individual(child_rl))
+
+            sp.population = list(elites) + offspring
+
+            # Track champion (best viable individual)
+            viable = [
+                ind for ind in survivors
+                if ind.fitness.expected_cost < float("inf")
+                and ind.fitness.success_rate > 0.5
+            ]
+            if viable:
+                sp.champion = min(viable, key=lambda ind: ind.fitness.expected_cost)
+
+            # Per-phase convergence check
+            viable_costs = [ind.fitness.expected_cost for ind in viable]
+            if viable_costs:
+                best_cost = min(viable_costs)
+                sp.best_cost_history.append(best_cost)
+
+                if len(sp.best_cost_history) >= config.convergence_patience:
+                    recent = sp.best_cost_history[-config.convergence_patience:]
+                    if recent[0] > 0:
+                        improvement = (recent[0] - recent[-1]) / recent[0]
+                        if improvement >= config.convergence_threshold:
+                            gen_converged = False
+                    else:
+                        gen_converged = False
+                else:
+                    gen_converged = False
+            else:
+                gen_converged = False
+
+        total_evaluations = sum(sp.total_evaluations for sp in sub_pops)
+
+        # All phases converged this generation
+        if gen_converged:
+            converged_count += 1
+            if converged_count >= config.convergence_patience:
+                log.info(f"CC converged after {gen + 1} generations")
+                break
+        else:
+            converged_count = 0
+
+        # Log progress every 10 generations
+        if gen % 10 == 0:
+            costs = [
+                f"{sp.champion.fitness.expected_cost:.0f}c"
+                if sp.champion else "?"
+                for sp in sub_pops
+            ]
+            log.info(f"CC gen {gen}: phase costs = [{', '.join(costs)}]")
+
+    # ── Step 4: Extract results ──
+    phase_results: list[PhaseResult] = []
+    cumulative_cost = 0.0
+
+    for sp in sub_pops:
+        # Get best strategy from champion or archive
+        if sp.champion:
+            best = _label_strategy(sp.champion.rulelist, sp.champion.fitness, prices)
+        else:
+            # Try archive
+            archive_elites = sp.archive.get_elites()
+            viable_elites = [
+                ind for ind in archive_elites
+                if ind.fitness.success_rate > 0.5
+            ]
+            if viable_elites:
+                best_ind = min(viable_elites, key=lambda x: x.fitness.expected_cost)
+                best = _label_strategy(best_ind.rulelist, best_ind.fitness, prices)
+            else:
+                best = CraftingStrategy(
+                    rulelist=RuleList(),
+                    fitness=Fitness(),
+                    family_name="NO STRATEGY",
+                    verdict="FAILED",
+                    expected_cost=float("inf"),
+                    success_rate=0.0,
+                )
+
+        risk = classify_phase_risk(
+            sp.phase.targets[0],
+            len(sp.phase.starting_mods),
+            sp.phase.starting_rarity,
+        )
+
+        cumulative_cost += best.expected_cost
+
+        phase_results.append(PhaseResult(
+            phase_index=sp.phase.phase_index,
+            phase_target=sp.phase,
+            strategy=best,
+            expected_cost=best.expected_cost,
+            success_rate=best.success_rate,
+            restart_risk=risk,
+            cumulative_cost=cumulative_cost,
+        ))
+
+    # Aggregate
+    total_cost = sum(pr.expected_cost for pr in phase_results)
+    total_success = 1.0
+    for pr in phase_results:
+        total_success *= pr.success_rate
+
+    if total_cost < prices.trade_finished:
+        verdict = f"CRAFT (saves ~{prices.trade_finished - total_cost:.0f}c vs trade)"
+    elif prices.trade_finished < float("inf"):
+        verdict = f"BUY (crafting costs {total_cost - prices.trade_finished:.0f}c more)"
+    else:
+        verdict = f"CRAFT ({total_cost:.0f}c, no trade price available)"
+
+    wall_time = time.time() - start_time
+
+    return DecomposedResult(
+        phases=phase_results,
+        total_expected_cost=total_cost,
+        total_success_rate=total_success,
+        ordering=best_ordering,
+        ordering_rationale=f"CC: {rationale}",
+        trade_price=prices.trade_finished,
+        verdict=verdict,
+        ordering_candidates=candidates,
+        wall_time_seconds=wall_time,
+        item_class=target.item_class,
+        ilvl=target.ilvl,
     )
