@@ -791,7 +791,7 @@ def _fmt_craftable_mods(result: dict, show_tiers: bool = False) -> None:
             top_tier = g['tiers'][0]  # highest tier (sorted by req_level DESC)
             print(f"    {_CYAN}{affix_pct:5.1f}%{_RESET} "
                   f"{_DIM}({all_pct:4.1f}% all | w={fw}){_RESET}  "
-                  f"{top_tier['stat_text'][:48]}")
+                  f"{g['family']:<32s} {top_tier['stat_text'][:45]}")
             if show_tiers:
                 for i, t in enumerate(g['tiers']):
                     tier_num = i + 1
