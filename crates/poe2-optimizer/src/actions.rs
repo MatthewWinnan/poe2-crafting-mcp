@@ -465,36 +465,43 @@ enum TierRank {
 /// Place a mod from the specified family using the ESSENCE pool's tier data.
 /// Falls back to normal pool if the family isn't in the essence pool.
 fn add_essence_mod(item: &mut ItemState, family: u16, pool: &ModPool, rank: TierRank) {
-    let is_prefix = pool.target_prefix_families.contains(&family);
+    // Check if family exists in essence pool or normal pool
+    let in_ess_prefix = pool.essence_prefix_families.contains(&family);
+    let in_ess_suffix = pool.essence_suffix_families.contains(&family);
+    let in_norm_prefix = pool.prefix_families.contains(&family);
+    let in_norm_suffix = pool.suffix_families.contains(&family);
 
-    // Try essence pool first
-    let has_essence_data = if is_prefix {
-        pool.essence_prefix_families.contains(&family)
+    if !in_ess_prefix && !in_ess_suffix && !in_norm_prefix && !in_norm_suffix {
+        return; // Family not in any pool (e.g. desecrated-only mod)
+    }
+
+    // Determine prefix vs suffix
+    let place_as_prefix = if in_ess_prefix || in_norm_prefix {
+        pool.target_prefix_families.contains(&family)
     } else {
-        pool.essence_suffix_families.contains(&family)
+        false // only in suffix pools
     };
 
-    let tier = if has_essence_data {
-        if is_prefix {
+    let tier = if place_as_prefix {
+        if in_ess_prefix {
             tier_by_rank(family, &pool.essence_prefix_families, &pool.essence_prefix_tiers, &rank)
         } else {
-            tier_by_rank(family, &pool.essence_suffix_families, &pool.essence_suffix_tiers, &rank)
+            tier_by_rank(family, &pool.prefix_families, &pool.prefix_tiers, &rank)
         }
     } else {
-        // Fallback to normal pool
-        if is_prefix {
-            tier_by_rank(family, &pool.prefix_families, &pool.prefix_tiers, &rank)
+        if in_ess_suffix {
+            tier_by_rank(family, &pool.essence_suffix_families, &pool.essence_suffix_tiers, &rank)
         } else {
             tier_by_rank(family, &pool.suffix_families, &pool.suffix_tiers, &rank)
         }
     };
 
-    if is_prefix && item.prefix_count < pool.max_prefixes {
+    if place_as_prefix && item.prefix_count < pool.max_prefixes {
         let idx = item.prefix_count as usize;
         item.prefix_families[idx] = family;
         item.prefix_tiers[idx] = tier;
         item.prefix_count += 1;
-    } else if item.suffix_count < pool.max_suffixes {
+    } else if !place_as_prefix && item.suffix_count < pool.max_suffixes {
         let idx = item.suffix_count as usize;
         item.suffix_families[idx] = family;
         item.suffix_tiers[idx] = tier;
@@ -503,21 +510,33 @@ fn add_essence_mod(item: &mut ItemState, family: u16, pool: &ModPool, rank: Tier
 }
 
 /// Place a mod from the specified family at a tier determined by rank.
+/// Only works if the family exists in the normal pool.
 fn add_specific_mod_at_tier_rank(item: &mut ItemState, family: u16, pool: &ModPool, rank: TierRank) {
-    let is_prefix = pool.target_prefix_families.contains(&family);
+    let in_prefix = pool.prefix_families.contains(&family);
+    let in_suffix = pool.suffix_families.contains(&family);
 
-    let tier = if is_prefix {
+    if !in_prefix && !in_suffix {
+        return; // Family not in normal pool
+    }
+
+    let place_as_prefix = if in_prefix && in_suffix {
+        pool.target_prefix_families.contains(&family)
+    } else {
+        in_prefix
+    };
+
+    let tier = if place_as_prefix {
         tier_by_rank(family, &pool.prefix_families, &pool.prefix_tiers, &rank)
     } else {
         tier_by_rank(family, &pool.suffix_families, &pool.suffix_tiers, &rank)
     };
 
-    if is_prefix && item.prefix_count < pool.max_prefixes {
+    if place_as_prefix && item.prefix_count < pool.max_prefixes {
         let idx = item.prefix_count as usize;
         item.prefix_families[idx] = family;
         item.prefix_tiers[idx] = tier;
         item.prefix_count += 1;
-    } else if item.suffix_count < pool.max_suffixes {
+    } else if !place_as_prefix && item.suffix_count < pool.max_suffixes {
         let idx = item.suffix_count as usize;
         item.suffix_families[idx] = family;
         item.suffix_tiers[idx] = tier;
@@ -546,21 +565,34 @@ fn tier_by_rank(family: u16, families: &[u16], tiers: &[u8], rank: &TierRank) ->
 }
 
 fn add_specific_mod(item: &mut ItemState, family: u16, pool: &ModPool, rng: &mut impl Rng) {
-    // Place a mod from the specified family at a random tier (weighted)
-    let is_prefix = pool.target_prefix_families.contains(&family);
+    // Place a mod from the specified family at a random tier (weighted).
+    // Only works if the family actually exists in the normal pool.
+    let is_prefix = pool.prefix_families.contains(&family);
+    let is_suffix = pool.suffix_families.contains(&family);
 
-    let tier = if is_prefix {
+    if !is_prefix && !is_suffix {
+        return; // Family not in normal pool (e.g. desecrated-only mod)
+    }
+
+    // Prefer prefix if family is in prefix pool and target says prefix
+    let place_as_prefix = if is_prefix && is_suffix {
+        pool.target_prefix_families.contains(&family)
+    } else {
+        is_prefix
+    };
+
+    let tier = if place_as_prefix {
         pick_random_tier_for_family(family, &pool.prefix_families, &pool.prefix_tiers, &pool.prefix_weights, rng)
     } else {
         pick_random_tier_for_family(family, &pool.suffix_families, &pool.suffix_tiers, &pool.suffix_weights, rng)
     };
 
-    if is_prefix && item.prefix_count < pool.max_prefixes {
+    if place_as_prefix && item.prefix_count < pool.max_prefixes {
         let idx = item.prefix_count as usize;
         item.prefix_families[idx] = family;
         item.prefix_tiers[idx] = tier;
         item.prefix_count += 1;
-    } else if item.suffix_count < pool.max_suffixes {
+    } else if !place_as_prefix && item.suffix_count < pool.max_suffixes {
         let idx = item.suffix_count as usize;
         item.suffix_families[idx] = family;
         item.suffix_tiers[idx] = tier;
