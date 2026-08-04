@@ -312,33 +312,71 @@ pub fn apply_currency(
                 return; // no room
             }
 
-            // Check if there's a suffix target we're missing
-            let missing_suffix_target = pool.target_suffix_families.iter()
-                .find(|&&fam| !item.has_family(fam))
+            // Check if there's a target (prefix or suffix) we're missing.
+            // Desecration can add either type depending on open slots.
+            let missing_suffix = pool.target_suffix_families.iter()
+                .find(|&&fam| !item.has_family(fam) && !pool.suffix_families.contains(&fam))
+                .copied();
+            let missing_prefix = pool.target_prefix_families.iter()
+                .find(|&&fam| !item.has_family(fam) && !pool.prefix_families.contains(&fam))
                 .copied();
 
-            if let Some(target_fam) = missing_suffix_target {
+            // Prefer suffix target (most common for desecrated mods), fall back to prefix
+            let (target_fam, is_prefix) = if let Some(fam) = missing_suffix {
+                (Some(fam), false)
+            } else if let Some(fam) = missing_prefix {
+                (Some(fam), true)
+            } else {
+                (None, false)
+            };
+
+            if let Some(fam) = target_fam {
                 // ~20% chance to get the specific target from pick-from-3
-                // (14 options, pick 3, roughly 1 - (13/14)^3)
                 if rng.gen::<f32>() < 0.20 {
-                    // Success: place the target at a random tier
-                    add_specific_mod(item, target_fam, pool, rng);
-                } else {
-                    // Got a non-target abyss mod — place a random suffix
-                    let blocked: Vec<u16> = (0..item.suffix_count as usize)
-                        .map(|i| item.suffix_families[i])
-                        .filter(|&f| f != 0)
-                        .collect();
-                    let rng_val = rng.gen::<u64>();
-                    if let Some((fam, tier)) = pool.sample_suffix(&blocked, 0, rng_val) {
+                    // Success: place the desecrated target directly.
+                    // Bypass add_specific_mod — the family is from the desecrated pool,
+                    // not the normal pool, so pool validation would reject it.
+                    if is_prefix && item.prefix_count < pool.max_prefixes {
+                        let idx = item.prefix_count as usize;
+                        item.prefix_families[idx] = fam;
+                        item.prefix_tiers[idx] = 1;
+                        item.prefix_count += 1;
+                    } else if !is_prefix && item.suffix_count < pool.max_suffixes {
                         let idx = item.suffix_count as usize;
                         item.suffix_families[idx] = fam;
-                        item.suffix_tiers[idx] = tier;
+                        item.suffix_tiers[idx] = 1;
                         item.suffix_count += 1;
+                    }
+                } else {
+                    // Got a non-target abyss mod — place a random mod (same affix type)
+                    if is_prefix {
+                        let blocked: Vec<u16> = (0..item.prefix_count as usize)
+                            .map(|i| item.prefix_families[i])
+                            .filter(|&f| f != 0)
+                            .collect();
+                        let rng_val = rng.gen::<u64>();
+                        if let Some((f, t)) = pool.sample_prefix(&blocked, 0, rng_val) {
+                            let idx = item.prefix_count as usize;
+                            item.prefix_families[idx] = f;
+                            item.prefix_tiers[idx] = t;
+                            item.prefix_count += 1;
+                        }
+                    } else {
+                        let blocked: Vec<u16> = (0..item.suffix_count as usize)
+                            .map(|i| item.suffix_families[i])
+                            .filter(|&f| f != 0)
+                            .collect();
+                        let rng_val = rng.gen::<u64>();
+                        if let Some((f, t)) = pool.sample_suffix(&blocked, 0, rng_val) {
+                            let idx = item.suffix_count as usize;
+                            item.suffix_families[idx] = f;
+                            item.suffix_tiers[idx] = t;
+                            item.suffix_count += 1;
+                        }
                     }
                 }
             } else {
-                // No suffix target missing — place any random suffix
+                // No desecrated target missing — place any random suffix
                 let blocked: Vec<u16> = (0..item.suffix_count as usize)
                     .map(|i| item.suffix_families[i])
                     .filter(|&f| f != 0)
