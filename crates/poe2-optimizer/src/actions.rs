@@ -296,6 +296,11 @@ pub fn apply_currency(
             // Simplified model: 20% chance of placing the target abyss mod directly,
             // 80% chance of placing a random suffix (non-target abyss mod).
             // This is more accurate than drawing from the full 80k-weight pool.
+
+            // Must be in desecrated state to reveal (requires prior DESECRATE)
+            if !item.is_desecrated() {
+                return;
+            }
             item.set_desecrated(false);
             item.flags |= 0x08; // mark has_been_desecrated_ever
 
