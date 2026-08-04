@@ -53,6 +53,7 @@ pub const DEXTRAL_ANNULMENT: u16 = 5;
 pub const SINISTRAL_CORONATION: u16 = 6;
 pub const DEXTRAL_CORONATION: u16 = 7;
 pub const WHITTLING: u16 = 8;
+pub const LIGHT: u16 = 12;
 
 /// Apply a crafting currency to the item state.
 pub fn apply_currency(
@@ -148,7 +149,10 @@ pub fn apply_currency(
                 return;
             }
             let min_lv = min_level_for_currency(currency);
-            add_random_mod(item, pool, min_lv, omen, rng);
+            let qty = if omen == GREATER_EXALTATION { 2 } else { 1 };
+            for _ in 0..qty {
+                add_random_mod(item, pool, min_lv, omen, rng);
+            }
         }
 
         ANNULMENT => {
@@ -156,7 +160,17 @@ pub fn apply_currency(
             if item.rarity == 0 {
                 return;
             }
-            remove_random_mod(item, omen, rng);
+            if omen == LIGHT {
+                // Omen of Light: remove the desecrated (abyss) mod only.
+                // Abyss mods are always suffixes. Remove last non-fractured suffix
+                // and clear the desecrated_ever flag so re-desecration is possible.
+                if item.flags & 0x08 != 0 {
+                    remove_last_nonfractured_suffix(item);
+                    item.flags &= !0x08; // clear has_been_desecrated_ever
+                }
+            } else {
+                remove_random_mod(item, omen, rng);
+            }
         }
 
         CHAOS | GREATER_CHAOS | PERFECT_CHAOS => {
@@ -208,38 +222,38 @@ pub fn apply_currency(
         }
 
         ESSENCE_GREATER => {
-            // Greater Essence: Magic → Rare, guaranteed mod at BEST tier.
+            // Greater Essence: Magic → Rare, guaranteed mod at BEST tier from ESSENCE pool.
             if item.rarity != 1 || item.has_essence_mod() {
                 return;
             }
             item.rarity = 2;
             item.set_essence_mod(true);
             if let Some(fam) = find_first_missing_target(item, pool) {
-                add_specific_mod_at_tier_rank(item, fam, pool, TierRank::Best);
+                add_essence_mod(item, fam, pool, TierRank::Best);
             }
         }
 
         ESSENCE_LESSER => {
-            // Lesser Essence: Magic → Rare, guaranteed mod at WORST tier.
+            // Lesser Essence: Magic → Rare, guaranteed mod at WORST tier from ESSENCE pool.
             if item.rarity != 1 || item.has_essence_mod() {
                 return;
             }
             item.rarity = 2;
             item.set_essence_mod(true);
             if let Some(fam) = find_first_missing_target(item, pool) {
-                add_specific_mod_at_tier_rank(item, fam, pool, TierRank::Worst);
+                add_essence_mod(item, fam, pool, TierRank::Worst);
             }
         }
 
         ESSENCE_NORMAL => {
-            // Normal Essence: Magic → Rare, guaranteed mod at MID tier.
+            // Normal Essence: Magic → Rare, guaranteed mod at MID tier from ESSENCE pool.
             if item.rarity != 1 || item.has_essence_mod() {
                 return;
             }
             item.rarity = 2;
             item.set_essence_mod(true);
             if let Some(fam) = find_first_missing_target(item, pool) {
-                add_specific_mod_at_tier_rank(item, fam, pool, TierRank::Mid);
+                add_essence_mod(item, fam, pool, TierRank::Mid);
             }
         }
 
@@ -439,6 +453,46 @@ enum TierRank {
     Worst,  // Lesser Essence: highest tier number = lowest power
 }
 
+/// Place a mod from the specified family using the ESSENCE pool's tier data.
+/// Falls back to normal pool if the family isn't in the essence pool.
+fn add_essence_mod(item: &mut ItemState, family: u16, pool: &ModPool, rank: TierRank) {
+    let is_prefix = pool.target_prefix_families.contains(&family);
+
+    // Try essence pool first
+    let has_essence_data = if is_prefix {
+        pool.essence_prefix_families.contains(&family)
+    } else {
+        pool.essence_suffix_families.contains(&family)
+    };
+
+    let tier = if has_essence_data {
+        if is_prefix {
+            tier_by_rank(family, &pool.essence_prefix_families, &pool.essence_prefix_tiers, &rank)
+        } else {
+            tier_by_rank(family, &pool.essence_suffix_families, &pool.essence_suffix_tiers, &rank)
+        }
+    } else {
+        // Fallback to normal pool
+        if is_prefix {
+            tier_by_rank(family, &pool.prefix_families, &pool.prefix_tiers, &rank)
+        } else {
+            tier_by_rank(family, &pool.suffix_families, &pool.suffix_tiers, &rank)
+        }
+    };
+
+    if is_prefix && item.prefix_count < pool.max_prefixes {
+        let idx = item.prefix_count as usize;
+        item.prefix_families[idx] = family;
+        item.prefix_tiers[idx] = tier;
+        item.prefix_count += 1;
+    } else if item.suffix_count < pool.max_suffixes {
+        let idx = item.suffix_count as usize;
+        item.suffix_families[idx] = family;
+        item.suffix_tiers[idx] = tier;
+        item.suffix_count += 1;
+    }
+}
+
 /// Place a mod from the specified family at a tier determined by rank.
 fn add_specific_mod_at_tier_rank(item: &mut ItemState, family: u16, pool: &ModPool, rank: TierRank) {
     let is_prefix = pool.target_prefix_families.contains(&family);
@@ -575,6 +629,16 @@ fn remove_lowest_req_mod(item: &mut ItemState) {
     }
     if let Some(&(is_prefix, idx)) = removable.last() {
         remove_mod_at(item, is_prefix, idx);
+    }
+}
+
+fn remove_last_nonfractured_suffix(item: &mut ItemState) {
+    // Find last non-fractured suffix and remove it
+    for i in (0..item.suffix_count as usize).rev() {
+        if (item.fractured_mask >> (i + 3)) & 1 == 0 {
+            remove_mod_at(item, false, i);
+            return;
+        }
     }
 }
 

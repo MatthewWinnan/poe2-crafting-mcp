@@ -65,6 +65,7 @@ _OMEN_NAME_MAP: dict[str, str] = {
     "Omen of Dextral Necromancy": "dextral_necromancy",
     "Omen of Corruption": "corruption",
     "Omen of Sanctification": "sanctification",
+    "Omen of Light": "light",
 }
 
 
@@ -162,6 +163,27 @@ def preflight(
                     suffix_req_levels.append(tier["req_level"])
                     rune_mod_count += 1
 
+    # ── Phase 1c: Fetch Essence Pool (separate tier data) ──
+    # Essences guarantee a mod from the essence pool, which has different
+    # tiers than the normal pool. We pass this separately so the Rust
+    # evaluator uses the correct tiers for essence actions.
+    ess_prefix_families: list[int] = []
+    ess_prefix_tiers: list[int] = []
+    ess_suffix_families: list[int] = []
+    ess_suffix_tiers: list[int] = []
+
+    ess_result = pdb.get_craftable_mods(item_class, ilvl, pool="essence")
+    for group in ess_result.get("prefixes", []):
+        fam_id = get_family_id(group["family"])
+        for tier_idx, tier in enumerate(group["tiers"]):
+            ess_prefix_families.append(fam_id)
+            ess_prefix_tiers.append(tier_idx + 1)
+    for group in ess_result.get("suffixes", []):
+        fam_id = get_family_id(group["family"])
+        for tier_idx, tier in enumerate(group["tiers"]):
+            ess_suffix_families.append(fam_id)
+            ess_suffix_tiers.append(tier_idx + 1)
+
     # ── Phase 2: Build CraftTarget with resolved IDs ──
     targets: list[ModTarget] = []
     for family_name, affix_type, max_tier in target_mods:
@@ -184,6 +206,10 @@ def preflight(
         ilvl=ilvl,
         max_prefixes=3,
         max_suffixes=3,
+        essence_prefix_families=ess_prefix_families or None,
+        essence_prefix_tiers=ess_prefix_tiers or None,
+        essence_suffix_families=ess_suffix_families or None,
+        essence_suffix_tiers=ess_suffix_tiers or None,
     )
 
     # ── Phase 4: Economy Prices (HOT — from poe.ninja cache) ──

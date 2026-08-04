@@ -17,6 +17,13 @@ pub struct ModPool {
     pub suffix_req_levels: Vec<u8>,
     pub suffix_total_weight: u64,
 
+    // Essence pool (separate tiers for guaranteed essence mods)
+    // Only families + tiers — essences don't use weights for selection
+    pub essence_prefix_families: Vec<u16>,
+    pub essence_prefix_tiers: Vec<u8>,
+    pub essence_suffix_families: Vec<u16>,
+    pub essence_suffix_tiers: Vec<u8>,
+
     // Target specification
     pub target_prefix_families: Vec<u16>,
     pub target_suffix_families: Vec<u16>,

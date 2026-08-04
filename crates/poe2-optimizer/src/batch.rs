@@ -36,17 +36,21 @@ use crate::pool::ModPool;
 ///   n_trials: u32
 ///   max_steps: u32
 ///   base_seed: u64
-///   initial_state_data: Optional (9,) u16 — packed initial item state for sub-goal phases:
+///   initial_state_data: Optional (17,) u16 — packed initial item state for sub-goal phases:
 ///     [rarity, prefix_count, suffix_count, fractured_mask, flags,
 ///      pf0, pf1, pf2, sf0, sf1, sf2, pt0, pt1, pt2, st0, st1, st2]
 ///     If empty/None, starts from blank.
+///   essence_prefix_families: Optional (n_ep,) u16 — essence pool prefix families
+///   essence_prefix_tiers: Optional (n_ep,) u8 — essence pool prefix tiers
+///   essence_suffix_families: Optional (n_es,) u16 — essence pool suffix families
+///   essence_suffix_tiers: Optional (n_es,) u8 — essence pool suffix tiers
 ///
 /// Returns: (fitness_array, fire_success_array, fire_failure_array)
 ///   fitness_array: (pop_size, 7) f32 — [cost, success_rate, p90, median, std, steps, step_med]
 ///   fire_success_array: (pop_size, max_rules) u32
 ///   fire_failure_array: (pop_size, max_rules) u32
 #[pyfunction]
-#[pyo3(signature = (rules_array, rule_counts, prefix_weights, prefix_cumsum, prefix_families, prefix_tiers, prefix_req_levels, suffix_weights, suffix_cumsum, suffix_families, suffix_tiers, suffix_req_levels, target_prefix_families, target_suffix_families, target_max_tiers, prices, max_currency_id, ilvl, max_prefixes, max_suffixes, n_trials, max_steps, base_seed, initial_state_data=None))]
+#[pyo3(signature = (rules_array, rule_counts, prefix_weights, prefix_cumsum, prefix_families, prefix_tiers, prefix_req_levels, suffix_weights, suffix_cumsum, suffix_families, suffix_tiers, suffix_req_levels, target_prefix_families, target_suffix_families, target_max_tiers, prices, max_currency_id, ilvl, max_prefixes, max_suffixes, n_trials, max_steps, base_seed, initial_state_data=None, essence_prefix_families=None, essence_prefix_tiers=None, essence_suffix_families=None, essence_suffix_tiers=None))]
 #[allow(clippy::too_many_arguments)]
 pub fn evaluate_population<'py>(
     py: Python<'py>,
@@ -74,6 +78,10 @@ pub fn evaluate_population<'py>(
     max_steps: u32,
     base_seed: u64,
     initial_state_data: Option<PyReadonlyArray1<'py, u16>>,
+    essence_prefix_families: Option<PyReadonlyArray1<'py, u16>>,
+    essence_prefix_tiers: Option<PyReadonlyArray1<'py, u8>>,
+    essence_suffix_families: Option<PyReadonlyArray1<'py, u16>>,
+    essence_suffix_tiers: Option<PyReadonlyArray1<'py, u8>>,
 ) -> PyResult<(
     Bound<'py, PyArray2<f32>>,
     Bound<'py, PyArray2<u32>>,
@@ -102,6 +110,18 @@ pub fn evaluate_population<'py>(
         target_prefix_families: target_prefix_families.as_array().to_vec(),
         target_suffix_families: target_suffix_families.as_array().to_vec(),
         target_max_tiers: target_max_tiers.as_array().to_vec(),
+        essence_prefix_families: essence_prefix_families
+            .map(|a| a.as_array().to_vec())
+            .unwrap_or_default(),
+        essence_prefix_tiers: essence_prefix_tiers
+            .map(|a| a.as_array().to_vec())
+            .unwrap_or_default(),
+        essence_suffix_families: essence_suffix_families
+            .map(|a| a.as_array().to_vec())
+            .unwrap_or_default(),
+        essence_suffix_tiers: essence_suffix_tiers
+            .map(|a| a.as_array().to_vec())
+            .unwrap_or_default(),
         all_target_families: {
             let mut all = target_prefix_families.as_array().to_vec();
             all.extend(target_suffix_families.as_array().iter());

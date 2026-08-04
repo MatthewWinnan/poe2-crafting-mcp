@@ -71,6 +71,10 @@ def encode_pool(
     ilvl: int = 82,
     max_prefixes: int = 3,
     max_suffixes: int = 3,
+    essence_prefix_families: list[int] | None = None,
+    essence_prefix_tiers: list[int] | None = None,
+    essence_suffix_families: list[int] | None = None,
+    essence_suffix_tiers: list[int] | None = None,
 ) -> dict[str, np.ndarray]:
     """Encode mod pool as numpy arrays for Rust.
 
@@ -80,7 +84,7 @@ def encode_pool(
     prefix_cumsum = np.cumsum(np.array(prefix_weights, dtype=np.uint64))
     suffix_cumsum = np.cumsum(np.array(suffix_weights, dtype=np.uint64))
 
-    return {
+    result = {
         "prefix_weights": np.array(prefix_weights, dtype=np.uint32),
         "prefix_cumsum": prefix_cumsum.astype(np.uint64),
         "prefix_families": np.array(prefix_families, dtype=np.uint16),
@@ -98,6 +102,16 @@ def encode_pool(
         "max_prefixes": max_prefixes,
         "max_suffixes": max_suffixes,
     }
+
+    # Essence pool tier data (separate from normal pool)
+    if essence_prefix_families:
+        result["essence_prefix_families"] = np.array(essence_prefix_families, dtype=np.uint16)
+        result["essence_prefix_tiers"] = np.array(essence_prefix_tiers or [], dtype=np.uint8)
+    if essence_suffix_families:
+        result["essence_suffix_families"] = np.array(essence_suffix_families, dtype=np.uint16)
+        result["essence_suffix_tiers"] = np.array(essence_suffix_tiers or [], dtype=np.uint8)
+
+    return result
 
 
 # ── Population Serialization ──────────────────────────────────────────────────
@@ -212,6 +226,10 @@ def evaluate_population_rust(
         max_steps,
         base_seed,
         initial_state,
+        pool_data.get("essence_prefix_families"),
+        pool_data.get("essence_prefix_tiers"),
+        pool_data.get("essence_suffix_families"),
+        pool_data.get("essence_suffix_tiers"),
     )
 
     # Unpack results into Individual.fitness

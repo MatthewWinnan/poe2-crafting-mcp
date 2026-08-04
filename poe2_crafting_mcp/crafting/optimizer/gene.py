@@ -129,6 +129,7 @@ class Omen(IntEnum):
     ABYSSAL_ECHOES = 9         # re-roll desecration reveal options
     SINISTRAL_NECROMANCY = 10  # desecration reveal targets prefixes only
     DEXTRAL_NECROMANCY = 11    # desecration reveal targets suffixes only
+    LIGHT = 12                 # annulment removes only the desecrated mod
 
 
 # ── Condition ─────────────────────────────────────────────────────────────────
