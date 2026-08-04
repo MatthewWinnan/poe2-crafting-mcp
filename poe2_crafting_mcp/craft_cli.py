@@ -793,7 +793,7 @@ def cmd_sim(argv: list[str]) -> int:
         elif cmd in ("dpool", "desecrate-pool"):
             # Show desecration reveal pool (normal + desecrated-exclusive)
             affix = parts[1] if len(parts) > 1 else ""
-            omens_str = _parse_flag(parts, "--omens")
+            omens_str = _parse_flag(parts, "--omens") or _parse_flag(parts, "--omen")
             active_omens = omens_str.split(",") if omens_str else []
 
             # Determine affix type
@@ -991,7 +991,7 @@ def cmd_sim(argv: list[str]) -> int:
                 mod_family = ""
 
             # Parse omens
-            omens_str = _parse_flag(parts, "--omens")
+            omens_str = _parse_flag(parts, "--omens") or _parse_flag(parts, "--omen")
             active_omens = omens_str.split(",") if omens_str else []
 
             print(f"  {_DIM}Applying {resolved.essence_name} ({resolved.tier}){_RESET}")
@@ -1152,7 +1152,7 @@ def cmd_sim(argv: list[str]) -> int:
 
         elif cmd == "desecrate":
             bone = parts[1] if len(parts) > 1 else "preserved_rib"
-            omens_str = _parse_flag(parts, "--omens")
+            omens_str = _parse_flag(parts, "--omens") or _parse_flag(parts, "--omen")
             active_omens = omens_str.split(",") if omens_str else []
 
             # Validate bone
@@ -1184,7 +1184,7 @@ def cmd_sim(argv: list[str]) -> int:
                 print(f"  {_RED}No unrevealed desecrated mod. Use 'desecrate <bone>' first.{_RESET}")
                 continue
 
-            omens_str = _parse_flag(parts, "--omens")
+            omens_str = _parse_flag(parts, "--omens") or _parse_flag(parts, "--omen")
             active_omens = omens_str.split(",") if omens_str else []
 
             affix_type = item.desecrated_affix_type
@@ -1259,7 +1259,7 @@ def cmd_sim(argv: list[str]) -> int:
                 print(f"  {_DIM}Available: {', '.join(sorted(CURRENCIES.keys()))}{_RESET}")
                 continue
 
-            omens_str = _parse_flag(parts, "--omens")
+            omens_str = _parse_flag(parts, "--omens") or _parse_flag(parts, "--omen")
             active_omens = omens_str.split(",") if omens_str else []
             ess_family = _parse_flag(parts, "--essence_family") or _parse_flag(parts, "--family") or ""
             ess_stat = _parse_flag(parts, "--stat_text") or ""
