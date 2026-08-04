@@ -296,6 +296,10 @@ class DesecrationEngine:
         """
         from poe2_crafting_mcp.crafting.simulator import OMENS
 
+        # Can only desecrate Rare items
+        if item.rarity != "Rare":
+            raise ValueError(f"Can only desecrate Rare items (item is {item.rarity}).")
+
         # Can't desecrate if already has an unrevealed desecrated mod
         if item.desecrated_unrevealed:
             raise ValueError("Item already has an unrevealed desecrated modifier. Use 'reveal' first.")

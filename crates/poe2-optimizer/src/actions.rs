@@ -281,6 +281,10 @@ pub fn apply_currency(
         }
 
         DESECRATE => {
+            // Only Rare items can be desecrated
+            if item.rarity != 2 {
+                return;
+            }
             // Only desecrate once per item (one desecrated mod maximum in 0.5)
             // Use bit 3 of flags as "has_been_desecrated_ever"
             if item.flags & 0x08 != 0 {
