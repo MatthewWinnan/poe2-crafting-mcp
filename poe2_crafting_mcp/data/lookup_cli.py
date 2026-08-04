@@ -816,6 +816,109 @@ def _fmt_craftable_mods(result: dict, show_tiers: bool = False) -> None:
                     "Suffixes", grand_total)
 
 
+_EXTENDED_POOLS = [
+    ("desecrated", "Desecrated (Abyss)"),
+    ("marksman", "Marksman (Kolr's Hunt)"),
+    ("decay", "Decay (Katla's Gloom)"),
+    ("chronomancy", "Chronomancy (Uhtred's Sidereus)"),
+    ("destruction", "Destruction (Thrud's Might)"),
+    ("berserking", "Berserking (Vorana's Carnage)"),
+    ("soul", "Soul (Medved's Tending)"),
+]
+
+# Pools with affix_type="unknown" — queried raw from DB
+_IMPLICIT_POOLS = [
+    ("corrupted", "Corrupted (Vaal Orb)"),
+    ("corruption_upgrade", "Corruption Upgrade"),
+]
+
+
+def _show_extended_pools(
+    pdb, item_class: str, ilvl: int, affix_type: str,
+    mod_filter_text: str, show_tiers: bool,
+) -> None:
+    """Show additional mod pools (runes, desecrated, corrupted) as compact sections."""
+    # Standard prefix/suffix pools
+    for pool_name, display_name in _EXTENDED_POOLS:
+        pool = pdb.get_craftable_mods(item_class, ilvl, pool_name, affix_type)
+        prefixes = pool.get("prefixes", [])
+        suffixes = pool.get("suffixes", [])
+        if not prefixes and not suffixes:
+            continue
+
+        # Apply mod text filter
+        if mod_filter_text:
+            filt = mod_filter_text.lower()
+            prefixes = [g for g in prefixes
+                        if filt in g['tiers'][0]['stat_text'].lower()
+                        or filt in g['family'].lower()]
+            suffixes = [g for g in suffixes
+                        if filt in g['tiers'][0]['stat_text'].lower()
+                        or filt in g['family'].lower()]
+            if not prefixes and not suffixes:
+                continue
+
+        total_p = sum(t["weight"] for g in prefixes for t in g["tiers"])
+        total_s = sum(t["weight"] for g in suffixes for t in g["tiers"])
+
+        print()
+        print(f"  {_BOLD}{display_name}{_RESET} "
+              f"({len(prefixes)}P + {len(suffixes)}S families, "
+              f"w={total_p}+{total_s})")
+
+        for g in prefixes:
+            fw = g["family_weight"]
+            top = g["tiers"][0]
+            print(f"    {_CYAN}P{_RESET} {g['family']:<32s} "
+                  f"{_DIM}w={fw:<5d}{_RESET} {top['stat_text'][:45]}")
+            if show_tiers and len(g["tiers"]) > 1:
+                for i, t in enumerate(g["tiers"]):
+                    print(f"      {_DIM}T{i+1} ilvl≥{t['req_level']:2d} w={t['weight']}  "
+                          f"{t['stat_text'][:38]}{_RESET}")
+
+        for g in suffixes:
+            fw = g["family_weight"]
+            top = g["tiers"][0]
+            print(f"    {_CYAN}S{_RESET} {g['family']:<32s} "
+                  f"{_DIM}w={fw:<5d}{_RESET} {top['stat_text'][:45]}")
+            if show_tiers and len(g["tiers"]) > 1:
+                for i, t in enumerate(g["tiers"]):
+                    print(f"      {_DIM}T{i+1} ilvl≥{t['req_level']:2d} w={t['weight']}  "
+                          f"{t['stat_text'][:38]}{_RESET}")
+
+    # Implicit mod pools (corrupted/corruption_upgrade have affix_type="unknown")
+    import sqlite3
+    try:
+        conn = sqlite3.connect(str(pdb._path))
+        conn.row_factory = sqlite3.Row
+        for pool_name, display_name in _IMPLICIT_POOLS:
+            rows = conn.execute(
+                "SELECT mod_family, stat_text, weight FROM mod_weights "
+                "WHERE item_class = ? AND pool = ? ORDER BY mod_family",
+                (item_class, pool_name),
+            ).fetchall()
+            if not rows:
+                continue
+
+            # Apply mod text filter
+            if mod_filter_text:
+                filt = mod_filter_text.lower()
+                rows = [r for r in rows
+                        if filt in r["stat_text"].lower()
+                        or filt in r["mod_family"].lower()]
+                if not rows:
+                    continue
+
+            print()
+            print(f"  {_BOLD}{display_name}{_RESET} ({len(rows)} implicits)")
+            for r in rows:
+                print(f"    {_DIM}w={r['weight']}{_RESET}  "
+                      f"{r['mod_family']:<32s} {r['stat_text'][:45]}")
+        conn.close()
+    except Exception:
+        pass
+
+
 def _cmd_mod_pool_query(argv: list[str]) -> int:
     """Query craftable mods for an item class or base name."""
     p = argparse.ArgumentParser(
@@ -840,6 +943,8 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
                          "greater-regal/chaos/exalted (≥35), perfect-regal/chaos/exalted (≥50), "
                          "greater-augment (≥44), perfect-augment (≥70). "
                          "Or pass a raw min-mod-level number."))
+    p.add_argument("--no-extra", action="store_true",
+                   help="Hide extended pools (runes, desecrated, corrupted)")
     args = p.parse_args(argv)
 
     pdb = _get_pdb()
@@ -972,6 +1077,11 @@ def _cmd_mod_pool_query(argv: list[str]) -> int:
                               f"{_DIM}{range_str}{_RESET}{slots_note}")
         except Exception:
             pass  # essence resolver not available, skip silently
+
+    # Show extended pools (rune pools, desecrated, corrupted) by default
+    if not args.no_extra and args.pool == "normal":
+        _show_extended_pools(pdb, item_class, args.ilvl, affix_type,
+                             args.mod, args.tiers)
 
     return 0
 
