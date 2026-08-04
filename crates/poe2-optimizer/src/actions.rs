@@ -34,12 +34,14 @@ pub const GREATER_CHAOS: u16 = 25;
 pub const PERFECT_CHAOS: u16 = 26;
 pub const ALCHEMY: u16 = 27;
 pub const FRACTURING: u16 = 30;
-pub const ESSENCE_UPGRADE: u16 = 31;
-pub const ESSENCE_SWAP: u16 = 32;
+pub const ESSENCE_GREATER: u16 = 31;
+pub const ESSENCE_PERFECT: u16 = 32;
 pub const DIVINE: u16 = 33;
 pub const VAAL: u16 = 34;
 pub const DESECRATE: u16 = 35;
 pub const REVEAL: u16 = 36;
+pub const ESSENCE_LESSER: u16 = 38;
+pub const ESSENCE_NORMAL: u16 = 39;
 
 // Omen IDs
 pub const NO_OMEN: u16 = 0;
@@ -205,23 +207,43 @@ pub fn apply_currency(
             }
         }
 
-        ESSENCE_UPGRADE => {
-            // Greater Essence: Magic → Rare, adds ONLY the 1 guaranteed mod.
-            // NO random fill. Item keeps existing magic mods + essence mod.
-            // Result: 2-3 mods total (1-2 from magic + 1 essence).
-            // MUST be used on a Magic item (rarity == 1).
+        ESSENCE_GREATER => {
+            // Greater Essence: Magic → Rare, guaranteed mod at BEST tier.
             if item.rarity != 1 || item.has_essence_mod() {
                 return;
             }
             item.rarity = 2;
             item.set_essence_mod(true);
             if let Some(fam) = find_first_missing_target(item, pool) {
-                add_specific_mod_best_tier(item, fam, pool);
+                add_specific_mod_at_tier_rank(item, fam, pool, TierRank::Best);
             }
-            // NO fill — this is the correct behavior per the crafting simulator
         }
 
-        ESSENCE_SWAP => {
+        ESSENCE_LESSER => {
+            // Lesser Essence: Magic → Rare, guaranteed mod at WORST tier.
+            if item.rarity != 1 || item.has_essence_mod() {
+                return;
+            }
+            item.rarity = 2;
+            item.set_essence_mod(true);
+            if let Some(fam) = find_first_missing_target(item, pool) {
+                add_specific_mod_at_tier_rank(item, fam, pool, TierRank::Worst);
+            }
+        }
+
+        ESSENCE_NORMAL => {
+            // Normal Essence: Magic → Rare, guaranteed mod at MID tier.
+            if item.rarity != 1 || item.has_essence_mod() {
+                return;
+            }
+            item.rarity = 2;
+            item.set_essence_mod(true);
+            if let Some(fam) = find_first_missing_target(item, pool) {
+                add_specific_mod_at_tier_rank(item, fam, pool, TierRank::Mid);
+            }
+        }
+
+        ESSENCE_PERFECT => {
             // Perfect Essence: Remove one non-fractured mod; add first MISSING target.
             // Only works on Rare items that already HAVE an essence mod (swaps it).
             // In-game: "Use on a Rare Item to swap the Crafted Modifier"
@@ -410,16 +432,21 @@ fn find_first_missing_target(item: &ItemState, pool: &ModPool) -> Option<u16> {
     pool.all_target_families.first().copied()
 }
 
-/// Place a mod from the specified family at the BEST tier (T1).
-/// Used by ESSENCE_UPGRADE which guarantees T1 for Greater Essences.
-fn add_specific_mod_best_tier(item: &mut ItemState, family: u16, pool: &ModPool) {
+/// Which tier rank to place for essence variants.
+enum TierRank {
+    Best,   // Greater Essence: lowest tier number = highest power
+    Mid,    // Normal Essence: median tier
+    Worst,  // Lesser Essence: highest tier number = lowest power
+}
+
+/// Place a mod from the specified family at a tier determined by rank.
+fn add_specific_mod_at_tier_rank(item: &mut ItemState, family: u16, pool: &ModPool, rank: TierRank) {
     let is_prefix = pool.target_prefix_families.contains(&family);
 
-    // Find the best (lowest number = highest power) tier for this family
     let tier = if is_prefix {
-        best_tier_for_family(family, &pool.prefix_families, &pool.prefix_tiers)
+        tier_by_rank(family, &pool.prefix_families, &pool.prefix_tiers, &rank)
     } else {
-        best_tier_for_family(family, &pool.suffix_families, &pool.suffix_tiers)
+        tier_by_rank(family, &pool.suffix_families, &pool.suffix_tiers, &rank)
     };
 
     if is_prefix && item.prefix_count < pool.max_prefixes {
@@ -435,14 +462,24 @@ fn add_specific_mod_best_tier(item: &mut ItemState, family: u16, pool: &ModPool)
     }
 }
 
-fn best_tier_for_family(family: u16, families: &[u16], tiers: &[u8]) -> u8 {
-    let mut best = u8::MAX;
+/// Pick a tier by rank (best/mid/worst) from all tiers available for a family.
+fn tier_by_rank(family: u16, families: &[u16], tiers: &[u8], rank: &TierRank) -> u8 {
+    let mut family_tiers: Vec<u8> = Vec::new();
     for i in 0..families.len() {
-        if families[i] == family && tiers[i] < best {
-            best = tiers[i];
+        if families[i] == family {
+            family_tiers.push(tiers[i]);
         }
     }
-    if best == u8::MAX { 1 } else { best }
+    if family_tiers.is_empty() {
+        return 1;
+    }
+    family_tiers.sort();
+    family_tiers.dedup();
+    match rank {
+        TierRank::Best => family_tiers[0],                              // lowest number = best
+        TierRank::Worst => *family_tiers.last().unwrap(),               // highest number = worst
+        TierRank::Mid => family_tiers[family_tiers.len() / 2],         // median
+    }
 }
 
 fn add_specific_mod(item: &mut ItemState, family: u16, pool: &ModPool, rng: &mut impl Rng) {

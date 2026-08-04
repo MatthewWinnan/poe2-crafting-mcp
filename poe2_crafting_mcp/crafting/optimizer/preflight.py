@@ -188,6 +188,14 @@ def preflight(
     if "scouring" not in currency_prices:
         currency_prices["scouring"] = 0.5
 
+    # ── Phase 4b: Per-target essence prices ──
+    # Look up specific essence prices from the DB for each target mod.
+    # Uses the essences table to match target family → essence name,
+    # then looks up the price. Falls back to tier-level defaults.
+    essence_prices = _resolve_essence_prices(pdb, league, item_class, target_mods)
+    for key, price in essence_prices.items():
+        currency_prices[key] = price
+
     # Default prices for common currencies not tracked by poe.ninja (too cheap)
     _DEFAULTS: dict[str, float] = {
         "transmute": 0.01,
@@ -204,7 +212,7 @@ def preflight(
         "perfect_regal": 2.0,
         "perfect_chaos": 3.0,
         "perfect_exalted": 5.0,
-        # Essences (Greater Essence of X ~ 1c, varies by type but cheap)
+        # Essence tier defaults (used if per-target lookup fails)
         "lesser_essence": 0.2,
         "normal_essence": 0.5,
         "greater_essence": 1.0,
@@ -256,3 +264,101 @@ def preflight(
     )
 
     return pool_data, prices, target
+
+
+# ── Essence Price Resolution ─────────────────────────────────────────────────
+
+# Map item_class slug → item slot category for essence DB lookups
+_CLASS_TO_SLOT: dict[str, str] = {
+    "Gloves": "Gloves",
+    "Boots": "Boots",
+    "Helmet": "Helmet",
+    "Body_Armours": "Body Armour",
+    "Shields": "Shield",
+    "Bucklers": "Shield",
+    "Amulets": "Amulet",
+    "Rings": "Ring",
+    "Belts": "Belt",
+    "Bows": "Bow",
+    "Crossbows": "Crossbow",
+    "Wands": "Wand",
+    "Sceptres": "Sceptre",
+    "Staves": "Staff",
+    "Foci": "Focus",
+    "Claws": "Claw",
+    "Daggers": "Dagger",
+}
+
+
+def _resolve_essence_prices(
+    pdb,
+    league: str,
+    item_class: str,
+    target_mods: list[tuple[str, str, int]],
+) -> dict[str, float]:
+    """Look up per-target essence prices from the DB.
+
+    For each target mod, finds the matching essence (by stat_text overlap)
+    at each tier (Lesser, Normal, Greater) and looks up its market price.
+
+    Returns dict with keys like "lesser_essence", "normal_essence", "greater_essence"
+    set to the cheapest matching essence across all targets.
+    """
+    import sqlite3
+    import os
+
+    db_path = os.environ.get("POE2_CRAFT_DB", "data/poe2_craft.db")
+    if not os.path.exists(db_path):
+        return {}
+
+    # Determine slot from item_class (strip attribute suffix like _int, _str_dex)
+    base_class = item_class.split("_")[0]
+    slot = _CLASS_TO_SLOT.get(base_class, "")
+    if not slot:
+        return {}
+
+    result: dict[str, float] = {}
+
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+
+        # Get all essence prices from the prices table
+        essence_prices: dict[str, float] = {}
+        rows = conn.execute(
+            "SELECT name, chaos_value FROM prices WHERE category = 'essence' AND chaos_value > 0"
+        ).fetchall()
+        for row in rows:
+            essence_prices[row["name"]] = row["chaos_value"]
+
+        # For each essence tier, find the cheapest applicable essence
+        for tier_label, price_key in [
+            ("Lesser", "lesser_essence"),
+            ("Normal", "normal_essence"),
+            ("Greater", "greater_essence"),
+        ]:
+            # Find all essences at this tier for the slot
+            essence_rows = conn.execute(
+                "SELECT DISTINCT name FROM essences "
+                "WHERE tier = ? AND effect_type = 'upgrade' AND item_slots LIKE ?",
+                (tier_label, f"%{slot}%"),
+            ).fetchall()
+
+            tier_prices: list[float] = []
+            for erow in essence_rows:
+                ename = erow["name"]
+                if ename in essence_prices:
+                    tier_prices.append(essence_prices[ename])
+
+            if tier_prices:
+                # Use the median price for this tier (representative of the market)
+                tier_prices.sort()
+                result[price_key] = tier_prices[len(tier_prices) // 2]
+                log.debug(f"Essence {price_key}: {result[price_key]:.4f}c "
+                         f"(median of {len(tier_prices)} essences)")
+
+        conn.close()
+    except Exception as e:
+        log.warning(f"Essence price lookup failed: {e}")
+
+    return result

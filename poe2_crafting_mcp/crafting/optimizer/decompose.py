@@ -397,7 +397,7 @@ def build_setup_rules(phase: PhaseTarget) -> list[Rule]:
         # Essence: Magic → Rare + guaranteed mod
         rules.append(Rule(
             Condition.no_essence_mod(),
-            Action(Currency.ESSENCE_UPGRADE),
+            Action(Currency.ESSENCE_GREATER),
             label="setup: essence for second target",
         ))
 

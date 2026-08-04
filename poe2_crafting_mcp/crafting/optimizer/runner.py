@@ -180,7 +180,7 @@ def _label_strategy(rl: RuleList, fitness: Fitness, prices: PriceCache) -> Craft
         family_name = "Alchemy + Exalt"
     elif omen_count >= 3:
         family_name = "Omen-Targeted"
-    elif any(r.action.currency == Currency.ESSENCE_UPGRADE for r in rl.rules):
+    elif any(r.action.currency in (Currency.ESSENCE_GREATER, Currency.ESSENCE_NORMAL, Currency.ESSENCE_LESSER) for r in rl.rules):
         if any(r.action.currency == Currency.DESECRATE for r in rl.rules):
             family_name = "Essence + Desecrate + Fill"
         else:
@@ -708,7 +708,7 @@ def _build_phase_pool_target(phase: PhaseTarget, full_target: CraftTarget) -> Cr
     prior-phase targets (so find_first_missing_target places them in order).
 
     The target list is ordered: prior-phase targets first, then this phase's targets.
-    The setup rules will place prior-phase targets via BUY_MAGIC/ESSENCE_UPGRADE.
+    The setup rules will place prior-phase targets via BUY_MAGIC/ESSENCE_GREATER.
     The GP's remaining rules then pursue THIS phase's targets.
     """
     # Collect prior-phase mod families

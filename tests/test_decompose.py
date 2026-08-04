@@ -367,7 +367,7 @@ class TestBuildSetupRules:
         from poe2_crafting_mcp.crafting.optimizer.gene import Currency
         currencies_used = [r.action.currency for r in rules]
         assert Currency.BUY_MAGIC in currencies_used
-        assert Currency.ESSENCE_UPGRADE in currencies_used
+        assert Currency.ESSENCE_GREATER in currencies_used
 
 
 # ── Phase CraftTarget Building ───────────────────────────────────────────────

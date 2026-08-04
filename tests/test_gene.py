@@ -148,8 +148,8 @@ class TestAction:
     def test_advanced_currencies_exist(self):
         """All crafting mechanics are representable."""
         assert Action(Currency.FRACTURING).to_array() == (30, 0)
-        assert Action(Currency.ESSENCE_UPGRADE).to_array() == (31, 0)
-        assert Action(Currency.ESSENCE_SWAP).to_array() == (32, 0)
+        assert Action(Currency.ESSENCE_GREATER).to_array() == (31, 0)
+        assert Action(Currency.ESSENCE_PERFECT).to_array() == (32, 0)
         assert Action(Currency.DIVINE).to_array() == (33, 0)
         assert Action(Currency.VAAL).to_array() == (34, 0)
 
@@ -562,9 +562,9 @@ class TestFullStrategy:
         """Essence-based crafting flow."""
         rl = RuleList()
         rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE))
-        rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_UPGRADE))
+        rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_GREATER))
         rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE))
-        rl.add_rule(Condition.has_essence_mod(), Action(Currency.ESSENCE_SWAP))
+        rl.add_rule(Condition.has_essence_mod(), Action(Currency.ESSENCE_PERFECT))
         rl.add_rule(Condition.cost_spent_gte(200), Action(Currency.SCOUR))
         rl.add_rule(Condition.always_true(), Action(Currency.EXALTED))
         assert rl.size == 6
@@ -638,7 +638,7 @@ class TestFullStrategy:
         """
         rl = RuleList()
         rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE))
-        rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_UPGRADE))
+        rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_GREATER))
         rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE))
         rl.add_rule(Condition.cost_spent_gte(400), Action(Currency.SCOUR))
         # Abyss for suffix targets

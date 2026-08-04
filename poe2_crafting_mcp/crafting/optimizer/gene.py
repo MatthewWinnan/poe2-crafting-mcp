@@ -103,13 +103,16 @@ class Currency(IntEnum):
     ALCHEMY = 27
     # Advanced crafting
     FRACTURING = 30
-    ESSENCE_UPGRADE = 31   # Greater Essence: Magic → Rare + guaranteed mod
-    ESSENCE_SWAP = 32      # Perfect Essence: remove 1, add 1 guaranteed
+    ESSENCE_GREATER = 31   # Greater Essence: Magic → Rare + guaranteed mod (best tier)
+    ESSENCE_PERFECT = 32   # Perfect Essence: remove 1, add 1 guaranteed
     DIVINE = 33            # Reroll mod values within tier ranges
     VAAL = 34              # Corruption (terminal — no further mods)
     # Abyss crafting (desecration / Well of Souls)
     DESECRATE = 35         # Apply bone — item enters desecrated state
     REVEAL = 36            # At Well of Souls — place an abyss mod (uses open slot)
+    # Essence tier variants (same mechanics as ESSENCE_GREATER but different tier/price)
+    ESSENCE_LESSER = 38    # Lesser Essence: Magic → Rare + guaranteed mod (worst tier)
+    ESSENCE_NORMAL = 39    # Normal Essence: Magic → Rare + guaranteed mod (mid tier)
 
 
 class Omen(IntEnum):
@@ -713,10 +716,10 @@ class PriceCache:
             _name_to_cid[c.name.lower().replace("_", " ")] = int(c)
 
         # Additional aliases for names that differ between preflight and enum
-        _name_to_cid["greater_essence"] = int(Currency.ESSENCE_UPGRADE)
-        _name_to_cid["lesser_essence"] = int(Currency.ESSENCE_UPGRADE)
-        _name_to_cid["normal_essence"] = int(Currency.ESSENCE_UPGRADE)
-        _name_to_cid["perfect_essence"] = int(Currency.ESSENCE_SWAP)
+        _name_to_cid["greater_essence"] = int(Currency.ESSENCE_GREATER)
+        _name_to_cid["lesser_essence"] = int(Currency.ESSENCE_LESSER)
+        _name_to_cid["normal_essence"] = int(Currency.ESSENCE_NORMAL)
+        _name_to_cid["perfect_essence"] = int(Currency.ESSENCE_PERFECT)
 
         for name, price in self.currency.items():
             key = name.lower().replace(" ", "_")

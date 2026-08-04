@@ -78,14 +78,14 @@ def seed_perfect_currency() -> RuleList:
 
 
 def seed_essence_exalt_fill() -> RuleList:
-    """Seed 4: Essence + Exalt Fill.
+    """Seed 4: Essence + Exalt Fill (Greater Essence).
 
-    Lock one guaranteed mod with essence, then exalt to fill remaining slots.
-    The 0.5 meta baseline — one crafted mod + random exalts.
+    Lock one guaranteed mod with Greater essence (best tier), then exalt to fill
+    remaining slots. The 0.5 meta baseline — one crafted mod + random exalts.
     """
     rl = RuleList()
     rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
-    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_UPGRADE), "lock crafted mod")
+    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_GREATER), "greater essence (T1)")
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
     rl.add_rule(Condition.cost_spent_gte(400), Action(Currency.SCOUR), "restart")
     rl.add_rule(
@@ -112,7 +112,7 @@ def seed_essence_desecrate_exalt() -> RuleList:
     """
     rl = RuleList()
     rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
-    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_UPGRADE), "lock crafted mod")
+    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_GREATER), "lock crafted mod")
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
     rl.add_rule(Condition.cost_spent_gte(600), Action(Currency.SCOUR), "restart")
     # Abyss layer: desecrate then reveal for second guaranteed mod
@@ -128,6 +128,58 @@ def seed_essence_desecrate_exalt() -> RuleList:
         Condition.missing_target_suffix(),
         Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
         "exalt suffix",
+    )
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "fallback restart")
+    return rl
+
+
+def seed_lesser_essence_exalt_fill() -> RuleList:
+    """Seed 4b: Lesser Essence + Exalt Fill (budget).
+
+    Like seed 4 but uses Lesser Essence (cheapest tier, worst mod tier).
+    Good when the target mod family has many tiers and you just need any hit.
+    """
+    rl = RuleList()
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
+    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_LESSER), "lesser essence")
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.cost_spent_gte(300), Action(Currency.SCOUR), "restart")
+    rl.add_rule(
+        Condition.open_prefix_gte(1),
+        Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
+        "exalt prefix (targeted)",
+    )
+    rl.add_rule(
+        Condition.open_suffix_gte(1),
+        Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
+        "exalt suffix (targeted)",
+    )
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "fallback restart")
+    return rl
+
+
+def seed_normal_essence_exalt_fill() -> RuleList:
+    """Seed 4c: Normal Essence + Exalt Fill (mid-tier).
+
+    Uses Normal Essence (mid-price, mid-tier). A balanced option between
+    the cheap Lesser and expensive Greater essences.
+    """
+    rl = RuleList()
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "start")
+    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_NORMAL), "normal essence")
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.cost_spent_gte(350), Action(Currency.SCOUR), "restart")
+    rl.add_rule(
+        Condition.open_prefix_gte(1),
+        Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
+        "exalt prefix (targeted)",
+    )
+    rl.add_rule(
+        Condition.open_suffix_gte(1),
+        Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
+        "exalt suffix (targeted)",
     )
     rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
     rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "fallback restart")
@@ -284,7 +336,7 @@ def seed_deterministic_multimod() -> RuleList:
     rl = RuleList()
     rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.BUY_MAGIC), "buy magic w/ target 1")
     rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.REGAL), "regal to rare")
-    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_UPGRADE), "essence target 2")
+    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_GREATER), "essence target 2")
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "all targets done")
     # Targeted exalts — only when open slots exist
     rl.add_rule(
@@ -323,7 +375,7 @@ def seed_fracture_then_fill() -> RuleList:
     rl.add_rule(Condition.cost_spent_gte(1000), Action(Currency.SCOUR), "restart")
     rl.add_rule(Condition.not_divined(), Action(Currency.DIVINE), "divine to max")
     rl.add_rule(Condition.has_been_divined(), Action(Currency.FRACTURING), "fracture target 1")
-    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_UPGRADE), "essence target 2")
+    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_GREATER), "essence target 2")
     rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate")
     rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL), "reveal abyss")
     rl.add_rule(
@@ -348,6 +400,8 @@ ALL_SEEDS = [
     seed_greater_alt_regal,
     seed_perfect_currency,
     seed_essence_exalt_fill,
+    seed_lesser_essence_exalt_fill,
+    seed_normal_essence_exalt_fill,
     seed_essence_desecrate_exalt,
     seed_chaos_whittling,
     seed_omen_targeted_exalts,
@@ -454,6 +508,39 @@ def _seed_phase_greater_exalt_suffix() -> RuleList:
     return rl
 
 
+def _seed_phase_lesser_essence() -> RuleList:
+    """Phase seed: lesser essence for budget guaranteed mod."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_LESSER), "lesser essence")
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+def _seed_phase_normal_essence() -> RuleList:
+    """Phase seed: normal essence for mid-tier guaranteed mod."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_NORMAL), "normal essence")
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+def _seed_phase_greater_essence() -> RuleList:
+    """Phase seed: greater essence for best-tier guaranteed mod."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.no_essence_mod(), Action(Currency.ESSENCE_GREATER), "greater essence")
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
 def _seed_phase_desecrate_reveal() -> RuleList:
     """Phase seed: desecrate + reveal for an abyss suffix target."""
     rl = RuleList()
@@ -471,6 +558,9 @@ PHASE_SEEDS_PREFIX = [
     _seed_phase_exalt_prefix,
     _seed_phase_greater_exalt_prefix,
     _seed_phase_exalt_natural,
+    _seed_phase_lesser_essence,
+    _seed_phase_normal_essence,
+    _seed_phase_greater_essence,
 ]
 
 PHASE_SEEDS_SUFFIX = [
@@ -478,6 +568,9 @@ PHASE_SEEDS_SUFFIX = [
     _seed_phase_greater_exalt_suffix,
     _seed_phase_exalt_natural,
     _seed_phase_desecrate_reveal,
+    _seed_phase_lesser_essence,
+    _seed_phase_normal_essence,
+    _seed_phase_greater_essence,
 ]
 
 
