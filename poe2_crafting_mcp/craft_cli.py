@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import readline  # noqa: F401 — enables up/down history and line editing in input()
 import sys
 import time
 from pathlib import Path
