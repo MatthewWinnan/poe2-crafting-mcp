@@ -715,7 +715,7 @@ def _build_phase_pool_target(phase: PhaseTarget, full_target: CraftTarget) -> Cr
     """
     # Collect prior-phase mod families
     prior_targets = []
-    for fam_id, affix, tier in phase.starting_mods:
+    for fam_id, affix, tier, *_ in phase.starting_mods:
         # Find the matching ModTarget in the full target
         for t in full_target.targets:
             if t.family_id == fam_id:

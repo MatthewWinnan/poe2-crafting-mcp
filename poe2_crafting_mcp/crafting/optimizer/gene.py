@@ -608,8 +608,8 @@ class PhaseTarget:
     phases are the common case; multi-target phases enable Tier 3 grouping.
     """
     targets: list[ModTarget]
-    # Mods already on the item from prior phases: (family_id, affix_type, tier)
-    starting_mods: list[tuple[int, str, int]] = field(default_factory=list)
+    # Mods already on the item from prior phases: (family_id, affix_type, tier, pool_source)
+    starting_mods: list[tuple[int, str, int, str]] = field(default_factory=list)
     starting_rarity: int = 0    # 0=Normal, 1=Magic, 2=Rare
     starting_flags: int = 0     # essence/desecrated/divined bits
     phase_index: int = 0

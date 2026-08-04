@@ -157,7 +157,7 @@ def encode_initial_state(phase: PhaseTarget) -> np.ndarray | None:
 
     prefix_count = 0
     suffix_count = 0
-    for family_id, affix_type, tier in phase.starting_mods:
+    for family_id, affix_type, tier, *_ in phase.starting_mods:
         if affix_type == "prefix" and prefix_count < 3:
             data[5 + prefix_count] = family_id      # pf0-2
             data[11 + prefix_count] = tier           # pt0-2

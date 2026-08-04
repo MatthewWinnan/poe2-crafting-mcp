@@ -542,9 +542,17 @@ def _seed_phase_greater_essence() -> RuleList:
 
 
 def _seed_phase_desecrate_reveal() -> RuleList:
-    """Phase seed: desecrate + reveal for an abyss suffix target."""
+    """Phase seed: desecrate + reveal for an abyss mod target.
+
+    Desecrate requires Rare, so we must get to Rare first:
+    Normal → transmute → Magic → regal → Rare → desecrate → reveal.
+    """
     rl = RuleList()
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    # Get to Rare first (desecrate requires Rare)
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "transmute")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.REGAL), "regal to rare")
+    # Now desecrate + reveal
     rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate")
     rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL), "reveal abyss")
     # If reveal didn't hit, annul the bad abyss mod and retry

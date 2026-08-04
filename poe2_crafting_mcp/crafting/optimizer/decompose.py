@@ -362,7 +362,7 @@ def build_phases(
     all_family_ids = [t.family_id for t in target.targets]
     phases: list[PhaseTarget] = []
 
-    starting_mods: list[tuple[int, str, int]] = []
+    starting_mods: list[tuple[int, str, int, str]] = []
     starting_rarity = 0
     starting_flags = 0
 
@@ -380,7 +380,7 @@ def build_phases(
         phases.append(phase)
 
         # Update starting state for next phase
-        starting_mods.append((t.family_id, t.affix_type, t.max_tier))
+        starting_mods.append((t.family_id, t.affix_type, t.max_tier, t.pool_source))
         if starting_rarity == 0:
             starting_rarity = 1  # transmute/buy_magic → Magic
         if starting_rarity == 1 and phase_idx >= 1:
@@ -405,85 +405,108 @@ def build_phases(
 def build_setup_rules(phase: PhaseTarget) -> list[Rule]:
     """Build setup rules that recreate prior-phase item state.
 
-    This is the Phase 1 shortcut: instead of modifying Rust to accept
-    initial_state, we prepend rules that bring the item to the right
-    starting state. The GP evolves the remaining rules.
+    Prepends rules that bring a blank item to the state expected by this
+    phase (all prior-phase mods present). The GP evolves the remaining rules.
 
-    Strategy:
-    - Phase 0 (blank start): no setup rules.
-    - Phase 1+ with 1 prior mod: BUY_MAGIC → REGAL if needed.
-    - Phase 1+ with essence needed: BUY_MAGIC → REGAL → ESSENCE.
-    - Later phases: BUY_MAGIC → REGAL → ESSENCE → EXALT... for each prior mod.
+    Strategy depends on how prior mods were obtained:
+    - Normal pool mods: BUY_MAGIC (trade) or EXALT
+    - Desecrated mods: must craft to Rare then DESECRATE + REVEAL
+    - Essence mods: ESSENCE_GREATER (Magic → Rare + guaranteed)
     """
     if not phase.starting_mods:
         return []
 
     rules: list[Rule] = []
     has_essence = phase.starting_flags & 0x04 != 0
+    has_desecrated = phase.starting_flags & 0x08 != 0
     n_prior = len(phase.starting_mods)
 
-    # Step 1: Get to Magic with first target mod
-    rules.append(Rule(
-        Condition.rarity_is(Rarity.NORMAL),
-        Action(Currency.BUY_MAGIC),
-        label="setup: buy magic with first target",
-    ))
+    # Check if first prior mod is desecrated (can't buy from trade)
+    first_pool = phase.starting_mods[0][3] if len(phase.starting_mods[0]) > 3 else "normal"
+    first_is_desecrated = first_pool == "desecrated"
 
-    if n_prior == 1 and not has_essence:
-        # Just need a Rare item with one mod — regal it
+    if first_is_desecrated:
+        # Can't buy a desecrated mod from trade. Must craft to Rare, then desecrate+reveal.
+        rules.append(Rule(
+            Condition.rarity_is(Rarity.NORMAL),
+            Action(Currency.TRANSMUTE),
+            label="setup: transmute",
+        ))
         rules.append(Rule(
             Condition.rarity_is(Rarity.MAGIC),
             Action(Currency.REGAL),
             label="setup: regal to rare",
         ))
-    elif n_prior >= 2 and has_essence:
-        # Essence: Magic → Rare + guaranteed mod
         rules.append(Rule(
-            Condition.no_essence_mod(),
-            Action(Currency.ESSENCE_GREATER),
-            label="setup: essence for second target",
+            Condition.not_desecrated(),
+            Action(Currency.DESECRATE),
+            label="setup: desecrate for abyss mod",
         ))
-
-        # If we need more mods beyond essence, exalt them
-        for i in range(2, n_prior):
-            mod = phase.starting_mods[i]
-            affix = mod[1]
-            if affix == "prefix":
-                rules.append(Rule(
-                    Condition.missing_target_prefix(),
-                    Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
-                    label=f"setup: exalt prefix #{i}",
-                ))
-            else:
-                rules.append(Rule(
-                    Condition.missing_target_suffix(),
-                    Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
-                    label=f"setup: exalt suffix #{i}",
-                ))
+        rules.append(Rule(
+            Condition.is_desecrated(),
+            Action(Currency.REVEAL),
+            label="setup: reveal abyss mod",
+        ))
     else:
-        # Simple case: just regal
+        # Normal mod: buy from trade
         rules.append(Rule(
-            Condition.rarity_is(Rarity.MAGIC),
-            Action(Currency.REGAL),
-            label="setup: regal to rare",
+            Condition.rarity_is(Rarity.NORMAL),
+            Action(Currency.BUY_MAGIC),
+            label="setup: buy magic with first target",
         ))
 
-        # Exalt for additional prior mods
-        for i in range(1, n_prior):
-            mod = phase.starting_mods[i]
-            affix = mod[1]
-            if affix == "prefix":
-                rules.append(Rule(
-                    Condition.open_prefix_gte(1),
-                    Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
-                    label=f"setup: exalt prefix #{i}",
-                ))
-            else:
-                rules.append(Rule(
-                    Condition.open_suffix_gte(1),
-                    Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
-                    label=f"setup: exalt suffix #{i}",
-                ))
+    # Get to Rare if not already
+    if not first_is_desecrated:
+        if n_prior == 1 and not has_essence:
+            rules.append(Rule(
+                Condition.rarity_is(Rarity.MAGIC),
+                Action(Currency.REGAL),
+                label="setup: regal to rare",
+            ))
+        elif n_prior >= 2 and has_essence:
+            rules.append(Rule(
+                Condition.no_essence_mod(),
+                Action(Currency.ESSENCE_GREATER),
+                label="setup: essence for guaranteed mod",
+            ))
+        else:
+            rules.append(Rule(
+                Condition.rarity_is(Rarity.MAGIC),
+                Action(Currency.REGAL),
+                label="setup: regal to rare",
+            ))
+
+    # Add remaining prior mods via exalt or desecrate
+    start_idx = 1
+    for i in range(start_idx, n_prior):
+        mod = phase.starting_mods[i]
+        affix = mod[1]
+        mod_pool = mod[3] if len(mod) > 3 else "normal"
+
+        if mod_pool == "desecrated":
+            # Prior desecrated mod: desecrate + reveal
+            rules.append(Rule(
+                Condition.not_desecrated(),
+                Action(Currency.DESECRATE),
+                label=f"setup: desecrate #{i}",
+            ))
+            rules.append(Rule(
+                Condition.is_desecrated(),
+                Action(Currency.REVEAL),
+                label=f"setup: reveal #{i}",
+            ))
+        elif affix == "prefix":
+            rules.append(Rule(
+                Condition.missing_target_prefix(),
+                Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
+                label=f"setup: exalt prefix #{i}",
+            ))
+        else:
+            rules.append(Rule(
+                Condition.missing_target_suffix(),
+                Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
+                label=f"setup: exalt suffix #{i}",
+            ))
 
     return rules
 
