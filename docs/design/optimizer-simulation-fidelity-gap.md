@@ -19,7 +19,7 @@
 | vaal | ✅ | ✅ (no-op) | Terminal — not modeled |
 | scour | ✅ | ✅ | |
 | reforge | ✅ | ✅ | 3-to-1 recycling |
-| lesser/normal/greater essence | ✅ | ✅ | Magic→Rare + 1 guaranteed |
+| lesser/normal/greater essence | ✅ | ✅ | Magic→Rare + 1 guaranteed (essence pool tiers) |
 | perfect essence | ✅ | ✅ | Swap mechanic |
 | artificer (sockets) | ✅ | ❌ | Terminal step — not needed |
 | armourer's scrap / whetstone | ✅ | ❌ | Terminal step — not needed |
@@ -31,7 +31,7 @@
 |------|-----------|--------------|------------|
 | **normal** | 8,580 | ✅ | Standard crafting pool |
 | **desecrated** | 694 | ✅ (simplified) | Abyss/Well of Souls mods |
-| **essence** | 1,935 | ❌ | Essence-specific guaranteed mods |
+| **essence** | 1,935 | ✅ | Essence-specific guaranteed mods |
 | **perfect_essence** | 516 | ❌ | Perfect essence swap mods |
 | **corrupted** | 576 | ❌ | Vaal Orb corruption pool |
 | **corruption_upgrade** | 935 | ❌ | Architect's Orb pool |
@@ -73,7 +73,7 @@ normal pool families. It should also be able to target from these faction pools.
 | Omen | Craft Sim | Optimizer | Effect |
 |------|-----------|-----------|--------|
 | Sinistral/Dextral Exaltation | ✅ | ✅ | Force prefix/suffix |
-| Greater Exaltation | ✅ | ✅ (enum, not modeled) | Add 2 mods |
+| Greater Exaltation | ✅ | ✅ | Add 2 mods per exalt |
 | Sinistral/Dextral Annulment | ✅ | ✅ | Remove prefix/suffix |
 | Sinistral/Dextral Coronation | ✅ | ✅ | Regal targets side |
 | Whittling | ✅ | ✅ (approximated) | Remove lowest-req mod |
@@ -81,7 +81,7 @@ normal pool families. It should also be able to target from these faction pools.
 | Sinistral/Dextral Necromancy | ✅ | ❌ | Desecration targets side |
 | Corruption | ✅ | ❌ | Remove "nothing" Vaal outcome |
 | Sanctification | ✅ | ❌ | Remove negative Vaal outcomes |
-| Light | ✅ | ❌ | Annul targets desecrated mod only |
+| Light | ✅ | ✅ | Annul targets desecrated mod only |
 | Catalysing Exaltation | ✅ | ❌ | Bias exalt toward catalyst tag |
 | Homogenising Exaltation | ✅ | ❌ | Exalt matching type cluster |
 
@@ -109,23 +109,21 @@ normal pool families. It should also be able to target from these faction pools.
 ### P0: Sub-Goal Decomposition (Path A from shortcomings doc)
 The biggest impact for hard crafts. Independent of simulation fidelity.
 
-### P1: Rune/Alloy Pools
-Add faction pool support so `ESSENCE_UPGRADE` can target from decay/marksman/etc.
-The data is already in the DB. Need: pool parameter on the action, preflight
-to encode multiple pools, Rust to select from the right pool based on action.
+### P1: Rune/Alloy Pools ✅
+Rune pools merged into normal pool in preflight (flat arrays). Rune recommendation
+tool suggests which runes to socket. CLI `--runes` flag supported.
 
-### P2: Essence Pool (not normal pool)
-Currently `add_specific_mod` picks from the normal pool. Real essences guarantee
-a mod from the ESSENCE pool (different weights/tiers). Should query `pool='essence'`
-for the guaranteed mod.
+### P2: Essence Pool (not normal pool) ✅
+Essences now use separate tier data from the `pool='essence'` DB query. Rust
+`ModPool` has `essence_prefix/suffix_families/tiers` fields. `add_essence_mod()`
+picks tiers from essence pool (fewer/different tiers than normal pool).
 
-### P3: Greater Exaltation Omen
-Adds 2 mods in one exalt. Potentially very powerful for multi-target crafts
-(2× chance per attempt). Currently enum-only, not modeled in Rust actions.
+### P3: Greater Exaltation Omen ✅
+Adds 2 mods in one exalt via `qty = if omen == GREATER_EXALTATION { 2 } else { 1 }`.
 
-### P4: Omen of Light
-Annul ONLY the desecrated mod. Allows retry of desecration without affecting
-normal mods. Critical for targeting specific abyss mods.
+### P4: Omen of Light ✅
+Annul removes ONLY the desecrated (abyss) mod and clears `has_been_desecrated_ever`
+flag to allow re-desecration. Uses `remove_last_nonfractured_suffix()`.
 
 ### P5: Catalysing Exaltation
 Bias exalt toward a specific mod tag family. Used on rings/amulets to improve
