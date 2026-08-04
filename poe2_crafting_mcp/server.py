@@ -688,6 +688,7 @@ def estimate_craft_cost(
     omen: str = "",
     currency_price: float = 0,
     omen_price: float = 0,
+    runes: str = "",
 ) -> str:
     """
     Estimate the expected cost to hit a target mod on an item.
@@ -706,6 +707,12 @@ def estimate_craft_cost(
         omen: Optional omen — "sinistral_exaltation", "dextral_coronation", etc.
         currency_price: Price per currency use in chaos equivalent (0 = use default)
         omen_price: Price of omen in chaos (0 = not used)
+        runes: Comma-separated rune names socketed on the item. These expand
+               the mod pool with rune-specific mods. Examples:
+               "marksman", "decay,marksman", "Kolr's Hunt", "Katla's Gloom".
+               Valid pools: marksman (Kolr's Hunt), decay (Katla's Gloom),
+               chronomancy (Uhtred's Sidereus), destruction (Thrud's Might),
+               berserking (Vorana's Carnage), soul (Medved's Tending).
 
     Returns:
         JSON with: probability, probability_pct, expected_attempts, expected_cost,
@@ -713,7 +720,7 @@ def estimate_craft_cost(
     """
     from poe2_crafting_mcp.data.poe2db_client import base_tags_to_item_class, ALL_ITEM_CLASSES
     from poe2_crafting_mcp.data.price_db import PriceDatabase
-    from poe2_crafting_mcp.crafting.simulator import CraftingSimulator
+    from poe2_crafting_mcp.crafting.simulator import CraftingSimulator, resolve_rune_pool
 
     pdb = PriceDatabase()
 
@@ -733,11 +740,22 @@ def estimate_craft_cost(
     if not item_class:
         item_class = base_name.replace(' ', '_')
 
+    # Parse rune pools
+    rune_pools = None
+    if runes:
+        rune_pools = []
+        for r in runes.split(","):
+            pool_name = resolve_rune_pool(r.strip())
+            if pool_name:
+                rune_pools.append(pool_name)
+        if not rune_pools:
+            rune_pools = None
+
     # Get mod pool
     mod_pool = pdb.get_craftable_mods(item_class, ilvl, "normal")
 
     # Create simulator and calculate
-    sim = CraftingSimulator(item_class, ilvl, mod_pool)
+    sim = CraftingSimulator(item_class, ilvl, mod_pool, rune_pools=rune_pools)
     result = sim.estimate_cost(
         target_family=target_mod,
         currency=currency,
@@ -749,6 +767,8 @@ def estimate_craft_cost(
     result['item_class'] = item_class
     result['ilvl'] = ilvl
     result['target_mod'] = target_mod
+    if rune_pools:
+        result['rune_pools'] = rune_pools
     return _to_json(result)
 
 
@@ -758,6 +778,7 @@ def compare_craft_methods(
     target_mod: str,
     ilvl: int = 82,
     target_tier: int = 0,
+    runes: str = "",
 ) -> str:
     """
     Compare multiple crafting methods for hitting a target mod.
@@ -770,6 +791,8 @@ def compare_craft_methods(
         target_mod: Mod family to target (e.g. "IncreasedLife")
         ilvl: Item level (default 82)
         target_tier: 0 = any tier, N = specific tier
+        runes: Comma-separated rune pools socketed (e.g. "marksman,decay").
+               See estimate_craft_cost for valid rune names.
 
     Returns:
         JSON list of methods sorted by expected_cost (cheapest first),
@@ -777,7 +800,7 @@ def compare_craft_methods(
     """
     from poe2_crafting_mcp.data.poe2db_client import base_tags_to_item_class, ALL_ITEM_CLASSES
     from poe2_crafting_mcp.data.price_db import PriceDatabase
-    from poe2_crafting_mcp.crafting.simulator import CraftingSimulator
+    from poe2_crafting_mcp.crafting.simulator import CraftingSimulator, resolve_rune_pool
 
     pdb = PriceDatabase()
 
@@ -797,15 +820,26 @@ def compare_craft_methods(
     if not item_class:
         item_class = base_name.replace(' ', '_')
 
+    # Parse rune pools
+    rune_pools = None
+    if runes:
+        rune_pools = [resolve_rune_pool(r.strip()) for r in runes.split(",")]
+        rune_pools = [p for p in rune_pools if p]
+        if not rune_pools:
+            rune_pools = None
+
     mod_pool = pdb.get_craftable_mods(item_class, ilvl, "normal")
-    sim = CraftingSimulator(item_class, ilvl, mod_pool)
+    sim = CraftingSimulator(item_class, ilvl, mod_pool, rune_pools=rune_pools)
 
     results = sim.compare_methods(
         target_family=target_mod,
         target_tier=target_tier,
     )
-    return _to_json({"item_class": item_class, "target_mod": target_mod,
-                     "ilvl": ilvl, "methods": results})
+    result_dict = {"item_class": item_class, "target_mod": target_mod,
+                   "ilvl": ilvl, "methods": results}
+    if rune_pools:
+        result_dict["rune_pools"] = rune_pools
+    return _to_json(result_dict)
 
 
 @mcp.tool()

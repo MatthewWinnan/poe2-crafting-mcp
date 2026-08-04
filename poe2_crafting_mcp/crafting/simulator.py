@@ -422,6 +422,42 @@ OMENS: dict[str, dict[str, Any]] = {
 }
 
 
+# ── Rune Pool Mapping ────────────────────────────────────────────────────────
+# Game Warp Runes that expand the crafting mod pool when socketed.
+# Key: pool name in mod_weights table. Value: in-game rune name.
+RUNE_POOL_NAMES: dict[str, str] = {
+    "marksman":    "Kolr's Hunt",
+    "decay":       "Katla's Gloom",
+    "chronomancy": "Uhtred's Sidereus",
+    "destruction": "Thrud's Might",
+    "berserking":  "Vorana's Carnage",
+    "soul":        "Medved's Tending",
+}
+
+# Reverse mapping: rune display name → pool name
+RUNE_NAME_TO_POOL: dict[str, str] = {v.lower(): k for k, v in RUNE_POOL_NAMES.items()}
+
+
+def resolve_rune_pool(name: str) -> str | None:
+    """Resolve a rune name or pool name to a valid pool name.
+
+    Accepts: "marksman", "Kolr's Hunt", "kolrs hunt", "decay", etc.
+    Returns the pool name (e.g. "marksman") or None if unrecognized.
+    """
+    name_lower = name.lower().strip()
+    if name_lower in RUNE_POOL_NAMES:
+        return name_lower
+    # Try display name match
+    if name_lower in RUNE_NAME_TO_POOL:
+        return RUNE_NAME_TO_POOL[name_lower]
+    # Fuzzy: strip apostrophes and extra spaces
+    normalized = name_lower.replace("'", "").replace("'", "").replace("  ", " ")
+    for display, pool in RUNE_NAME_TO_POOL.items():
+        if normalized == display.replace("'", "").replace("'", ""):
+            return pool
+    return None
+
+
 class CraftingSimulator:
     """
     Crafting state machine with probability calculation.
@@ -430,7 +466,15 @@ class CraftingSimulator:
     exact probabilities for hitting target mods.
     """
 
-    def __init__(self, item_class: str, ilvl: int, mod_pool: dict, essence_pool: dict | None = None):
+    def __init__(
+        self,
+        item_class: str,
+        ilvl: int,
+        mod_pool: dict,
+        essence_pool: dict | None = None,
+        rune_pools: list[str] | None = None,
+        rune_pool_data: list[dict] | None = None,
+    ):
         """
         Args:
             item_class: poe2db item class (e.g. "Gloves_int")
@@ -440,6 +484,10 @@ class CraftingSimulator:
             essence_pool: optional result from get_craftable_mods(pool='essence')
                           If None, _find_essence_mod falls back to normal pool.
                           Should include both 'essence' and 'perfect_essence' mods.
+            rune_pools: list of rune pool names to load from DB (e.g. ["marksman", "decay"]).
+                        These expand the rolling pool — rune mods are added to the normal pool.
+            rune_pool_data: pre-loaded rune pool data (list of get_craftable_mods() results).
+                            Use instead of rune_pools when data is already loaded.
         """
         self.item_class = item_class
         self.ilvl = ilvl
@@ -504,12 +552,73 @@ class CraftingSimulator:
                         'stat_text': tier['stat_text'],
                     })
 
+        # Flatten rune pool mods (added to normal pool when rolling)
+        # Rune mods expand the available pool — they don't replace normal mods.
+        # A family can appear in both normal and rune pools (different tiers/weights).
+        self._rune_mods: list[dict] = []
+        self._active_rune_pools: list[str] = rune_pools or []
+
+        rune_data_list = rune_pool_data or []
+        if rune_pools and not rune_pool_data:
+            # Load from DB on demand
+            rune_data_list = self._load_rune_pools(rune_pools)
+
+        for pool_data in rune_data_list:
+            for group in pool_data.get('prefixes', []):
+                for tier_idx, tier in enumerate(group['tiers']):
+                    self._rune_mods.append({
+                        'family': group['family'],
+                        'affix_type': 'prefix',
+                        'tier': tier_idx + 1,
+                        'req_level': tier['req_level'],
+                        'weight': tier['weight'],
+                        'stat_text': tier['stat_text'],
+                        'tags': tier.get('tags', []),
+                    })
+            for group in pool_data.get('suffixes', []):
+                for tier_idx, tier in enumerate(group['tiers']):
+                    self._rune_mods.append({
+                        'family': group['family'],
+                        'affix_type': 'suffix',
+                        'tier': tier_idx + 1,
+                        'req_level': tier['req_level'],
+                        'weight': tier['weight'],
+                        'stat_text': tier['stat_text'],
+                        'tags': tier.get('tags', []),
+                    })
+
+    def _load_rune_pools(self, rune_pools: list[str]) -> list[dict]:
+        """Load rune pool data from the database."""
+        from poe2_crafting_mcp.data.price_db import PriceDatabase
+        pdb = PriceDatabase()
+        result = []
+        for pool_name in rune_pools:
+            pool_data = pdb.get_craftable_mods(self.item_class, ilvl=self.ilvl, pool=pool_name)
+            if pool_data['prefixes'] or pool_data['suffixes']:
+                result.append(pool_data)
+        return result
+
     @classmethod
-    def from_db(cls, item_class: str, ilvl: int, db_path: str = "data/poe2_craft.db") -> "CraftingSimulator":
+    def from_db(
+        cls,
+        item_class: str,
+        ilvl: int,
+        db_path: str = "data/poe2_craft.db",
+        rune_pools: list[str] | None = None,
+    ) -> "CraftingSimulator":
         """Create a simulator with all pools loaded from the database.
 
         Loads the normal pool for rolling + combined essence/perfect_essence
-        pool for essence-guaranteed mods.
+        pool for essence-guaranteed mods. Optionally loads rune pools that
+        expand the rolling pool (e.g. "marksman", "decay").
+
+        Args:
+            item_class: poe2db item class (e.g. "Gloves_int")
+            ilvl: item level
+            db_path: path to SQLite database
+            rune_pools: list of rune pool names to merge into the rolling pool.
+                        Valid pools: marksman, decay, chronomancy, destruction,
+                        berserking, soul.
         """
         from poe2_crafting_mcp.data.price_db import PriceDatabase
         pdb = PriceDatabase(db_path)
@@ -524,7 +633,17 @@ class CraftingSimulator:
             'suffixes': essence_pool['suffixes'] + perfect_pool['suffixes'],
         }
 
-        return cls(item_class, ilvl, normal_pool, essence_pool=merged_essence)
+        # Load rune pools if specified
+        rune_pool_data = None
+        if rune_pools:
+            rune_pool_data = []
+            for pool_name in rune_pools:
+                pool_data = pdb.get_craftable_mods(item_class, ilvl=ilvl, pool=pool_name)
+                if pool_data['prefixes'] or pool_data['suffixes']:
+                    rune_pool_data.append(pool_data)
+
+        return cls(item_class, ilvl, normal_pool, essence_pool=merged_essence,
+                   rune_pool_data=rune_pool_data, rune_pools=rune_pools)
 
     def get_available_pool(
         self,
@@ -540,14 +659,23 @@ class CraftingSimulator:
         - Family blocking (mods already on item excluded)
         - Slot limits (full prefix/suffix excluded)
         - Omen gentype targeting
+
+        If rune pools are active, their mods are merged into the normal pool.
+        A family can appear in both normal and rune pools with different
+        tiers/weights — all entries are included (the game rolls one flat pool).
         """
         item = item or self.item
         blocked_families = item.families_on_item
         prefixes_full = item.open_prefixes == 0
         suffixes_full = item.open_suffixes == 0
 
+        # Combine normal + rune mods into one source
+        all_sources = self._all_mods
+        if self._rune_mods:
+            all_sources = self._all_mods + self._rune_mods
+
         available = []
-        for mod in self._all_mods:
+        for mod in all_sources:
             if mod['req_level'] > self.ilvl:
                 continue
             if mod['req_level'] < min_mod_level:

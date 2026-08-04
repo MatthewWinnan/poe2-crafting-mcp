@@ -73,6 +73,7 @@ def preflight(
     ilvl: int,
     target_mods: list[tuple[str, str, int]],
     db_path: str | None = None,
+    rune_pools: list[str] | None = None,
 ) -> tuple[dict, PriceCache, CraftTarget]:
     """Fetch all data needed for optimization from the local DB.
 
@@ -84,6 +85,8 @@ def preflight(
                    ("IncreasedLife", "prefix", 2),
                    ("FireResistance", "suffix", 2)]
         db_path: optional path to SQLite DB (uses default if None)
+        rune_pools: optional list of rune pool names to merge into the mod pool
+            (e.g. ["marksman", "decay"]). These expand the available mod pool.
 
     Returns:
         pool_data: encoded mod pool dict for bridge.encode_pool()
@@ -134,6 +137,30 @@ def preflight(
             suffix_families.append(fam_id)
             suffix_tiers.append(tier_idx + 1)  # T1=1, T2=2, ...
             suffix_req_levels.append(tier["req_level"])
+
+    # ── Phase 1b: Merge Rune Pools ──
+    # Rune mods expand the normal pool — same family can appear in both.
+    # Uses the same family_to_id mapping so family blocking works correctly.
+    rune_mod_count = 0
+    if rune_pools:
+        for pool_name in rune_pools:
+            rune_result = pdb.get_craftable_mods(item_class, ilvl, pool=pool_name)
+            for group in rune_result["prefixes"]:
+                fam_id = get_family_id(group["family"])
+                for tier_idx, tier in enumerate(group["tiers"]):
+                    prefix_weights.append(tier["weight"])
+                    prefix_families.append(fam_id)
+                    prefix_tiers.append(tier_idx + 1)
+                    prefix_req_levels.append(tier["req_level"])
+                    rune_mod_count += 1
+            for group in rune_result["suffixes"]:
+                fam_id = get_family_id(group["family"])
+                for tier_idx, tier in enumerate(group["tiers"]):
+                    suffix_weights.append(tier["weight"])
+                    suffix_families.append(fam_id)
+                    suffix_tiers.append(tier_idx + 1)
+                    suffix_req_levels.append(tier["req_level"])
+                    rune_mod_count += 1
 
     # ── Phase 2: Build CraftTarget with resolved IDs ──
     targets: list[ModTarget] = []
@@ -256,11 +283,12 @@ def preflight(
         trade_finished=trade_finished,
     )
 
+    rune_info = f" | Runes: {', '.join(rune_pools)} (+{rune_mod_count} mods)" if rune_pools else ""
     log.info(
         f"Preflight: {item_class} ilvl{ilvl} | "
         f"Pool: {len(prefix_weights)}P + {len(suffix_weights)}S mods | "
         f"Prices: {len(currency_prices)} currencies, {len(omen_prices)} omens | "
-        f"Targets: {[t.family for t in targets]}"
+        f"Targets: {[t.family for t in targets]}{rune_info}"
     )
 
     return pool_data, prices, target

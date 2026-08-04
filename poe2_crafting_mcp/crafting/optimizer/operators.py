@@ -56,6 +56,20 @@ _CRAFTABLE_CURRENCIES = [
     if c not in (Currency.DONE, Currency.FAIL)
 ]
 
+# Currencies that can benefit from omens (based on OMENS applies_to in simulator.py).
+# Only these should be paired with omens during random action generation.
+_OMEN_COMPATIBLE_CURRENCIES = {
+    Currency.EXALTED, Currency.GREATER_EXALTED, Currency.PERFECT_EXALTED,
+    Currency.ANNULMENT,
+    Currency.CHAOS, Currency.GREATER_CHAOS, Currency.PERFECT_CHAOS,
+    Currency.REGAL, Currency.GREATER_REGAL, Currency.PERFECT_REGAL,
+    Currency.ALCHEMY,
+    Currency.ESSENCE_PERFECT,
+    Currency.DIVINE,
+    Currency.VAAL,
+    Currency.DESECRATE,
+}
+
 # Predicates that can appear in random rules
 _ALL_PREDICATES = list(Predicate)
 
@@ -163,11 +177,17 @@ def random_condition() -> Condition:
 
 
 def random_action() -> Action:
-    """Generate a random action (currency + optional omen)."""
+    """Generate a random action (currency + optional omen).
+
+    Only pairs omens with currencies that can actually use them
+    (exalted, chaos, regal, alchemy, annulment, divine, vaal, desecrate,
+    perfect_essence). Currencies like reforge, transmute, essences, scour,
+    fracturing etc. cannot use omens.
+    """
     currency = random.choice(_CRAFTABLE_CURRENCIES)
 
-    # 20% chance of adding an omen
-    if random.random() < 0.2:
+    # 20% chance of adding an omen, but only if the currency supports it
+    if random.random() < 0.2 and currency in _OMEN_COMPATIBLE_CURRENCIES:
         omen = random.choice(_ALL_OMENS)
     else:
         omen = Omen.NONE
@@ -229,16 +249,24 @@ def mutate_action(rulelist: RuleList, fitness: Fitness | None = None) -> RuleLis
     # 50% chance: change currency, 50% chance: toggle/change omen
     if random.random() < 0.5:
         new_currency = random.choice(_CRAFTABLE_CURRENCIES)
-        new_action = Action(new_currency, old_rule.action.omen)
+        # Strip omen if new currency can't use it
+        new_omen = old_rule.action.omen
+        if new_currency not in _OMEN_COMPATIBLE_CURRENCIES:
+            new_omen = Omen.NONE
+        new_action = Action(new_currency, new_omen)
     else:
-        if old_rule.action.has_omen:
+        currency = old_rule.action.currency
+        # Only toggle/add omens on compatible currencies
+        if currency not in _OMEN_COMPATIBLE_CURRENCIES:
+            new_action = Action(currency, Omen.NONE)
+        elif old_rule.action.has_omen:
             # Remove omen or swap to different one
             if random.random() < 0.3:
-                new_action = Action(old_rule.action.currency, Omen.NONE)
+                new_action = Action(currency, Omen.NONE)
             else:
-                new_action = Action(old_rule.action.currency, random.choice(_ALL_OMENS))
+                new_action = Action(currency, random.choice(_ALL_OMENS))
         else:
-            new_action = Action(old_rule.action.currency, random.choice(_ALL_OMENS))
+            new_action = Action(currency, random.choice(_ALL_OMENS))
 
     rl.rules[idx] = Rule(old_rule.condition, new_action, old_rule.label)
     return rl

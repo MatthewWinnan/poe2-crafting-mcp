@@ -58,6 +58,10 @@ def main() -> None:
         "--cooperative", "--cc", action="store_true",
         help="Use cooperative coevolution (Tier 2) instead of sequential decomposition",
     )
+    parser.add_argument(
+        "--runes", default="",
+        help="Comma-separated rune pools socketed on item (e.g. 'marksman,decay' or 'Kolr\\'s Hunt')",
+    )
 
     args = parser.parse_args()
 
@@ -80,6 +84,20 @@ def main() -> None:
     )
     from poe2_crafting_mcp.crafting.optimizer.bridge import is_rust_available
 
+    # Parse rune pools
+    rune_pools = None
+    if args.runes:
+        from poe2_crafting_mcp.crafting.simulator import resolve_rune_pool
+        rune_pools = []
+        for r in args.runes.split(","):
+            pool_name = resolve_rune_pool(r.strip())
+            if pool_name:
+                rune_pools.append(pool_name)
+            else:
+                print(f"  Warning: unknown rune '{r.strip()}'", file=sys.stderr)
+        if not rune_pools:
+            rune_pools = None
+
     # Decide decomposition mode
     use_decompose = args.decompose
     if args.no_decompose:
@@ -96,11 +114,16 @@ def main() -> None:
     if use_decompose:
         mode = "Cooperative coevolution" if args.cooperative else "Sequential decomposition"
         print(f"  Mode:    {mode} ({len(target_mods)} targets)")
+    if rune_pools:
+        from poe2_crafting_mcp.crafting.simulator import RUNE_POOL_NAMES
+        rune_names = [RUNE_POOL_NAMES.get(p, p) for p in rune_pools]
+        print(f"  Runes:   {', '.join(rune_names)}")
     print()
 
     # Preflight: fetch pool + prices from DB
     print("Fetching mod pool and prices...")
-    pool_data, prices, target = preflight(args.item_class, args.ilvl, target_mods)
+    pool_data, prices, target = preflight(args.item_class, args.ilvl, target_mods,
+                                          rune_pools=rune_pools)
 
     print(f"  Pool: {len(pool_data['prefix_weights'])} prefix + {len(pool_data['suffix_weights'])} suffix tiers")
     print(f"  Prices: {len(prices.currency)} currencies, {len(prices.omen)} omens")
