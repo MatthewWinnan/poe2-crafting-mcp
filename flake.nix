@@ -138,6 +138,46 @@
           export POB_PATH="$REPO_ROOT/vendor/PathOfBuilding-PoE2"
           export POE2_CRAFT_DB="$REPO_ROOT/data/poe2_craft.db"
 
+          # Build & install the Rust optimizer extension into target/release/
+          # so bridge.py's fallback import finds it without a virtualenv.
+          _build_rust_optimizer() {
+            local crate_dir="$REPO_ROOT/crates/poe2-optimizer"
+            local wheel_dir="$REPO_ROOT/target/wheels"
+            local dest="$REPO_ROOT/target/release/poe2_optimizer"
+            local src_hash
+
+            # Hash source files to detect changes
+            src_hash=$(cat "$crate_dir/Cargo.toml" "$crate_dir/src/"*.rs 2>/dev/null | sha256sum | cut -d' ' -f1)
+
+            if [ -f "$dest/.src_hash" ] && [ "$(cat "$dest/.src_hash")" = "$src_hash" ]; then
+              return 0  # already up to date
+            fi
+
+            echo "  Building Rust optimizer..."
+            if (cd "$crate_dir" && maturin build --release --quiet 2>/dev/null); then
+              local whl
+              whl=$(ls -t "$wheel_dir"/poe2_optimizer-*.whl 2>/dev/null | head -1)
+              if [ -n "$whl" ]; then
+                mkdir -p "$dest"
+                ${pkgs.python312}/bin/python -c "
+import zipfile, os, sys
+with zipfile.ZipFile(sys.argv[1]) as z:
+    for name in z.namelist():
+        if name.startswith('poe2_optimizer/') and not name.startswith('poe2_optimizer-'):
+            data = z.read(name)
+            out = os.path.join(sys.argv[2], os.path.basename(name))
+            with open(out, 'wb') as f:
+                f.write(data)
+" "$whl" "$dest"
+                echo "$src_hash" > "$dest/.src_hash"
+                echo "  Rust optimizer built and installed."
+              fi
+            else
+              echo "  Warning: Rust optimizer build failed (non-fatal)."
+            fi
+          }
+          _build_rust_optimizer
+
           echo ""
           echo "  PoE2 Crafting MCP - Dev Environment"
           echo "  ────────────────────────────────────"
@@ -146,6 +186,11 @@
           echo "  LuaJIT:  $(${pkgs.luajit}/bin/luajit -v 2>&1 | head -1)"
           echo "  PoB:     $POB_PATH"
           echo "  DB:      $POE2_CRAFT_DB"
+          if [ -f "$REPO_ROOT/target/release/poe2_optimizer/__init__.py" ]; then
+            echo "  Rust:    poe2_optimizer loaded"
+          else
+            echo "  Rust:    poe2_optimizer NOT available"
+          fi
           echo ""
         '';
       };

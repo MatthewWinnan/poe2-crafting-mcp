@@ -20,6 +20,7 @@ from .gene import (
     Fitness,
     Individual,
     Omen,
+    PhaseTarget,
     PriceCache,
     CraftTarget,
 )
@@ -123,6 +124,41 @@ def serialize_population_for_rust(
     return rules_array, rule_counts
 
 
+# ── Initial State Encoding ────────────────────────────────────────────────────
+
+def encode_initial_state(phase: PhaseTarget) -> np.ndarray | None:
+    """Encode a PhaseTarget's starting state as 17 uint16s for Rust.
+
+    Layout: [rarity, prefix_count, suffix_count, fractured_mask, flags,
+             pf0, pf1, pf2, sf0, sf1, sf2, pt0, pt1, pt2, st0, st1, st2]
+
+    Returns None if phase has no starting mods (blank start).
+    """
+    if not phase.starting_mods:
+        return None
+
+    data = np.zeros(17, dtype=np.uint16)
+    data[0] = phase.starting_rarity
+    data[4] = phase.starting_flags
+
+    prefix_count = 0
+    suffix_count = 0
+    for family_id, affix_type, tier in phase.starting_mods:
+        if affix_type == "prefix" and prefix_count < 3:
+            data[5 + prefix_count] = family_id      # pf0-2
+            data[11 + prefix_count] = tier           # pt0-2
+            prefix_count += 1
+        elif affix_type == "suffix" and suffix_count < 3:
+            data[8 + suffix_count] = family_id       # sf0-2
+            data[14 + suffix_count] = tier           # st0-2
+            suffix_count += 1
+
+    data[1] = prefix_count
+    data[2] = suffix_count
+
+    return data
+
+
 # ── Evaluation Interface ──────────────────────────────────────────────────────
 
 def evaluate_population_rust(
@@ -132,8 +168,13 @@ def evaluate_population_rust(
     n_trials: int = 500,
     max_steps: int = 500,
     base_seed: int = 0,
+    initial_state: np.ndarray | None = None,
 ) -> None:
     """Evaluate entire population via Rust, updating fitness in place.
+
+    Args:
+        initial_state: Optional 17-element uint16 array from encode_initial_state().
+            If provided, each MC trial starts from this item state instead of blank.
 
     If Rust isn't available, falls back to Python stub (random fitness).
     """
@@ -170,6 +211,7 @@ def evaluate_population_rust(
         n_trials,
         max_steps,
         base_seed,
+        initial_state,
     )
 
     # Unpack results into Individual.fitness

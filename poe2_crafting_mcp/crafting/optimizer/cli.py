@@ -46,6 +46,14 @@ def main() -> None:
     parser.add_argument("--generations", type=int, default=50)
     parser.add_argument("--trials", type=int, default=500)
     parser.add_argument("--quick", action="store_true", help="Quick mode (faster, less accurate)")
+    parser.add_argument(
+        "--decompose", action="store_true", default=None,
+        help="Force sub-goal decomposition (auto for >3 targets)",
+    )
+    parser.add_argument(
+        "--no-decompose", action="store_true",
+        help="Force monolithic optimization (no decomposition)",
+    )
 
     args = parser.parse_args()
 
@@ -63,8 +71,17 @@ def main() -> None:
 
     # Import optimizer (deferred to avoid slow imports on --help)
     from poe2_crafting_mcp.crafting.optimizer.preflight import preflight
-    from poe2_crafting_mcp.crafting.optimizer.runner import optimize, OptimizerConfig
+    from poe2_crafting_mcp.crafting.optimizer.runner import (
+        optimize, optimize_multi_target, OptimizerConfig,
+    )
     from poe2_crafting_mcp.crafting.optimizer.bridge import is_rust_available
+
+    # Decide decomposition mode
+    use_decompose = args.decompose
+    if args.no_decompose:
+        use_decompose = False
+    elif use_decompose is None:
+        use_decompose = len(target_mods) >= 4
 
     print(f"PoE2 Crafting Optimizer")
     print(f"{'─' * 50}")
@@ -72,6 +89,8 @@ def main() -> None:
     print(f"  Targets: {', '.join(f'T{t} {f} ({a})' for f, a, t in target_mods)}")
     print(f"  Engine:  {'Rust (fast)' if is_rust_available() else 'Python stub (slow)'}")
     print(f"  Config:  pop={args.pop_size} gen={args.generations} trials={args.trials}")
+    if use_decompose:
+        print(f"  Mode:    Sub-goal decomposition ({len(target_mods)} targets)")
     print()
 
     # Preflight: fetch pool + prices from DB
@@ -92,19 +111,27 @@ def main() -> None:
 
     print()
 
-    # Run optimizer
     config = OptimizerConfig(
         pop_size=args.pop_size,
         max_generations=args.generations,
         mc_trials=args.trials,
     )
 
+    if use_decompose:
+        _run_decomposed(pool_data, target, prices, config)
+    else:
+        _run_monolithic(pool_data, target, prices, config)
+
+
+def _run_monolithic(pool_data, target, prices, config) -> None:
+    """Run monolithic (non-decomposed) optimization."""
+    from poe2_crafting_mcp.crafting.optimizer.runner import optimize
+
     print("Optimizing...")
     start = time.time()
     result = optimize(pool_data, target, prices, config)
     elapsed = time.time() - start
 
-    # Output results
     print()
     print(f"{'═' * 50}")
     print(f"  RESULTS ({elapsed:.1f}s, {result.evaluations:,} evaluations)")
@@ -131,7 +158,6 @@ def main() -> None:
             )
         print()
 
-        # Show best strategy in detail
         best = result.strategies[0]
         print(f"  Best Strategy: {best.family_name}")
         print(f"  {'─' * 40}")
@@ -141,6 +167,53 @@ def main() -> None:
         print("  No viable strategies found.")
 
     print()
+
+
+def _run_decomposed(pool_data, target, prices, config) -> None:
+    """Run sub-goal decomposed optimization."""
+    from poe2_crafting_mcp.crafting.optimizer.runner import optimize_multi_target
+
+    print("Decomposing targets and optimizing phases...")
+    start = time.time()
+    result = optimize_multi_target(pool_data, target, prices, config)
+    elapsed = time.time() - start
+
+    print()
+    print(f"{'═' * 60}")
+    print(f"  DECOMPOSED RESULTS ({elapsed:.1f}s)")
+    print(f"{'═' * 60}")
+    print()
+
+    print(f"  Ordering: {result.ordering_rationale}")
+    print()
+
+    # Per-phase breakdown
+    print(f"  {'Phase':<6s} {'Target':<25s} {'Cost':>8s} {'Success':>8s} {'Risk':<12s} {'Cumulative':>10s}")
+    print(f"  {'─' * 6} {'─' * 25} {'─' * 8} {'─' * 8} {'─' * 12} {'─' * 10}")
+    for pr in result.phases:
+        target_name = pr.phase_target.targets[0].family if pr.phase_target.targets else "?"
+        print(
+            f"  {pr.phase_index:<6d} {target_name:<25s} {pr.expected_cost:>7.0f}c "
+            f"{pr.success_rate:>7.0%} {pr.restart_risk:<12s} {pr.cumulative_cost:>9.0f}c"
+        )
+    print()
+
+    print(f"  Total expected cost: {result.total_expected_cost:.0f}c")
+    print(f"  Combined success rate: {result.total_success_rate:.2%}")
+    if result.trade_price < float("inf"):
+        print(f"  Trade price: {result.trade_price:.0f}c")
+    print(f"  Verdict: {result.verdict}")
+    print()
+
+    # Show each phase's best strategy
+    for pr in result.phases:
+        target_name = pr.phase_target.targets[0].family if pr.phase_target.targets else "?"
+        print(f"  Phase {pr.phase_index}: {target_name} ({pr.expected_cost:.0f}c, {pr.success_rate:.0%})")
+        print(f"  Strategy: {pr.strategy.family_name}")
+        print(f"  {'─' * 40}")
+        for step in pr.strategy.steps:
+            print(f"    {step}")
+        print()
 
 
 def _parse_targets(target_str: str) -> list[tuple[str, str, int]]:

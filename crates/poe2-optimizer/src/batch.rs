@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 
 use crate::evaluate::{evaluate_rulelist, Rule};
+use crate::item_state::ItemState;
 use crate::pool::ModPool;
 
 /// Evaluate entire population in parallel.
@@ -35,12 +36,17 @@ use crate::pool::ModPool;
 ///   n_trials: u32
 ///   max_steps: u32
 ///   base_seed: u64
+///   initial_state_data: Optional (9,) u16 — packed initial item state for sub-goal phases:
+///     [rarity, prefix_count, suffix_count, fractured_mask, flags,
+///      pf0, pf1, pf2, sf0, sf1, sf2, pt0, pt1, pt2, st0, st1, st2]
+///     If empty/None, starts from blank.
 ///
 /// Returns: (fitness_array, fire_success_array, fire_failure_array)
 ///   fitness_array: (pop_size, 7) f32 — [cost, success_rate, p90, median, std, steps, step_med]
 ///   fire_success_array: (pop_size, max_rules) u32
 ///   fire_failure_array: (pop_size, max_rules) u32
 #[pyfunction]
+#[pyo3(signature = (rules_array, rule_counts, prefix_weights, prefix_cumsum, prefix_families, prefix_tiers, prefix_req_levels, suffix_weights, suffix_cumsum, suffix_families, suffix_tiers, suffix_req_levels, target_prefix_families, target_suffix_families, target_max_tiers, prices, max_currency_id, ilvl, max_prefixes, max_suffixes, n_trials, max_steps, base_seed, initial_state_data=None))]
 #[allow(clippy::too_many_arguments)]
 pub fn evaluate_population<'py>(
     py: Python<'py>,
@@ -67,6 +73,7 @@ pub fn evaluate_population<'py>(
     n_trials: u32,
     max_steps: u32,
     base_seed: u64,
+    initial_state_data: Option<PyReadonlyArray1<'py, u16>>,
 ) -> PyResult<(
     Bound<'py, PyArray2<f32>>,
     Bound<'py, PyArray2<u32>>,
@@ -108,6 +115,29 @@ pub fn evaluate_population<'py>(
     let prices_vec: Vec<f32> = prices.as_array().to_vec();
     let max_cid = max_currency_id as usize;
 
+    // Build optional initial state for sub-goal decomposition phases.
+    // Packed as 17 u16s: [rarity, prefix_count, suffix_count, fractured_mask, flags,
+    //   pf0, pf1, pf2, sf0, sf1, sf2, pt0, pt1, pt2, st0, st1, st2]
+    let initial_state: Option<ItemState> = initial_state_data.and_then(|arr| {
+        let data = arr.as_array();
+        if data.len() < 17 {
+            return None;
+        }
+        Some(ItemState {
+            rarity: data[0] as u8,
+            prefix_count: data[1] as u8,
+            suffix_count: data[2] as u8,
+            fractured_mask: data[3] as u8,
+            flags: data[4] as u8,
+            prefix_families: [data[5], data[6], data[7]],
+            suffix_families: [data[8], data[9], data[10]],
+            prefix_tiers: [data[11] as u8, data[12] as u8, data[13] as u8],
+            suffix_tiers: [data[14] as u8, data[15] as u8, data[16] as u8],
+            cost_spent: 0.0,
+            step_count: 0,
+        })
+    });
+
     // Pre-extract rules for each individual (avoid repeated numpy indexing in parallel)
     let mut all_rules: Vec<Vec<Rule>> = Vec::with_capacity(pop_size);
     let mut all_counts: Vec<usize> = Vec::with_capacity(pop_size);
@@ -143,6 +173,7 @@ pub fn evaluate_population<'py>(
                     n_trials,
                     max_steps,
                     seed,
+                    initial_state.as_ref(),
                 )
             })
             .collect::<Vec<_>>()

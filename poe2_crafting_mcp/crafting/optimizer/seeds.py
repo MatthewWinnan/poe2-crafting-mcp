@@ -379,3 +379,145 @@ def create_seeded_population(pop_size: int, seed_fraction: float = 0.4) -> list[
         population.append(seed_fn())
 
     return population
+
+
+# ── Phase-Aware Seeds (for sub-goal decomposition) ───────────────────────────
+
+def _seed_phase_exalt_prefix() -> RuleList:
+    """Phase seed: simple sinistral exalt loop for a prefix target."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(
+        Condition.open_prefix_gte(1),
+        Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
+        "sinistral exalt",
+    )
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+def _seed_phase_exalt_suffix() -> RuleList:
+    """Phase seed: simple dextral exalt loop for a suffix target."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(
+        Condition.open_suffix_gte(1),
+        Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
+        "dextral exalt",
+    )
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+def _seed_phase_exalt_natural() -> RuleList:
+    """Phase seed: exalt without omen (natural prefix/suffix roll)."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.open_prefix_gte(1), Action(Currency.EXALTED), "natural exalt")
+    rl.add_rule(Condition.open_suffix_gte(1), Action(Currency.EXALTED), "natural exalt")
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+def _seed_phase_greater_exalt_prefix() -> RuleList:
+    """Phase seed: greater sinistral exalt for narrow pool prefix."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(
+        Condition.open_prefix_gte(1),
+        Action(Currency.GREATER_EXALTED, Omen.SINISTRAL_EXALTATION),
+        "greater sinistral exalt",
+    )
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+def _seed_phase_greater_exalt_suffix() -> RuleList:
+    """Phase seed: greater dextral exalt for narrow pool suffix."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(
+        Condition.open_suffix_gte(1),
+        Action(Currency.GREATER_EXALTED, Omen.DEXTRAL_EXALTATION),
+        "greater dextral exalt",
+    )
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+def _seed_phase_desecrate_reveal() -> RuleList:
+    """Phase seed: desecrate + reveal for an abyss suffix target."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate")
+    rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL), "reveal abyss")
+    # If reveal didn't hit, annul the bad abyss mod and retry
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul bad reveal")
+    rl.add_rule(Condition.cost_spent_gte(800), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+PHASE_SEEDS_PREFIX = [
+    _seed_phase_exalt_prefix,
+    _seed_phase_greater_exalt_prefix,
+    _seed_phase_exalt_natural,
+]
+
+PHASE_SEEDS_SUFFIX = [
+    _seed_phase_exalt_suffix,
+    _seed_phase_greater_exalt_suffix,
+    _seed_phase_exalt_natural,
+    _seed_phase_desecrate_reveal,
+]
+
+
+def create_seeded_population_for_phase(
+    pop_size: int,
+    seed_fraction: float,
+    phase_target_affix: str,
+    setup_rules: list | None = None,
+) -> list[RuleList]:
+    """Generate seed strategies appropriate for a decomposed phase.
+
+    Later phases (phase_index > 0) use exalt-focused seeds since the item
+    is already Rare with prior-phase mods. Setup rules are prepended to
+    recreate the starting state.
+
+    Args:
+        pop_size: total population size
+        seed_fraction: fraction to fill with seeds
+        phase_target_affix: "prefix" or "suffix" (determines seed set)
+        setup_rules: rules to prepend (recreate prior-phase state)
+    """
+    from .gene import Rule
+
+    seeds = PHASE_SEEDS_PREFIX if phase_target_affix == "prefix" else PHASE_SEEDS_SUFFIX
+    n_seeds = int(pop_size * seed_fraction)
+    population: list[RuleList] = []
+
+    for i in range(n_seeds):
+        seed_fn = seeds[i % len(seeds)]
+        rl = seed_fn()
+
+        # Prepend setup rules if provided
+        if setup_rules:
+            combined = RuleList()
+            for rule in setup_rules:
+                combined.add_rule(rule.condition, rule.action, rule.label)
+            for rule in rl.rules:
+                combined.add_rule(rule.condition, rule.action, rule.label)
+            population.append(combined)
+        else:
+            population.append(rl)
+
+    return population

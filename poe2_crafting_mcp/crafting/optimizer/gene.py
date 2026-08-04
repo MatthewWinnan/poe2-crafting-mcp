@@ -593,6 +593,86 @@ class Individual:
         return f"[Rank {self.pareto_rank}] {self.fitness}\n{self.rulelist}"
 
 
+# ── Phase Decomposition Structures ────────────────────────────────────────────
+
+@dataclass
+class PhaseTarget:
+    """Targets for a single phase of a multi-step craft.
+
+    A phase may pursue one or more targets simultaneously. Single-target
+    phases are the common case; multi-target phases enable Tier 3 grouping.
+    """
+    targets: list[ModTarget]
+    # Mods already on the item from prior phases: (family_id, affix_type, tier)
+    starting_mods: list[tuple[int, str, int]] = field(default_factory=list)
+    starting_rarity: int = 0    # 0=Normal, 1=Magic, 2=Rare
+    starting_flags: int = 0     # essence/desecrated/divined bits
+    phase_index: int = 0
+    # ALL target family IDs across all phases (for annul protection)
+    protected_families: list[int] = field(default_factory=list)
+
+    @property
+    def target_families(self) -> list[str]:
+        return [t.family for t in self.targets]
+
+    @property
+    def is_later_phase(self) -> bool:
+        return self.phase_index > 0
+
+    def __str__(self) -> str:
+        parts = [f"T{t.max_tier} {t.family} ({t.affix_type[0]})" for t in self.targets]
+        prefix = f"Phase {self.phase_index}: " if self.phase_index > 0 else ""
+        return f"{prefix}{', '.join(parts)}"
+
+
+@dataclass
+class PhaseResult:
+    """Result of optimizing one phase of a decomposed craft."""
+    phase_index: int
+    phase_target: PhaseTarget
+    strategy: 'CraftingStrategy'  # forward ref
+    expected_cost: float
+    success_rate: float
+    restart_risk: str              # "safe" | "destructive" | "full_restart"
+    cumulative_cost: float = 0.0   # sum of this + all prior phases
+
+
+@dataclass
+class DecomposedResult:
+    """Result of multi-target optimization via sub-goal decomposition."""
+    phases: list[PhaseResult] = field(default_factory=list)
+    total_expected_cost: float = float("inf")
+    total_success_rate: float = 0.0
+    ordering: list[int] = field(default_factory=list)
+    ordering_rationale: str = ""
+    trade_price: float = float("inf")
+    verdict: str = ""
+    # Top N orderings evaluated with quick costs
+    ordering_candidates: list[tuple[list[int], float]] = field(default_factory=list)
+    # Metadata
+    wall_time_seconds: float = 0.0
+    item_class: str = ""
+    ilvl: int = 82
+
+    def summary(self) -> str:
+        lines = [
+            f"Decomposed Optimization: {self.item_class} ilvl{self.ilvl}",
+            f"  Ordering: {' -> '.join(p.phase_target.target_families[0] for p in self.phases)}",
+            f"  Total cost: {self.total_expected_cost:.0f}c | Verdict: {self.verdict}",
+            f"  Wall time: {self.wall_time_seconds:.1f}s",
+        ]
+        if self.trade_price < float("inf"):
+            lines.append(f"  Trade price: {self.trade_price:.0f}c")
+        lines.append("")
+        for pr in self.phases:
+            lines.append(
+                f"  Phase {pr.phase_index}: {pr.phase_target} | "
+                f"{pr.expected_cost:.0f}c | {pr.success_rate:.0%} | "
+                f"risk={pr.restart_risk} | cumulative={pr.cumulative_cost:.0f}c"
+            )
+        return "\n".join(lines)
+
+
 # ── PriceCache ────────────────────────────────────────────────────────────────
 
 @dataclass

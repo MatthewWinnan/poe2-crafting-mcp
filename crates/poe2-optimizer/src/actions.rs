@@ -410,6 +410,41 @@ fn find_first_missing_target(item: &ItemState, pool: &ModPool) -> Option<u16> {
     pool.all_target_families.first().copied()
 }
 
+/// Place a mod from the specified family at the BEST tier (T1).
+/// Used by ESSENCE_UPGRADE which guarantees T1 for Greater Essences.
+fn add_specific_mod_best_tier(item: &mut ItemState, family: u16, pool: &ModPool) {
+    let is_prefix = pool.target_prefix_families.contains(&family);
+
+    // Find the best (lowest number = highest power) tier for this family
+    let tier = if is_prefix {
+        best_tier_for_family(family, &pool.prefix_families, &pool.prefix_tiers)
+    } else {
+        best_tier_for_family(family, &pool.suffix_families, &pool.suffix_tiers)
+    };
+
+    if is_prefix && item.prefix_count < pool.max_prefixes {
+        let idx = item.prefix_count as usize;
+        item.prefix_families[idx] = family;
+        item.prefix_tiers[idx] = tier;
+        item.prefix_count += 1;
+    } else if item.suffix_count < pool.max_suffixes {
+        let idx = item.suffix_count as usize;
+        item.suffix_families[idx] = family;
+        item.suffix_tiers[idx] = tier;
+        item.suffix_count += 1;
+    }
+}
+
+fn best_tier_for_family(family: u16, families: &[u16], tiers: &[u8]) -> u8 {
+    let mut best = u8::MAX;
+    for i in 0..families.len() {
+        if families[i] == family && tiers[i] < best {
+            best = tiers[i];
+        }
+    }
+    if best == u8::MAX { 1 } else { best }
+}
+
 fn add_specific_mod(item: &mut ItemState, family: u16, pool: &ModPool, rng: &mut impl Rng) {
     // Place a mod from the specified family at a random tier (weighted)
     let is_prefix = pool.target_prefix_families.contains(&family);

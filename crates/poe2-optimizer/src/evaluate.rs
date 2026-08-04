@@ -39,6 +39,10 @@ pub struct EvalResult {
 }
 
 /// Evaluate a single rule-list over N Monte Carlo trials.
+///
+/// If `initial_state` is provided, each trial starts from that state
+/// (with cost_spent and step_count reset to 0). Used for sub-goal
+/// decomposition where later phases start from a non-blank item.
 pub fn evaluate_rulelist(
     rules: &[Rule],
     n_rules: usize,
@@ -48,6 +52,7 @@ pub fn evaluate_rulelist(
     n_trials: u32,
     max_steps: u32,
     seed: u64,
+    initial_state: Option<&ItemState>,
 ) -> EvalResult {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
     let mut fire_on_success = vec![0u32; n_rules];
@@ -60,7 +65,15 @@ pub fn evaluate_rulelist(
     let mut successes: u32 = 0;
 
     for _ in 0..n_trials {
-        let mut item = ItemState::blank();
+        let mut item = match initial_state {
+            Some(state) => {
+                let mut s = state.clone();
+                s.cost_spent = 0.0;
+                s.step_count = 0;
+                s
+            }
+            None => ItemState::blank(),
+        };
         let mut step: u32 = 0;
         let mut trial_success = false;
 
