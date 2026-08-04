@@ -285,10 +285,9 @@ pub fn apply_currency(
             if item.rarity != 2 {
                 return;
             }
-            // Only desecrate once per item (one desecrated mod maximum in 0.5)
-            // Use bit 3 of flags as "has_been_desecrated_ever"
-            if item.flags & 0x08 != 0 {
-                return; // Already desecrated this item once
+            // Can't desecrate if already in desecrated state (pending reveal)
+            if item.is_desecrated() {
+                return;
             }
             item.set_desecrated(true);
         }
