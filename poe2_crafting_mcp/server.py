@@ -843,6 +843,63 @@ def compare_craft_methods(
 
 
 @mcp.tool()
+def recommend_runes(
+    base_name: str,
+    target_mods: str,
+    ilvl: int = 82,
+) -> str:
+    """
+    Recommend which Game Warp Runes to socket for a crafting goal.
+
+    Analyzes all 6 rune pools against your target mods and reports which
+    runes add your target families to the pool (RECOMMENDED), which are
+    neutral, and which dilute the pool (AVOID).
+
+    Args:
+        base_name: Base item name or poe2db slug (e.g. "Gold Gloves", "Gloves_int")
+        target_mods: Comma-separated target mod families
+                     (e.g. "IncreasedLife,FireResistance,IncreasedEnergyShield")
+        ilvl: Item level (default 82)
+
+    Returns:
+        JSON with per-rune analysis: verdict, target_hits, probability_impact,
+        and all families each rune adds to the pool.
+    """
+    from poe2_crafting_mcp.data.poe2db_client import base_tags_to_item_class, ALL_ITEM_CLASSES
+    from poe2_crafting_mcp.crafting.simulator import recommend_runes as _recommend_runes
+
+    # Resolve item class
+    item_class = None
+    if base_name in ALL_ITEM_CLASSES:
+        item_class = base_name
+    else:
+        try:
+            db = _get_db()
+            bases = db.search_bases(keyword=base_name, limit=1)
+            if bases:
+                item_class = base_tags_to_item_class(
+                    bases[0]['slot'], bases[0].get('tags', []))
+        except Exception:
+            pass
+    if not item_class:
+        item_class = base_name.replace(' ', '_')
+
+    # Parse target families
+    families = [f.strip() for f in target_mods.split(",") if f.strip()]
+    if not families:
+        return _to_json({"error": "No target mods provided"})
+
+    results = _recommend_runes(item_class, ilvl, families)
+
+    return _to_json({
+        "item_class": item_class,
+        "ilvl": ilvl,
+        "target_mods": families,
+        "rune_recommendations": results,
+    })
+
+
+@mcp.tool()
 def get_gem_info(name: str) -> str:
     """
     Get details for a specific gem by exact name.

@@ -1067,6 +1067,69 @@ def _cmd_influence_mods(argv: list[str]) -> int:
     return _cmd_mod_pool_query([args.target, '--ilvl', str(args.ilvl), '--pool', args.influence])
 
 
+def _cmd_rune_recommend(argv: list[str]) -> int:
+    """Recommend which runes to socket for a crafting goal."""
+    p = argparse.ArgumentParser(
+        prog="poe2-lookup rune-recommend",
+        description="Recommend which Game Warp Runes to socket for your target mods.",
+    )
+    p.add_argument("target", help="Base name or item class slug (e.g. Gloves_int, 'Gold Gloves')")
+    p.add_argument("--mods", required=True, nargs="+",
+                   help="Target mod families (e.g. IncreasedLife FireResistance)")
+    p.add_argument("--ilvl", type=int, default=82)
+    args = p.parse_args(argv)
+
+    item_class = _resolve_item_class(args.target)
+    target_families = args.mods
+
+    from poe2_crafting_mcp.crafting.simulator import recommend_runes
+    results = recommend_runes(item_class, args.ilvl, target_families)
+
+    if not results:
+        print(f"{_DIM}No rune pools found for {item_class}.{_RESET}")
+        return 0
+
+    print(_h(f"Rune Recommendations — {item_class} (ilvl {args.ilvl})"))
+    print(f"  {_DIM}Targets: {', '.join(target_families)}{_RESET}")
+    print()
+
+    for r in results:
+        verdict = r["verdict"]
+        if verdict == "RECOMMENDED":
+            v_color = _GREEN
+        elif verdict == "AVOID":
+            v_color = _RED
+        else:
+            v_color = _DIM
+
+        impact = r["probability_impact_pct"]
+        impact_str = f"+{impact:.2f}%" if impact >= 0 else f"{impact:.2f}%"
+
+        print(f"  {_BOLD}{r['rune_name']}{_RESET} ({r['pool_name']})")
+        print(f"    Verdict:  {v_color}{verdict}{_RESET}  |  Prob impact: {impact_str}")
+        print(f"    Adds:     {r['extra_prefixes']} prefix + {r['extra_suffixes']} suffix tiers "
+              f"({r['total_extra_weight']} weight)")
+
+        if r["target_hits"]:
+            hits = ", ".join(
+                f"{h['family']} ({h['affix_type']}, {h['tiers']}T, w={h['weight']})"
+                for h in r["target_hits"]
+            )
+            print(f"    {_GREEN}Target hits: {hits}{_RESET}")
+
+        # Show all families added by this rune
+        families_by_type = {"prefix": [], "suffix": []}
+        for f in r["rune_families"]:
+            families_by_type[f["affix_type"]].append(f["family"])
+        if families_by_type["prefix"]:
+            print(f"    {_DIM}Prefixes: {', '.join(families_by_type['prefix'])}{_RESET}")
+        if families_by_type["suffix"]:
+            print(f"    {_DIM}Suffixes: {', '.join(families_by_type['suffix'])}{_RESET}")
+        print()
+
+    return 0
+
+
 def _resolve_item_class(target: str) -> str | None:
     """Resolve a base name or slug to an item class. Returns None if unresolvable."""
     from poe2_crafting_mcp.data.poe2db_client import ALL_ITEM_CLASSES, base_tags_to_item_class
@@ -1622,6 +1685,7 @@ _MOD_POOL_CMDS = {
     "craft-compare":    _cmd_craft_compare,
     "craft-item":       _cmd_craft_item,
     "craft-sim":        _cmd_craft_sim,
+    "rune-recommend":   _cmd_rune_recommend,
 }
 
 

@@ -458,6 +458,145 @@ def resolve_rune_pool(name: str) -> str | None:
     return None
 
 
+def recommend_runes(
+    item_class: str,
+    ilvl: int,
+    target_families: list[str],
+) -> list[dict]:
+    """Recommend which runes to socket for a crafting goal.
+
+    Analyzes all 6 rune pools against the target mod families and reports:
+    - Which pools contain target families (direct hits)
+    - How many extra mods each pool adds (dilution)
+    - Net probability impact
+
+    Args:
+        item_class: poe2db item class slug (e.g. "Gloves_int")
+        ilvl: item level
+        target_families: list of target mod family names
+
+    Returns:
+        List of dicts sorted by recommendation strength (best first), each with:
+        - pool_name, rune_name, verdict (RECOMMENDED/NEUTRAL/AVOID)
+        - target_hits: families in this pool that match targets
+        - extra_prefixes, extra_suffixes: mod count added to pool
+        - total_extra_weight: total weight added
+        - probability_impact: estimated % change in hitting any target
+    """
+    from poe2_crafting_mcp.data.price_db import PriceDatabase
+    pdb = PriceDatabase()
+
+    # Get the base normal pool
+    normal_pool = pdb.get_craftable_mods(item_class, ilvl, pool="normal")
+    normal_prefix_weight = normal_pool.get("total_prefix_weight", 0)
+    normal_suffix_weight = normal_pool.get("total_suffix_weight", 0)
+
+    # Find target weights in the normal pool
+    target_set = set(target_families)
+    normal_target_prefix_weight = 0
+    normal_target_suffix_weight = 0
+    for group in normal_pool.get("prefixes", []):
+        if group["family"] in target_set:
+            normal_target_prefix_weight += sum(t["weight"] for t in group["tiers"])
+    for group in normal_pool.get("suffixes", []):
+        if group["family"] in target_set:
+            normal_target_suffix_weight += sum(t["weight"] for t in group["tiers"])
+
+    results = []
+    for pool_name, rune_name in RUNE_POOL_NAMES.items():
+        rune_pool = pdb.get_craftable_mods(item_class, ilvl, pool=pool_name)
+
+        prefixes = rune_pool.get("prefixes", [])
+        suffixes = rune_pool.get("suffixes", [])
+
+        if not prefixes and not suffixes:
+            continue
+
+        # Count mods and weights added
+        extra_prefix_count = sum(len(g["tiers"]) for g in prefixes)
+        extra_suffix_count = sum(len(g["tiers"]) for g in suffixes)
+        extra_prefix_weight = sum(t["weight"] for g in prefixes for t in g["tiers"])
+        extra_suffix_weight = sum(t["weight"] for g in suffixes for t in g["tiers"])
+
+        # Find target hits
+        target_hits = []
+        rune_target_prefix_weight = 0
+        rune_target_suffix_weight = 0
+        for group in prefixes:
+            if group["family"] in target_set:
+                family_weight = sum(t["weight"] for t in group["tiers"])
+                target_hits.append({
+                    "family": group["family"],
+                    "affix_type": "prefix",
+                    "tiers": len(group["tiers"]),
+                    "weight": family_weight,
+                })
+                rune_target_prefix_weight += family_weight
+        for group in suffixes:
+            if group["family"] in target_set:
+                family_weight = sum(t["weight"] for t in group["tiers"])
+                target_hits.append({
+                    "family": group["family"],
+                    "affix_type": "suffix",
+                    "tiers": len(group["tiers"]),
+                    "weight": family_weight,
+                })
+                rune_target_suffix_weight += family_weight
+
+        # All rune families (for display)
+        rune_families = []
+        for group in prefixes:
+            rune_families.append({"family": group["family"], "affix_type": "prefix",
+                                  "tiers": len(group["tiers"])})
+        for group in suffixes:
+            rune_families.append({"family": group["family"], "affix_type": "suffix",
+                                  "tiers": len(group["tiers"])})
+
+        # Calculate probability impact
+        # P(target) = target_weight / total_weight
+        # With rune: P(target) = (target_weight + rune_target_weight) / (total_weight + rune_weight)
+        prob_change_prefix = 0.0
+        prob_change_suffix = 0.0
+        if normal_prefix_weight > 0:
+            p_before = normal_target_prefix_weight / normal_prefix_weight
+            p_after = (normal_target_prefix_weight + rune_target_prefix_weight) / (
+                normal_prefix_weight + extra_prefix_weight)
+            prob_change_prefix = p_after - p_before
+        if normal_suffix_weight > 0:
+            p_before = normal_target_suffix_weight / normal_suffix_weight
+            p_after = (normal_target_suffix_weight + rune_target_suffix_weight) / (
+                normal_suffix_weight + extra_suffix_weight)
+            prob_change_suffix = p_after - p_before
+
+        net_prob_change = prob_change_prefix + prob_change_suffix
+
+        # Verdict
+        if target_hits:
+            verdict = "RECOMMENDED"
+        elif net_prob_change >= -0.001:
+            verdict = "NEUTRAL"
+        else:
+            verdict = "AVOID"
+
+        results.append({
+            "pool_name": pool_name,
+            "rune_name": rune_name,
+            "verdict": verdict,
+            "target_hits": target_hits,
+            "rune_families": rune_families,
+            "extra_prefixes": extra_prefix_count,
+            "extra_suffixes": extra_suffix_count,
+            "total_extra_weight": extra_prefix_weight + extra_suffix_weight,
+            "probability_impact_pct": round(net_prob_change * 100, 3),
+        })
+
+    # Sort: RECOMMENDED first, then by probability impact descending
+    verdict_order = {"RECOMMENDED": 0, "NEUTRAL": 1, "AVOID": 2}
+    results.sort(key=lambda r: (verdict_order[r["verdict"]], -r["probability_impact_pct"]))
+
+    return results
+
+
 class CraftingSimulator:
     """
     Crafting state machine with probability calculation.
