@@ -96,6 +96,10 @@ def quick_estimate_phase(
     affix = target.affix_type
     max_tier = target.max_tier
 
+    # Desecrated (abyss) mods use desecrate+reveal, not exalt/essence
+    if target.pool_source == "desecrated":
+        return _estimate_desecrated_phase(target, prices, starting_mod_count, starting_rarity)
+
     # Get pool arrays
     if affix == "prefix":
         families = pool_data["prefix_families"]
@@ -186,6 +190,43 @@ def quick_estimate_phase(
         method=method,
         expected_cost=cost,
         success_rate=min(p, 1.0),
+        is_deterministic=False,
+        risk=risk,
+    )
+
+
+def _estimate_desecrated_phase(
+    target: ModTarget,
+    prices: dict[str, float],
+    starting_mod_count: int,
+    starting_rarity: int,
+) -> QuickEstimate:
+    """Cost estimate for a desecrated (abyss) mod via desecrate+reveal.
+
+    Desecrated mods come from a small pool (~14 families per slot).
+    Reveal shows 3 options, player picks best: P(hit) ≈ 1-(1-1/N)^3.
+    If missed, need Omen of Light (annul abyss only) or annul+retry.
+    """
+    # Desecrate cost is negligible (bone fragment ~0.1c)
+    desecrate_cost = prices.get("desecrate", 0.1)
+    # Omen of Light: targeted annul of abyss mod for clean retry
+    light_price = prices.get("light", 5.0)
+    annul_price = prices.get("annulment", 2.0)
+
+    # ~20% chance per reveal attempt (14 families, pick 3)
+    prob_per_reveal = 0.20
+    # With Omen of Light retry: cost per attempt = desecrate + light_if_miss
+    # E[cost] = desecrate / prob + (1-prob) * (light + annul) / prob
+    cost_per_attempt = desecrate_cost + (1.0 - prob_per_reveal) * (light_price + annul_price)
+    expected_cost = cost_per_attempt / prob_per_reveal
+
+    risk = classify_phase_risk(target, starting_mod_count, starting_rarity)
+
+    return QuickEstimate(
+        target=target,
+        method="desecrate_reveal",
+        expected_cost=expected_cost,
+        success_rate=prob_per_reveal,
         is_deterministic=False,
         risk=risk,
     )
@@ -345,7 +386,7 @@ def build_phases(
         if starting_rarity == 1 and phase_idx >= 1:
             starting_rarity = 2  # regal/essence → Rare
 
-        # Track essence usage
+        # Track essence/desecration usage
         est = quick_estimate_phase(
             t, pool_data, prices,
             starting_mod_count=len(starting_mods) - 1,
@@ -353,6 +394,8 @@ def build_phases(
         )
         if est.method == "essence":
             starting_flags |= 0x04  # has_essence_mod
+        if est.method == "desecrate_reveal":
+            starting_flags |= 0x08  # has_been_desecrated_ever
 
     return phases
 

@@ -184,11 +184,42 @@ def preflight(
             ess_suffix_families.append(fam_id)
             ess_suffix_tiers.append(tier_idx + 1)
 
+    # ── Phase 1d: Fetch Desecrated Pool (for target detection) ──
+    # We need to know which targets come from the desecrated pool so the
+    # decomposer uses desecrate+reveal instead of exalt/essence.
+    desecrated_result = pdb.get_craftable_mods(item_class, ilvl, pool="desecrated")
+    desecrated_families: set[str] = set()
+    for group in desecrated_result.get("prefixes", []):
+        desecrated_families.add(group["family"])
+        # Also register family IDs for desecrated mods (needed for target matching)
+        get_family_id(group["family"])
+    for group in desecrated_result.get("suffixes", []):
+        desecrated_families.add(group["family"])
+        get_family_id(group["family"])
+
+    # Build set of normal pool families for detection
+    normal_families: set[str] = set()
+    for group in pool_result["prefixes"]:
+        normal_families.add(group["family"])
+    for group in pool_result["suffixes"]:
+        normal_families.add(group["family"])
+
     # ── Phase 2: Build CraftTarget with resolved IDs ──
     targets: list[ModTarget] = []
     for family_name, affix_type, max_tier in target_mods:
         fam_id = get_family_id(family_name)
-        targets.append(ModTarget(family_name, fam_id, affix_type, max_tier))
+
+        # Detect which pool this target belongs to
+        if family_name in normal_families:
+            pool_source = "normal"
+        elif family_name in desecrated_families:
+            pool_source = "desecrated"
+            log.info(f"Target '{family_name}' is a desecrated (abyss) mod → desecrate+reveal")
+        else:
+            pool_source = "normal"  # fallback, may not be craftable
+            log.warning(f"Target '{family_name}' not found in normal or desecrated pool")
+
+        targets.append(ModTarget(family_name, fam_id, affix_type, max_tier, pool_source))
 
     target = CraftTarget(targets=targets, item_class=item_class, ilvl=ilvl)
 

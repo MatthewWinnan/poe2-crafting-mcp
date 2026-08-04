@@ -574,9 +574,11 @@ def optimize_multi_target(
 
         # Generate phase-appropriate initial population
         primary_affix = phase.targets[0].affix_type
+        primary_pool = phase.targets[0].pool_source
         seeded = create_seeded_population_for_phase(
             config.pop_size, config.seed_fraction,
             primary_affix, setup_rules,
+            pool_source=primary_pool,
         )
         population: list[Individual] = [Individual(rl) for rl in seeded]
 
@@ -997,9 +999,11 @@ def optimize_cooperative(
         phase_pool = _retarget_pool(pool_data, phase_craft_target)
 
         primary_affix = phase.targets[0].affix_type
+        primary_pool = phase.targets[0].pool_source
         seeded = create_seeded_population_for_phase(
             config.pop_size, config.seed_fraction,
             primary_affix, setup_rules,
+            pool_source=primary_pool,
         )
         population: list[Individual] = [Individual(rl) for rl in seeded]
         while len(population) < config.pop_size:

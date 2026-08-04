@@ -574,11 +574,19 @@ PHASE_SEEDS_SUFFIX = [
 ]
 
 
+PHASE_SEEDS_DESECRATED = [
+    _seed_phase_desecrate_reveal,
+    _seed_phase_desecrate_reveal,
+    _seed_phase_desecrate_reveal,
+]
+
+
 def create_seeded_population_for_phase(
     pop_size: int,
     seed_fraction: float,
     phase_target_affix: str,
     setup_rules: list | None = None,
+    pool_source: str = "normal",
 ) -> list[RuleList]:
     """Generate seed strategies appropriate for a decomposed phase.
 
@@ -591,10 +599,16 @@ def create_seeded_population_for_phase(
         seed_fraction: fraction to fill with seeds
         phase_target_affix: "prefix" or "suffix" (determines seed set)
         setup_rules: rules to prepend (recreate prior-phase state)
+        pool_source: "normal" or "desecrated" (determines seed set)
     """
     from .gene import Rule
 
-    seeds = PHASE_SEEDS_PREFIX if phase_target_affix == "prefix" else PHASE_SEEDS_SUFFIX
+    if pool_source == "desecrated":
+        seeds = PHASE_SEEDS_DESECRATED
+    elif phase_target_affix == "prefix":
+        seeds = PHASE_SEEDS_PREFIX
+    else:
+        seeds = PHASE_SEEDS_SUFFIX
     n_seeds = int(pop_size * seed_fraction)
     population: list[RuleList] = []
 

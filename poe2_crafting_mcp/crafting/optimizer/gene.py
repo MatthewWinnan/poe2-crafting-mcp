@@ -447,6 +447,7 @@ class ModTarget:
     family_id: int     # numeric ID used in pool/Rust arrays
     affix_type: str    # "prefix" or "suffix"
     max_tier: int      # highest acceptable tier (1=T1 only, 3=T1-T3)
+    pool_source: str = "normal"  # which pool: "normal", "desecrated"
 
 
 @dataclass
