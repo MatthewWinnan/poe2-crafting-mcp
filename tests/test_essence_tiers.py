@@ -141,8 +141,8 @@ class TestEssenceTierSeeds:
         assert seed_essence_exalt_fill in ALL_SEEDS
 
     def test_seed_count_increased(self):
-        """ALL_SEEDS now has 14 strategies (12 original + 2 new)."""
-        assert len(ALL_SEEDS) == 14
+        """ALL_SEEDS now has 15 strategies (12 original + 3 new)."""
+        assert len(ALL_SEEDS) == 15
 
     def test_lesser_seed_uses_correct_currency(self):
         """Lesser essence seed uses ESSENCE_LESSER action."""
