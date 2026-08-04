@@ -552,7 +552,7 @@ def cmd_sim(argv: list[str]) -> int:
 
     while True:
         try:
-            line = input(f"{_CYAN}>{_RESET} ").strip()
+            line = input(f"\x01{_CYAN}\x02>\x01{_RESET}\x02 ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -1221,7 +1221,7 @@ def cmd_sim(argv: list[str]) -> int:
             # Get player choice
             while True:
                 try:
-                    choice_str = input(f"  {_CYAN}Pick (1-{n_draws}):{_RESET} ").strip()
+                    choice_str = input(f"  \x01{_CYAN}\x02Pick (1-{n_draws}):\x01{_RESET}\x02 ").strip()
                 except (EOFError, KeyboardInterrupt):
                     print()
                     break
