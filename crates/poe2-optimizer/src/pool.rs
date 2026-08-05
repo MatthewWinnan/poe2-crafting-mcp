@@ -30,6 +30,12 @@ pub struct ModPool {
     pub target_max_tiers: Vec<u8>,
     pub all_target_families: Vec<u16>,
 
+    // Desecrated pool metadata (for REVEAL probability calculation)
+    // Number of unique families in the desecrated pool per affix type.
+    // Used to calculate P(hit) = 1 - C(pool-targets, draws) / C(pool, draws).
+    pub desecrated_prefix_pool_size: u16,
+    pub desecrated_suffix_pool_size: u16,
+
     // Item metadata
     pub ilvl: u8,
     pub max_prefixes: u8,

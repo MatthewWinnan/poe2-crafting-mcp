@@ -601,10 +601,80 @@ PHASE_SEEDS_SUFFIX = [
 ]
 
 
+def _seed_phase_desecrate_necromancy_suffix() -> RuleList:
+    """Phase seed: desecrate + reveal with Dextral Necromancy (force suffix).
+
+    Uses omen to guarantee suffix affix type on reveal, avoiding the 50/50
+    when both prefix and suffix slots are open.
+    """
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "transmute")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.REGAL), "regal to rare")
+    rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate")
+    # Necromancy omen on REVEAL forces suffix in the Rust evaluator
+    rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL, Omen.DEXTRAL_NECROMANCY), "reveal suffix")
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul bad reveal")
+    rl.add_rule(Condition.cost_spent_gte(800), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+def _seed_phase_desecrate_necromancy_prefix() -> RuleList:
+    """Phase seed: desecrate + reveal with Sinistral Necromancy (force prefix)."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "transmute")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.REGAL), "regal to rare")
+    rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate")
+    rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL, Omen.SINISTRAL_NECROMANCY), "reveal prefix")
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul bad reveal")
+    rl.add_rule(Condition.cost_spent_gte(800), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+def _seed_phase_desecrate_echoes() -> RuleList:
+    """Phase seed: desecrate + reveal with Abyssal Echoes (reroll for ~38% hit)."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "transmute")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.REGAL), "regal to rare")
+    rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate")
+    rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL, Omen.ABYSSAL_ECHOES), "reveal+echoes")
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul bad reveal")
+    rl.add_rule(Condition.cost_spent_gte(800), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+def _seed_phase_fill_prefix_desecrate() -> RuleList:
+    """Phase seed: fill all prefixes → desecrate → guaranteed suffix reveal.
+
+    With 3 prefixes and 0-2 suffixes, desecration is forced to suffix.
+    No omen needed — the game guarantees suffix when only suffix slots are open.
+    """
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "transmute")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.REGAL), "regal to rare")
+    # Fill prefixes first to guarantee suffix on reveal
+    rl.add_rule(Condition.missing_target_prefix(), Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION), "fill prefix")
+    rl.add_rule(Condition.open_prefix_gte(1), Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION), "fill prefix2")
+    rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate")
+    rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL), "reveal suffix (guaranteed)")
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul bad reveal")
+    rl.add_rule(Condition.cost_spent_gte(800), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
 PHASE_SEEDS_DESECRATED = [
     _seed_phase_desecrate_reveal,
-    _seed_phase_desecrate_reveal,
-    _seed_phase_desecrate_reveal,
+    _seed_phase_desecrate_necromancy_suffix,
+    _seed_phase_desecrate_necromancy_prefix,
+    _seed_phase_desecrate_echoes,
+    _seed_phase_fill_prefix_desecrate,
 ]
 
 

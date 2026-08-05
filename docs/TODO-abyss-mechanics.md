@@ -53,52 +53,39 @@ Consumed on annulment:
 | Desecrate requires Rare | YES | YES |
 | Re-desecration after annul | YES | YES |
 | Reveal requires desecrated state | YES | YES |
-| Affix type from open slots | YES | NO (always suffix) |
-| Necromancy omen forces affix | YES | NO |
+| Affix type from open slots | YES | YES |
+| Necromancy omen forces affix | YES | YES |
 | Lich omens (weapon/jewellery only) | YES | NO |
 | Lich omen slot validation | YES | N/A |
-| Abyssal Echoes (3+3 reroll) | YES | NO |
-| Pool size affects hit probability | YES | NO (hardcoded 20%) |
+| Abyssal Echoes (3+3 reroll) | YES | YES |
+| Pool size affects hit probability | YES | YES |
 | Omen of Light annuls abyss mod | YES | YES |
 | Pick-from-N without replacement | YES | NO (flat 20%) |
 
 ## Tasks (priority order)
 
-### 1. Affix type determination in REVEAL
-Currently REVEAL always tries to place a suffix. Should determine prefix vs
-suffix based on open slots (matching `determine_affix_type` in desecration.py):
+### 1. ~~Affix type determination in REVEAL~~ DONE
+Rust REVEAL now determines prefix vs suffix from open slots:
 - All prefixes full + suffix open → suffix (guaranteed)
 - All suffixes full + prefix open → prefix (guaranteed)
 - Both open → random 50/50
 - Neither open → skip (no room)
+Enables "fill prefixes → desecrate → guaranteed suffix" strategy.
 
-This is the most impactful fix — it enables the "fill prefixes → desecrate →
-guaranteed suffix target" strategy that experienced players use.
+### 2. ~~Dynamic hit probability based on pool size~~ DONE
+Replaced hardcoded 20% with P(hit) = 3/pool_size (for 1 target, 3 draws).
+Desecrated pool sizes passed from preflight → bridge → batch → Rust ModPool.
+For Gloves_int suffixes: 14 families → P = 3/14 = 21.4%.
 
-### 2. Dynamic hit probability based on pool size
-Replace hardcoded 20% with actual calculation:
-- P(hit) = 1 - C(pool_size - target_count, draws) / C(pool_size, draws)
-- Need to pass desecrated pool size per item_class to Rust
-- For Gloves_int suffixes: 14 families, 3 draws → P = 19.7% (close to 20%)
-- For items with fewer desecrated mods, probability differs significantly
+### 3. ~~Omen of Abyssal Echoes support~~ DONE
+Echoes on REVEAL uses 3+3 model: P(hit) = 1 - ((pool-3)/pool)^2.
+Rust checks omen == ABYSSAL_ECHOES and squares the miss probability.
+For Gloves_int: 38.3% (vs 21.4% without).
 
-### 3. Omen of Abyssal Echoes support
-Echoes is consumed at reveal (not bone application). It allows ONE reroll
-of 3 fresh options, replacing the first 3 (not 6 total picks).
-
-Correct probability model: P(hit) = 1 - P(miss)^2
-- P(miss single draw) = C(pool-1, 3) / C(pool, 3)
-- P(hit with echoes) = 1 - P(miss)^2
-- For Gloves_int (pool=14, target=1): 1 - (11/14 * 10/13 * 9/12)^2 ≈ 38.3%
-- (Previously modeled as 6-draw: 42.9% — was wrong)
-- Gene.py already has ABYSSAL_ECHOES = 9
-- Simulator already corrected to 3+3 model
-
-### 4. Necromancy omen support (prefix/suffix forcing)
-- Omen of Sinistral Necromancy (gentype_only=1) → force prefix
-- Omen of Dextral Necromancy (gentype_only=2) → force suffix
-- Already defined in simulator OMENS dict
-- Useful when you can't or don't want to fill all prefix slots first
+### 4. ~~Necromancy omen support~~ DONE
+Rust checks omen == SINISTRAL_NECROMANCY (force prefix) or
+DEXTRAL_NECROMANCY (force suffix) on REVEAL action.
+Seeds added for both variants + fill-prefix-then-desecrate strategy.
 
 ### 5. Lich omen support (faction pool narrowing) — WEAPON/JEWELLERY ONLY
 - Omen of Blackblooded → only Kurgal faction mods in reveal

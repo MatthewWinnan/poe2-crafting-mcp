@@ -53,6 +53,9 @@ pub const DEXTRAL_ANNULMENT: u16 = 5;
 pub const SINISTRAL_CORONATION: u16 = 6;
 pub const DEXTRAL_CORONATION: u16 = 7;
 pub const WHITTLING: u16 = 8;
+pub const ABYSSAL_ECHOES: u16 = 9;
+pub const SINISTRAL_NECROMANCY: u16 = 10;
+pub const DEXTRAL_NECROMANCY: u16 = 11;
 pub const LIGHT: u16 = 12;
 
 /// Apply a crafting currency to the item state.
@@ -293,62 +296,114 @@ pub fn apply_currency(
         }
 
         REVEAL => {
-            // Well of Souls: reveal 3 options from the DESECRATED pool (small, ~14 mods).
-            // Player picks the best one. P(specific target) ≈ 1-(13/14)^3 ≈ 20%.
+            // Well of Souls reveal: draw 3 options from the desecrated pool,
+            // player picks best. With Abyssal Echoes omen: two independent
+            // draws of 3 (reroll). P(hit) uses combinatorial formula.
             //
-            // Simplified model: 20% chance of placing the target abyss mod directly,
-            // 80% chance of placing a random suffix (non-target abyss mod).
-            // This is more accurate than drawing from the full 80k-weight pool.
+            // Affix type determination (matches real game):
+            //  - Necromancy omen forces prefix (sinistral) or suffix (dextral)
+            //  - All prefixes full + suffix open → suffix (guaranteed)
+            //  - All suffixes full + prefix open → prefix (guaranteed)
+            //  - Both open → random 50/50
+            //  - Neither open → no room, skip
 
-            // Must be in desecrated state to reveal (requires prior DESECRATE)
             if !item.is_desecrated() {
                 return;
             }
             item.set_desecrated(false);
             item.flags |= 0x08; // mark has_been_desecrated_ever
 
+            // Determine affix type (prefix vs suffix) for the reveal
+            let max_p = pool.max_prefixes;
             let max_s = if item.rarity == 1 { 1 } else { pool.max_suffixes };
-            if item.suffix_count >= max_s {
-                return; // no room
+            let prefix_open = item.prefix_count < max_p;
+            let suffix_open = item.suffix_count < max_s;
+
+            let is_prefix = if omen == SINISTRAL_NECROMANCY {
+                true  // force prefix
+            } else if omen == DEXTRAL_NECROMANCY {
+                false // force suffix
+            } else if prefix_open && !suffix_open {
+                true  // only prefix slots available
+            } else if suffix_open && !prefix_open {
+                false // only suffix slots available
+            } else if prefix_open && suffix_open {
+                rng.gen::<bool>() // both open → 50/50
+            } else {
+                return; // neither open — no room
+            };
+
+            // Validate the chosen affix type has room
+            if is_prefix && !prefix_open {
+                return;
+            }
+            if !is_prefix && !suffix_open {
+                return;
             }
 
-            // Check if there's a target (prefix or suffix) we're missing.
-            // Desecration can add either type depending on open slots.
-            let missing_suffix = pool.target_suffix_families.iter()
-                .find(|&&fam| !item.has_family(fam) && !pool.suffix_families.contains(&fam))
-                .copied();
-            let missing_prefix = pool.target_prefix_families.iter()
-                .find(|&&fam| !item.has_family(fam) && !pool.prefix_families.contains(&fam))
-                .copied();
-
-            // Prefer suffix target (most common for desecrated mods), fall back to prefix
-            let (target_fam, is_prefix) = if let Some(fam) = missing_suffix {
-                (Some(fam), false)
-            } else if let Some(fam) = missing_prefix {
-                (Some(fam), true)
+            // Find missing desecrated target for this affix type
+            let target_fam = if is_prefix {
+                pool.target_prefix_families.iter()
+                    .find(|&&fam| !item.has_family(fam) && !pool.prefix_families.contains(&fam))
+                    .copied()
             } else {
-                (None, false)
+                pool.target_suffix_families.iter()
+                    .find(|&&fam| !item.has_family(fam) && !pool.suffix_families.contains(&fam))
+                    .copied()
+            };
+
+            // Get pool size for hit probability calculation
+            let pool_size = if is_prefix {
+                pool.desecrated_prefix_pool_size as u32
+            } else {
+                pool.desecrated_suffix_pool_size as u32
             };
 
             if let Some(fam) = target_fam {
-                // ~20% chance to get the specific target from pick-from-3
-                if rng.gen::<f32>() < 0.20 {
-                    // Success: place the desecrated target directly.
-                    // Bypass add_specific_mod — the family is from the desecrated pool,
-                    // not the normal pool, so pool validation would reject it.
-                    if is_prefix && item.prefix_count < pool.max_prefixes {
+                // Calculate P(hit) = 1 - C(pool-1, 3) / C(pool, 3)
+                // Simplified: P(hit) = 1 - (pool-1)(pool-2)(pool-3) / (pool)(pool-1)(pool-2)
+                //           = 1 - (pool-3)/pool = 3/pool  (for target_count=1)
+                let p_hit = if pool_size <= 3 {
+                    1.0_f32
+                } else {
+                    // P(miss) = C(pool-1, 3) / C(pool, 3) = (pool-3)/pool * ...
+                    // Full: P(miss) = (pool-1)*(pool-2)*(pool-3) / (pool*(pool-1)*(pool-2))
+                    //              = (pool-3)/pool
+                    // Wait, that's only for target_count=1. More precisely:
+                    // P(miss) = C(pool - target_count, draws) / C(pool, draws)
+                    // With target_count=1, draws=3:
+                    // = C(pool-1, 3) / C(pool, 3) = (pool-3)/pool * (pool-2)/(pool-1) ...
+                    // Actually simplest: (pool-1)(pool-2)(pool-3) / (pool(pool-1)(pool-2))
+                    // = (pool-3)/pool  -- NO. Let me be precise.
+                    // C(n,k) = n! / (k!(n-k)!)
+                    // C(pool-1, 3) / C(pool, 3) = [(pool-1)! / (3!(pool-4)!)] / [pool! / (3!(pool-3)!)]
+                    //                           = (pool-1)!(pool-3)! / (pool!(pool-4)!)
+                    //                           = (pool-3) / pool
+                    // So P(hit, 1 target, 3 draws) = 1 - (pool-3)/pool = 3/pool
+                    let p_miss_single = (pool_size as f32 - 3.0) / pool_size as f32;
+                    let p_miss = if omen == ABYSSAL_ECHOES {
+                        p_miss_single * p_miss_single // two independent draws
+                    } else {
+                        p_miss_single
+                    };
+                    1.0 - p_miss
+                };
+
+                if rng.gen::<f32>() < p_hit {
+                    // Hit: place the desecrated target directly
+                    if is_prefix {
                         let idx = item.prefix_count as usize;
                         item.prefix_families[idx] = fam;
                         item.prefix_tiers[idx] = 1;
                         item.prefix_count += 1;
-                    } else if !is_prefix && item.suffix_count < pool.max_suffixes {
+                    } else {
                         let idx = item.suffix_count as usize;
                         item.suffix_families[idx] = fam;
                         item.suffix_tiers[idx] = 1;
                         item.suffix_count += 1;
                     }
                 } else {
-                    // Got a non-target abyss mod — place a random mod (same affix type)
+                    // Miss: place a random mod from the normal pool (same affix type)
                     if is_prefix {
                         let blocked: Vec<u16> = (0..item.prefix_count as usize)
                             .map(|i| item.prefix_families[i])
@@ -376,17 +431,31 @@ pub fn apply_currency(
                     }
                 }
             } else {
-                // No desecrated target missing — place any random suffix
-                let blocked: Vec<u16> = (0..item.suffix_count as usize)
-                    .map(|i| item.suffix_families[i])
-                    .filter(|&f| f != 0)
-                    .collect();
-                let rng_val = rng.gen::<u64>();
-                if let Some((fam, tier)) = pool.sample_suffix(&blocked, 0, rng_val) {
-                    let idx = item.suffix_count as usize;
-                    item.suffix_families[idx] = fam;
-                    item.suffix_tiers[idx] = tier;
-                    item.suffix_count += 1;
+                // No desecrated target missing — place any random mod (same affix type)
+                if is_prefix {
+                    let blocked: Vec<u16> = (0..item.prefix_count as usize)
+                        .map(|i| item.prefix_families[i])
+                        .filter(|&f| f != 0)
+                        .collect();
+                    let rng_val = rng.gen::<u64>();
+                    if let Some((f, t)) = pool.sample_prefix(&blocked, 0, rng_val) {
+                        let idx = item.prefix_count as usize;
+                        item.prefix_families[idx] = f;
+                        item.prefix_tiers[idx] = t;
+                        item.prefix_count += 1;
+                    }
+                } else {
+                    let blocked: Vec<u16> = (0..item.suffix_count as usize)
+                        .map(|i| item.suffix_families[i])
+                        .filter(|&f| f != 0)
+                        .collect();
+                    let rng_val = rng.gen::<u64>();
+                    if let Some((f, t)) = pool.sample_suffix(&blocked, 0, rng_val) {
+                        let idx = item.suffix_count as usize;
+                        item.suffix_families[idx] = f;
+                        item.suffix_tiers[idx] = t;
+                        item.suffix_count += 1;
+                    }
                 }
             }
         }

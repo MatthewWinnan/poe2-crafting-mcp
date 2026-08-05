@@ -75,6 +75,8 @@ def encode_pool(
     essence_prefix_tiers: list[int] | None = None,
     essence_suffix_families: list[int] | None = None,
     essence_suffix_tiers: list[int] | None = None,
+    desecrated_prefix_pool_size: int = 0,
+    desecrated_suffix_pool_size: int = 0,
 ) -> dict[str, np.ndarray]:
     """Encode mod pool as numpy arrays for Rust.
 
@@ -102,6 +104,12 @@ def encode_pool(
         "max_prefixes": max_prefixes,
         "max_suffixes": max_suffixes,
     }
+
+    # Desecrated pool metadata (for REVEAL probability calculation)
+    if desecrated_prefix_pool_size > 0:
+        result["desecrated_prefix_pool_size"] = desecrated_prefix_pool_size
+    if desecrated_suffix_pool_size > 0:
+        result["desecrated_suffix_pool_size"] = desecrated_suffix_pool_size
 
     # Essence pool tier data (separate from normal pool)
     if essence_prefix_families:
@@ -230,6 +238,8 @@ def evaluate_population_rust(
         pool_data.get("essence_prefix_tiers"),
         pool_data.get("essence_suffix_families"),
         pool_data.get("essence_suffix_tiers"),
+        pool_data.get("desecrated_prefix_pool_size"),
+        pool_data.get("desecrated_suffix_pool_size"),
     )
 
     # Unpack results into Individual.fitness

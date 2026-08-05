@@ -189,12 +189,16 @@ def preflight(
     # decomposer uses desecrate+reveal instead of exalt/essence.
     desecrated_result = pdb.get_craftable_mods(item_class, ilvl, pool="desecrated")
     desecrated_families: set[str] = set()
+    desecrated_prefix_families: set[str] = set()
+    desecrated_suffix_families: set[str] = set()
     for group in desecrated_result.get("prefixes", []):
         desecrated_families.add(group["family"])
+        desecrated_prefix_families.add(group["family"])
         # Also register family IDs for desecrated mods (needed for target matching)
         get_family_id(group["family"])
     for group in desecrated_result.get("suffixes", []):
         desecrated_families.add(group["family"])
+        desecrated_suffix_families.add(group["family"])
         get_family_id(group["family"])
 
     # Build set of normal pool families for detection
@@ -241,6 +245,8 @@ def preflight(
         essence_prefix_tiers=ess_prefix_tiers or None,
         essence_suffix_families=ess_suffix_families or None,
         essence_suffix_tiers=ess_suffix_tiers or None,
+        desecrated_prefix_pool_size=len(desecrated_prefix_families),
+        desecrated_suffix_pool_size=len(desecrated_suffix_families),
     )
 
     # ── Phase 4: Economy Prices (HOT — from poe.ninja cache) ──
