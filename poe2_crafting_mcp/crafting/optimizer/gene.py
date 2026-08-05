@@ -479,7 +479,8 @@ class CraftTarget:
 
     @property
     def max_tiers(self) -> list[int]:
-        return [t.max_tier for t in self.targets]
+        """Max tiers in prefix-first-then-suffix order (matches Rust all_target_families)."""
+        return [t.max_tier for t in self.prefix_targets] + [t.max_tier for t in self.suffix_targets]
 
     def __str__(self) -> str:
         parts = [f"T{t.max_tier} {t.family} ({t.affix_type[0]})" for t in self.targets]
