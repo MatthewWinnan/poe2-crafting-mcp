@@ -380,6 +380,24 @@ def seed_desecrate_reveal() -> RuleList:
     return rl
 
 
+def seed_desecrate_necromancy() -> RuleList:
+    """Seed 14: Desecrate + Necromancy (force suffix on reveal).
+
+    Uses Dextral Necromancy omen to guarantee the reveal targets suffix,
+    doubling effective hit rate when both prefix and suffix slots are open.
+    """
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "transmute")
+    rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(Currency.REGAL), "regal to rare")
+    rl.add_rule(Condition.not_desecrated(), Action(Currency.DESECRATE), "desecrate")
+    rl.add_rule(Condition.is_desecrated(), Action(Currency.REVEAL, Omen.DEXTRAL_NECROMANCY), "reveal suffix")
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul bad")
+    rl.add_rule(Condition.cost_spent_gte(800), Action(Currency.FAIL), "budget")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
 def seed_fracture_then_fill() -> RuleList:
     """Seed 12: Fracture First → Essence Second → Fill (high-investment).
 
@@ -422,6 +440,7 @@ ALL_SEEDS = [
     seed_normal_essence_exalt_fill,
     seed_essence_desecrate_exalt,
     seed_desecrate_reveal,
+    seed_desecrate_necromancy,
     seed_chaos_whittling,
     seed_omen_targeted_exalts,
     seed_fracture_workflow,
