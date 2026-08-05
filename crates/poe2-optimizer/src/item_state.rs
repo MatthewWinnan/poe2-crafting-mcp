@@ -17,6 +17,7 @@ pub struct ItemState {
     pub cost_spent: f32,          // cumulative chaos cost
     pub step_count: u16,          // steps taken so far
     pub flags: u8,                // bit 0: desecrated, bit 1: divined, bit 2: has_essence_mod
+                                   // bits 4-5: desecrate_omen (0=none, 1=sinistral_necro, 2=dextral_necro, 3=echoes)
 }
 
 impl ItemState {
@@ -134,5 +135,15 @@ impl ItemState {
 
     pub fn has_fractured_mod(&self) -> bool {
         self.fractured_mask != 0
+    }
+
+    /// Store omen used at desecrate step (consumed at bone, affects reveal).
+    /// Encoded in bits 4-5: 0=none, 1=sinistral_necro, 2=dextral_necro, 3=echoes
+    pub fn set_desecrate_omen(&mut self, val: u8) {
+        self.flags = (self.flags & 0x0F) | (val << 4);
+    }
+
+    pub fn desecrate_omen(&self) -> u8 {
+        (self.flags >> 4) & 0x03
     }
 }

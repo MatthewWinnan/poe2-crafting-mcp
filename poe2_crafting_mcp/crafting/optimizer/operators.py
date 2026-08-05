@@ -68,7 +68,6 @@ _OMEN_COMPATIBLE_CURRENCIES = {
     Currency.DIVINE,
     Currency.VAAL,
     Currency.DESECRATE,
-    Currency.REVEAL,
 }
 
 # Predicates that can appear in random rules
@@ -77,8 +76,8 @@ _ALL_PREDICATES = list(Predicate)
 # Omens that can be paired with currencies
 _ALL_OMENS = list(Omen)
 
-# Omens specific to REVEAL (desecration) — other omens are wasted on reveal
-_REVEAL_OMENS = [
+# Omens consumed at bone application (DESECRATE) — affect later REVEAL
+_DESECRATE_OMENS = [
     Omen.ABYSSAL_ECHOES,
     Omen.SINISTRAL_NECROMANCY,
     Omen.DEXTRAL_NECROMANCY,
@@ -196,7 +195,7 @@ def random_action() -> Action:
 
     # 20% chance of adding an omen, but only if the currency supports it
     if random.random() < 0.2 and currency in _OMEN_COMPATIBLE_CURRENCIES:
-        omen = random.choice(_REVEAL_OMENS if currency == Currency.REVEAL else _ALL_OMENS)
+        omen = random.choice(_DESECRATE_OMENS if currency == Currency.DESECRATE else _ALL_OMENS)
     else:
         omen = Omen.NONE
 
@@ -261,12 +260,12 @@ def mutate_action(rulelist: RuleList, fitness: Fitness | None = None) -> RuleLis
         new_omen = old_rule.action.omen
         if new_currency not in _OMEN_COMPATIBLE_CURRENCIES:
             new_omen = Omen.NONE
-        elif new_currency == Currency.REVEAL and new_omen not in _REVEAL_OMENS:
+        elif new_currency == Currency.DESECRATE and new_omen not in _DESECRATE_OMENS:
             new_omen = Omen.NONE
         new_action = Action(new_currency, new_omen)
     else:
         currency = old_rule.action.currency
-        omen_pool = _REVEAL_OMENS if currency == Currency.REVEAL else _ALL_OMENS
+        omen_pool = _DESECRATE_OMENS if currency == Currency.DESECRATE else _ALL_OMENS
         # Only toggle/add omens on compatible currencies
         if currency not in _OMEN_COMPATIBLE_CURRENCIES:
             new_action = Action(currency, Omen.NONE)

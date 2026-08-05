@@ -293,12 +293,20 @@ pub fn apply_currency(
                 return;
             }
             item.set_desecrated(true);
+            // Store omen consumed at bone application (affects later reveal)
+            let stored = match omen {
+                SINISTRAL_NECROMANCY => 1,
+                DEXTRAL_NECROMANCY => 2,
+                ABYSSAL_ECHOES => 3,
+                _ => 0,
+            };
+            item.set_desecrate_omen(stored);
         }
 
         REVEAL => {
             // Well of Souls reveal: draw 3 options from the desecrated pool,
-            // player picks best. With Abyssal Echoes omen: two independent
-            // draws of 3 (reroll). P(hit) uses combinatorial formula.
+            // player picks best. Omens are consumed at bone (DESECRATE) step
+            // and stored in item state — read them here.
             //
             // Affix type determination (matches real game):
             //  - Necromancy omen forces prefix (sinistral) or suffix (dextral)
@@ -310,7 +318,10 @@ pub fn apply_currency(
             if !item.is_desecrated() {
                 return;
             }
+            // Read omen stored at desecrate step, then clear
+            let stored_omen = item.desecrate_omen();
             item.set_desecrated(false);
+            item.set_desecrate_omen(0);
             item.flags |= 0x08; // mark has_been_desecrated_ever
 
             // Determine affix type (prefix vs suffix) for the reveal
@@ -319,9 +330,9 @@ pub fn apply_currency(
             let prefix_open = item.prefix_count < max_p;
             let suffix_open = item.suffix_count < max_s;
 
-            let is_prefix = if omen == SINISTRAL_NECROMANCY {
+            let is_prefix = if stored_omen == 1 { // SINISTRAL_NECROMANCY
                 true  // force prefix
-            } else if omen == DEXTRAL_NECROMANCY {
+            } else if stored_omen == 2 { // DEXTRAL_NECROMANCY
                 false // force suffix
             } else if prefix_open && !suffix_open {
                 true  // only prefix slots available
@@ -381,7 +392,7 @@ pub fn apply_currency(
                     //                           = (pool-3) / pool
                     // So P(hit, 1 target, 3 draws) = 1 - (pool-3)/pool = 3/pool
                     let p_miss_single = (pool_size as f32 - 3.0) / pool_size as f32;
-                    let p_miss = if omen == ABYSSAL_ECHOES {
+                    let p_miss = if stored_omen == 3 { // ABYSSAL_ECHOES
                         p_miss_single * p_miss_single // two independent draws
                     } else {
                         p_miss_single
