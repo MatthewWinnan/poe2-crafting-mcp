@@ -411,14 +411,17 @@ OMENS: dict[str, dict[str, Any]] = {
     "sanctification":          {"applies_to": ["divine"], "sanctify": True},
     "recombination":           {"applies_to": ["recombinator"], "lucky": True},
     # ── Abyss omens (desecration system) ──────────────────────────────────────
+    # Consumed at bone application (desecrate step):
     "sinistral_necromancy":    {"applies_to": ["desecrate"], "gentype_only": 1},
     "dextral_necromancy":      {"applies_to": ["desecrate"], "gentype_only": 2},
-    "light":                   {"applies_to": ["annulment"], "desecrated_only": True},
-    "abyssal_echoes":          {"applies_to": ["desecrate"], "reroll_reveal": True},
     "putrefaction":            {"applies_to": ["desecrate"], "replace_all": True},
     "blackblooded":            {"applies_to": ["desecrate"], "lich_pool": "kurgal", "slots": ["weapon", "jewellery"]},
     "liege":                   {"applies_to": ["desecrate"], "lich_pool": "amanamu", "slots": ["weapon", "jewellery"]},
     "sovereign":               {"applies_to": ["desecrate"], "lich_pool": "ulaman", "slots": ["weapon", "jewellery"]},
+    # Consumed at reveal step (Well of Souls):
+    "abyssal_echoes":          {"applies_to": ["reveal"], "reroll_reveal": True},
+    # Consumed on annulment (targets only the abyss mod):
+    "light":                   {"applies_to": ["annulment"], "desecrated_only": True},
 }
 
 

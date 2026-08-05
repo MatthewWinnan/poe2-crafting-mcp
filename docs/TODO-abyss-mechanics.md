@@ -28,10 +28,15 @@ desecrate for guaranteed suffix".
 | Sovereign | Ulaman | Weapon or Jewellery |
 
 ### Other desecration omens (no slot restriction)
+Consumed at bone application (desecrate step):
 - **Sinistral Necromancy** — force prefix on reveal
 - **Dextral Necromancy** — force suffix on reveal
-- **Abyssal Echoes** — 6 options instead of 3 (reroll)
-- **Putrefaction** — replace all mods on reveal
+- **Putrefaction** — replace all mods + corrupt item
+
+Consumed at reveal step (Well of Souls):
+- **Abyssal Echoes** — reroll 3 fresh options once (3+3, not 6 picks)
+
+Consumed on annulment:
 - **Omen of Light** — annulment targets only the abyss mod
 
 ### Bone slot categories
@@ -52,7 +57,7 @@ desecrate for guaranteed suffix".
 | Necromancy omen forces affix | YES | NO |
 | Lich omens (weapon/jewellery only) | YES | NO |
 | Lich omen slot validation | YES | N/A |
-| Abyssal Echoes (6 draws vs 3) | YES | NO |
+| Abyssal Echoes (3+3 reroll) | YES | NO |
 | Pool size affects hit probability | YES | NO (hardcoded 20%) |
 | Omen of Light annuls abyss mod | YES | YES |
 | Pick-from-N without replacement | YES | NO (flat 20%) |
@@ -78,11 +83,16 @@ Replace hardcoded 20% with actual calculation:
 - For items with fewer desecrated mods, probability differs significantly
 
 ### 3. Omen of Abyssal Echoes support
-When omen == ABYSSAL_ECHOES on REVEAL:
-- Draws increase from 3 to 6
-- P(hit) = 1 - C(13,6)/C(14,6) ≈ 42.9% for Gloves_int
-- Doubles the effective hit rate, significant cost reduction
+Echoes is consumed at reveal (not bone application). It allows ONE reroll
+of 3 fresh options, replacing the first 3 (not 6 total picks).
+
+Correct probability model: P(hit) = 1 - P(miss)^2
+- P(miss single draw) = C(pool-1, 3) / C(pool, 3)
+- P(hit with echoes) = 1 - P(miss)^2
+- For Gloves_int (pool=14, target=1): 1 - (11/14 * 10/13 * 9/12)^2 ≈ 38.3%
+- (Previously modeled as 6-draw: 42.9% — was wrong)
 - Gene.py already has ABYSSAL_ECHOES = 9
+- Simulator already corrected to 3+3 model
 
 ### 4. Necromancy omen support (prefix/suffix forcing)
 - Omen of Sinistral Necromancy (gentype_only=1) → force prefix

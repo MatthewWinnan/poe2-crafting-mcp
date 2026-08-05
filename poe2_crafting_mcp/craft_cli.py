@@ -873,35 +873,54 @@ def cmd_sim(argv: list[str]) -> int:
         elif cmd == "omens":
             # Show omens applicable to a currency
             target_cur = parts[1] if len(parts) > 1 else ""
-            # Map bone names and "reveal" to "desecrate" for omen lookup
-            if target_cur in BONES or target_cur == "reveal":
+            # Map bone names to "desecrate" for omen lookup
+            if target_cur in BONES:
                 target_cur = "desecrate"
+            # For desecrate/reveal, show all abyss omens with timing info
+            is_abyss_query = target_cur in ("desecrate", "reveal")
+            lookup_keys = ["desecrate", "reveal"] if is_abyss_query else [target_cur]
             if not target_cur:
                 print(f"  {_BOLD}Usage: omens <currency>{_RESET}")
                 print(f"  {_DIM}Shows which omens apply to that currency.{_RESET}")
             else:
-                print(f"  {_BOLD}Omens for '{target_cur}':{_RESET}")
+                label = "desecrate/reveal" if is_abyss_query else target_cur
+                print(f"  {_BOLD}Omens for '{label}':{_RESET}")
                 found = False
                 for omen_name, omen_def in sorted(OMENS.items()):
-                    if target_cur in omen_def.get("applies_to", []):
-                        effect_parts = []
-                        if omen_def.get("gentype_only") == 1:
-                            effect_parts.append("prefix only")
-                        elif omen_def.get("gentype_only") == 2:
-                            effect_parts.append("suffix only")
-                        if omen_def.get("qty_override"):
-                            effect_parts.append(f"adds {omen_def['qty_override']} mods")
-                        if omen_def.get("homogenise"):
-                            effect_parts.append("shared tags only")
-                        if omen_def.get("del_gentype_only") == 1:
-                            effect_parts.append("removes prefix only")
-                        elif omen_def.get("del_gentype_only") == 2:
-                            effect_parts.append("removes suffix only")
-                        if omen_def.get("del_target"):
-                            effect_parts.append(f"removes {omen_def['del_target']}")
-                        effect = ", ".join(effect_parts) if effect_parts else "special"
-                        print(f"    {omen_name:30} {effect}")
-                        found = True
+                    if not any(k in omen_def.get("applies_to", []) for k in lookup_keys):
+                        continue
+                    effect_parts = []
+                    # Timing info for abyss omens
+                    if is_abyss_query:
+                        step = omen_def.get("applies_to", ["?"])[0]
+                        effect_parts.append(f"on {step}")
+                    if omen_def.get("gentype_only") == 1:
+                        effect_parts.append("prefix only")
+                    elif omen_def.get("gentype_only") == 2:
+                        effect_parts.append("suffix only")
+                    if omen_def.get("lich_pool"):
+                        effect_parts.append(f"faction={omen_def['lich_pool']}")
+                    if omen_def.get("slots"):
+                        effect_parts.append(f"{'|'.join(omen_def['slots'])} only")
+                    if omen_def.get("reroll_reveal"):
+                        effect_parts.append("reroll 3 options once")
+                    if omen_def.get("replace_all"):
+                        effect_parts.append("replace all mods + corrupt")
+                    if omen_def.get("desecrated_only"):
+                        effect_parts.append("targets abyss mod only")
+                    if omen_def.get("qty_override"):
+                        effect_parts.append(f"adds {omen_def['qty_override']} mods")
+                    if omen_def.get("homogenise"):
+                        effect_parts.append("shared tags only")
+                    if omen_def.get("del_gentype_only") == 1:
+                        effect_parts.append("removes prefix only")
+                    elif omen_def.get("del_gentype_only") == 2:
+                        effect_parts.append("removes suffix only")
+                    if omen_def.get("del_target"):
+                        effect_parts.append(f"removes {omen_def['del_target']}")
+                    effect = ", ".join(effect_parts) if effect_parts else "special"
+                    print(f"    {omen_name:30} {effect}")
+                    found = True
                 if not found:
                     print(f"    {_DIM}No omens apply to '{target_cur}'.{_RESET}")
 
@@ -1165,10 +1184,13 @@ def cmd_sim(argv: list[str]) -> int:
                 print(f"  {_RED}{err}{_RESET}")
                 continue
 
-            # Warn if lich omen incompatible with item slot
+            # Validate omens for desecrate step
             _item_slot = get_bone_slot_for_item_class(item_class)
             for _o in active_omens:
                 _odef = OMENS.get(_o, {})
+                if _odef.get("reroll_reveal"):
+                    print(f"  {_YELLOW}Warning: {_o} is applied at reveal (Well of Souls), not desecrate — "
+                          f"pass it to 'reveal --omens {_o}' instead{_RESET}")
                 if _odef.get("lich_pool"):
                     _allowed = _odef.get("slots", [])
                     if _allowed and _item_slot not in _allowed:
@@ -1201,10 +1223,14 @@ def cmd_sim(argv: list[str]) -> int:
             omens_str = _parse_flag(parts, "--omens") or _parse_flag(parts, "--omen")
             active_omens = omens_str.split(",") if omens_str else []
 
-            # Warn if lich omen incompatible (should have been applied at desecrate step)
+            # Validate omens for reveal step
             _item_slot = get_bone_slot_for_item_class(item_class)
             for _o in active_omens:
                 _odef = OMENS.get(_o, {})
+                # Warn if desecrate-step omens passed at reveal
+                if "desecrate" in _odef.get("applies_to", []):
+                    print(f"  {_YELLOW}Warning: {_o} is consumed at desecrate (bone application), not reveal — "
+                          f"pass it to 'desecrate <bone> --omens {_o}' instead{_RESET}")
                 if _odef.get("lich_pool"):
                     _allowed = _odef.get("slots", [])
                     if _allowed and _item_slot not in _allowed:
@@ -1224,37 +1250,48 @@ def cmd_sim(argv: list[str]) -> int:
                 continue
 
             echoes = "abyssal_echoes" in active_omens
-            n_draws = min(6 if echoes else 3, len(pool))
+            n_draws = min(3, len(pool))
             options = _random.sample(pool, n_draws)
 
             # Show options
-            print(f"\n  {_BOLD}Well of Souls — Revealed options ({affix_type}, pick 1-{n_draws}):{_RESET}")
+            print(f"\n  {_BOLD}Well of Souls — Revealed options ({affix_type}, pick 1-{n_draws}{' or R to reroll' if echoes else ''}):{_RESET}")
             for i, opt in enumerate(options, 1):
                 faction_tag = f" [{opt.faction}]" if opt.faction else ""
                 print(f"    [{i}] {opt.affix_type:6} | {opt.family:28} | {opt.stat_text}{faction_tag}")
 
             if echoes:
-                print(f"  {_DIM}(Abyssal Echoes: {n_draws} options shown){_RESET}")
+                print(f"  {_DIM}(Abyssal Echoes active — enter 'R' to reroll for 3 new options){_RESET}")
 
             # Track echoes omen cost
             for o in active_omens:
                 if o:
                     _track(o)
 
-            # Get player choice
+            # Get player choice (with optional Echoes reroll)
+            rerolled = False
             while True:
                 try:
-                    choice_str = input(f"  \x01{_CYAN}\x02Pick (1-{n_draws}):\x01{_RESET}\x02 ").strip()
+                    prompt_text = f"  \x01{_CYAN}\x02Pick (1-{n_draws}{'/R' if echoes and not rerolled else ''}):\x01{_RESET}\x02 "
+                    choice_str = input(prompt_text).strip()
                 except (EOFError, KeyboardInterrupt):
                     print()
                     break
+                if echoes and not rerolled and choice_str.upper() == "R":
+                    # Reroll: draw 3 fresh options (may include mods from first roll)
+                    rerolled = True
+                    options = _random.sample(pool, n_draws)
+                    print(f"\n  {_BOLD}Well of Souls — Rerolled options ({affix_type}, pick 1-{n_draws}):{_RESET}")
+                    for i, opt in enumerate(options, 1):
+                        faction_tag = f" [{opt.faction}]" if opt.faction else ""
+                        print(f"    [{i}] {opt.affix_type:6} | {opt.family:28} | {opt.stat_text}{faction_tag}")
+                    continue
                 try:
                     choice_idx = int(choice_str) - 1
                     if 0 <= choice_idx < n_draws:
                         break
                 except ValueError:
                     pass
-                print(f"  {_RED}Enter a number 1-{n_draws}{_RESET}")
+                print(f"  {_RED}Enter a number 1-{n_draws}{' or R to reroll' if echoes and not rerolled else ''}{_RESET}")
 
             chosen = options[choice_idx]
             mod = chosen.to_mod_instance(desecrated=True)
@@ -1566,7 +1603,9 @@ def _sim_help() -> None:
     essence <name>                   Apply essence by name (auto-resolves family/tier)
     essence <name> --omens x         With omen (e.g. sinistral_crystallisation)
     desecrate <bone>                 Apply bone (e.g. preserved_rib, ancient_jawbone)
-    desecrate <bone> --omens x       With omen (e.g. blackblooded, abyssal_echoes)
+    desecrate <bone> --omens x       With omen (e.g. blackblooded, sinistral_necromancy)
+    reveal                           Reveal at Well of Souls (after desecrate)
+    reveal --omens abyssal_echoes    Reveal with reroll option
 
   {_BOLD}Discovery Commands:{_RESET}
     currencies                       Show valid currencies for current item state
@@ -1588,8 +1627,9 @@ def _sim_help() -> None:
     > transmute
     > essence Greater Essence of the Body
     > exalted --omens dextral_exaltation,greater_exaltation
-    > desecrate preserved_rib --omens blackblooded
-    > omens exalted
+    > desecrate preserved_rib --omens sinistral_necromancy
+    > reveal --omens abyssal_echoes
+    > omens desecrate
     > essences Perfect
     > save my_craft.json
 """)

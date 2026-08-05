@@ -191,16 +191,22 @@ def desecration_hit_probability(
     pool_size: int,
     target_count: int = 1,
     draws: int = 3,
+    echoes: bool = False,
 ) -> float:
-    """Calculate P(at least one target mod appears in N draws without replacement).
+    """Calculate P(at least one target mod appears in reveal).
 
-    Since all desecrated mods have weight=1 (uniform distribution):
-    P(hit) = 1 - C(pool_size - target_count, draws) / C(pool_size, draws)
+    Single reveal: draws 3 without replacement from pool.
+    P(hit) = 1 - C(pool - targets, draws) / C(pool, draws)
+
+    With Echoes: two independent draws of 3 (reroll replaces first 3).
+    P(hit) = 1 - P(miss first 3) * P(miss second 3)
+    The reroll is independent — same mods can appear again.
 
     Args:
         pool_size: total eligible mods in pool
         target_count: how many mods in pool match the target family
-        draws: number of options revealed (3 normally, 6 with Echoes)
+        draws: options per reveal (always 3 in practice)
+        echoes: True if Abyssal Echoes active (reroll once)
 
     Returns probability [0.0, 1.0].
     """
@@ -216,8 +222,13 @@ def desecration_hit_probability(
     if non_targets < draws:
         return 1.0  # not enough non-targets to fill all draws → guaranteed hit
 
-    p_miss = comb(non_targets, draws) / comb(pool_size, draws)
-    return 1.0 - p_miss
+    p_miss_single = comb(non_targets, draws) / comb(pool_size, draws)
+
+    if echoes:
+        # Two independent draws: P(miss both) = P(miss)^2
+        return 1.0 - p_miss_single * p_miss_single
+
+    return 1.0 - p_miss_single
 
 
 # ── Desecration Engine ────────────────────────────────────────────────────────
@@ -507,26 +518,25 @@ class DesecrationEngine:
     ) -> RevealResult:
         """Simulate a reveal at the Well of Souls.
 
-        Draws 3 options (or 6 with Echoes). If target_family is specified,
-        auto-picks it on hit. On miss, picks "least damaging" option.
+        Draws 3 options. With Echoes, if the first 3 miss the target,
+        rerolls for 3 fresh options (independent draw, may include repeats).
 
         Args:
             pool: eligible desecration options
             target_family: family we're hoping to hit (empty = manual choice)
-            echoes: True if Omen of Abyssal Echoes active (6 draws)
+            echoes: True if Omen of Abyssal Echoes active (reroll once)
             future_targets: families we plan to target later (for miss heuristic)
 
         Returns RevealResult with options, chosen mod, and hit status.
         """
-        n_draws = 6 if echoes else 3
-        n_draws = min(n_draws, len(pool))
+        n_draws = min(3, len(pool))
 
         if n_draws == 0:
-            return RevealResult(options=[], chosen=None, hit_target=False, rerolled=echoes)
+            return RevealResult(options=[], chosen=None, hit_target=False, rerolled=False)
 
         options = random.sample(pool, n_draws)
 
-        # Check for hit
+        # Check for hit in first draw
         if target_family:
             hits = [o for o in options if o.family == target_family]
             if hits:
@@ -534,7 +544,19 @@ class DesecrationEngine:
                     options=options,
                     chosen=hits[0],
                     hit_target=True,
-                    rerolled=echoes,
+                    rerolled=False,
+                )
+
+        # Echoes: reroll 3 fresh options if first draw missed
+        if echoes and target_family:
+            options = random.sample(pool, n_draws)
+            hits = [o for o in options if o.family == target_family]
+            if hits:
+                return RevealResult(
+                    options=options,
+                    chosen=hits[0],
+                    hit_target=True,
+                    rerolled=True,
                 )
 
         # Miss case: pick least damaging option
@@ -614,14 +636,14 @@ class DesecrationEngine:
 
         pool_size = len(pool)
         target_count = len([m for m in pool if m.family == target_family])
-        draws = 6 if echoes else 3
 
-        prob = desecration_hit_probability(pool_size, target_count, draws)
+        prob = desecration_hit_probability(pool_size, target_count, draws=3, echoes=echoes)
 
         return {
             "pool_size": pool_size,
             "target_count": target_count,
-            "draws": draws,
+            "draws": 3,
+            "echoes": echoes,
             "probability": round(prob, 4),
             "expected_attempts": round(1.0 / prob, 2) if prob > 0 else float("inf"),
             "faction": faction or "all",
