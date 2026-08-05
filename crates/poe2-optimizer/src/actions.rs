@@ -251,32 +251,27 @@ pub fn apply_currency(
 
         ESSENCE_GREATER => {
             // Greater Essence: Magic → Rare, guaranteed mod at BEST tier from ESSENCE pool.
+            // Keeps existing Magic mods (1-2), adds 1 essence mod. No random fill.
+            // Result: 2-3 mods total (matches Python simulator behavior).
             if item.rarity != 1 || item.has_essence_mod() {
                 return;
             }
             item.rarity = 2;
             item.set_essence_mod(true);
             let rank = TierRank::Best;
-            // Try to place first missing target IF it's in the essence pool
             let placed = if let Some(fam) = find_first_missing_target(item, pool) {
                 add_essence_mod(item, fam, pool, rank)
             } else {
                 false
             };
-            // If target not in essence pool, place a random essence mod
             if !placed {
                 add_random_essence_mod(item, pool, &rank, rng);
-            }
-            // Fill remaining slots with random normal mods (4-6 total for Rare)
-            let n_fill = rng.gen_range(3u8..=5u8); // 1 essence + 3-5 random = 4-6 total
-            for _ in 0..n_fill {
-                if item.mod_count() >= 6 { break; }
-                add_random_mod(item, pool, 0, NO_OMEN, rng);
             }
         }
 
         ESSENCE_LESSER => {
             // Lesser Essence: Magic → Rare, guaranteed mod at WORST tier from ESSENCE pool.
+            // Keeps existing Magic mods, adds 1 essence mod. No random fill.
             if item.rarity != 1 || item.has_essence_mod() {
                 return;
             }
@@ -291,15 +286,11 @@ pub fn apply_currency(
             if !placed {
                 add_random_essence_mod(item, pool, &rank, rng);
             }
-            let n_fill = rng.gen_range(3u8..=5u8);
-            for _ in 0..n_fill {
-                if item.mod_count() >= 6 { break; }
-                add_random_mod(item, pool, 0, NO_OMEN, rng);
-            }
         }
 
         ESSENCE_NORMAL => {
             // Normal Essence: Magic → Rare, guaranteed mod at MID tier from ESSENCE pool.
+            // Keeps existing Magic mods, adds 1 essence mod. No random fill.
             if item.rarity != 1 || item.has_essence_mod() {
                 return;
             }
@@ -313,11 +304,6 @@ pub fn apply_currency(
             };
             if !placed {
                 add_random_essence_mod(item, pool, &rank, rng);
-            }
-            let n_fill = rng.gen_range(3u8..=5u8);
-            for _ in 0..n_fill {
-                if item.mod_count() >= 6 { break; }
-                add_random_mod(item, pool, 0, NO_OMEN, rng);
             }
         }
 
