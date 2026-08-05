@@ -1165,6 +1165,16 @@ def cmd_sim(argv: list[str]) -> int:
                 print(f"  {_RED}{err}{_RESET}")
                 continue
 
+            # Warn if lich omen incompatible with item slot
+            _item_slot = get_bone_slot_for_item_class(item_class)
+            for _o in active_omens:
+                _odef = OMENS.get(_o, {})
+                if _odef.get("lich_pool"):
+                    _allowed = _odef.get("slots", [])
+                    if _allowed and _item_slot not in _allowed:
+                        print(f"  {_YELLOW}Warning: Omen of {_o.replace('_', ' ').title()} only works on "
+                              f"weapon/jewellery — ignored for {_item_slot} item (consumed but no effect){_RESET}")
+
             # Apply bone (sets unrevealed state)
             try:
                 item, affix_type = desecration.apply_bone(item, bone, omens=active_omens)
@@ -1190,6 +1200,16 @@ def cmd_sim(argv: list[str]) -> int:
 
             omens_str = _parse_flag(parts, "--omens") or _parse_flag(parts, "--omen")
             active_omens = omens_str.split(",") if omens_str else []
+
+            # Warn if lich omen incompatible (should have been applied at desecrate step)
+            _item_slot = get_bone_slot_for_item_class(item_class)
+            for _o in active_omens:
+                _odef = OMENS.get(_o, {})
+                if _odef.get("lich_pool"):
+                    _allowed = _odef.get("slots", [])
+                    if _allowed and _item_slot not in _allowed:
+                        print(f"  {_YELLOW}Warning: Omen of {_o.replace('_', ' ').title()} only works on "
+                              f"weapon/jewellery — ignored for {_item_slot} item{_RESET}")
 
             affix_type = item.desecrated_affix_type
             # Use a generic bone for pool lookup (min_mod_level comes from bone quality used earlier)

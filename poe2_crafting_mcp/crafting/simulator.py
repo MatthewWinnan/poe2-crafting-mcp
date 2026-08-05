@@ -416,9 +416,9 @@ OMENS: dict[str, dict[str, Any]] = {
     "light":                   {"applies_to": ["annulment"], "desecrated_only": True},
     "abyssal_echoes":          {"applies_to": ["desecrate"], "reroll_reveal": True},
     "putrefaction":            {"applies_to": ["desecrate"], "replace_all": True},
-    "blackblooded":            {"applies_to": ["desecrate"], "lich_pool": "kurgal"},
-    "liege":                   {"applies_to": ["desecrate"], "lich_pool": "amanamu"},
-    "sovereign":               {"applies_to": ["desecrate"], "lich_pool": "ulaman"},
+    "blackblooded":            {"applies_to": ["desecrate"], "lich_pool": "kurgal", "slots": ["weapon", "jewellery"]},
+    "liege":                   {"applies_to": ["desecrate"], "lich_pool": "amanamu", "slots": ["weapon", "jewellery"]},
+    "sovereign":               {"applies_to": ["desecrate"], "lich_pool": "ulaman", "slots": ["weapon", "jewellery"]},
 }
 
 

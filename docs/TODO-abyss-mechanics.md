@@ -8,6 +8,39 @@ doesn't model affix type determination, omens, or pool sizes, so it can't
 discover or evaluate important real strategies like "fill prefixes then
 desecrate for guaranteed suffix".
 
+## How Desecration Actually Works (verified Aug 2025)
+
+### Flow
+1. **Apply bone** to a Rare item → adds a blank "desecrated" slot
+2. **Go to Well of Souls** → blank mod resolves into 3 options (pick 1)
+3. **Player chooses** one of the 3 revealed options
+
+### Lich omens (Blackblooded, Liege, Sovereign)
+- **Consumed at bone application** (desecrate step), not at reveal
+- **Affect what appears at reveal** — restrict the 3 options to one faction
+- **Weapon or Jewellery ONLY** — do not work on armour, jewels, or waystones
+- Consumed even if no faction mods can roll (wrong ilvl, blocked group, etc.)
+
+| Omen | Faction | Slot Restriction |
+|------|---------|-----------------|
+| Blackblooded | Kurgal | Weapon or Jewellery |
+| Liege | Amanamu | Weapon or Jewellery |
+| Sovereign | Ulaman | Weapon or Jewellery |
+
+### Other desecration omens (no slot restriction)
+- **Sinistral Necromancy** — force prefix on reveal
+- **Dextral Necromancy** — force suffix on reveal
+- **Abyssal Echoes** — 6 options instead of 3 (reroll)
+- **Putrefaction** — replace all mods on reveal
+- **Omen of Light** — annulment targets only the abyss mod
+
+### Bone slot categories
+- **Jawbone** → weapons + quivers
+- **Rib** → armour (body, gloves, boots, helmets, shields)
+- **Collarbone** → jewellery (rings, amulets, belts)
+- **Cranium** → jewels
+- **Vertebrae** → waystones
+
 ## What the simulator models (desecration.py) vs what Rust models
 
 | Mechanic | Simulator | Rust Optimizer |
@@ -17,7 +50,8 @@ desecrate for guaranteed suffix".
 | Reveal requires desecrated state | YES | YES |
 | Affix type from open slots | YES | NO (always suffix) |
 | Necromancy omen forces affix | YES | NO |
-| Lich omens narrow pool to faction | YES | NO |
+| Lich omens (weapon/jewellery only) | YES | NO |
+| Lich omen slot validation | YES | N/A |
 | Abyssal Echoes (6 draws vs 3) | YES | NO |
 | Pool size affects hit probability | YES | NO (hardcoded 20%) |
 | Omen of Light annuls abyss mod | YES | YES |
@@ -56,17 +90,21 @@ When omen == ABYSSAL_ECHOES on REVEAL:
 - Already defined in simulator OMENS dict
 - Useful when you can't or don't want to fill all prefix slots first
 
-### 5. Lich omen support (faction pool narrowing)
+### 5. Lich omen support (faction pool narrowing) — WEAPON/JEWELLERY ONLY
 - Omen of Blackblooded → only Kurgal faction mods in reveal
 - Omen of Liege → only Amanamu faction mods
 - Omen of Sovereign → only Ulaman faction mods
+- **Only applies to weapons and jewellery** — skip for armour targets
+- Consumed at bone step, affects the 3 reveal options
 - Much smaller pool = much higher hit rate for faction-specific mods
 - Need faction tags in the desecrated pool data passed to Rust
+- Optimizer should never suggest lich omens for armour item targets
 
 ### 6. Desecrated pool data in Rust
 To support tasks 2-5, need to pass desecrated pool metadata to Rust:
 - Pool size per affix type (prefix count, suffix count)
 - Faction breakdown (how many mods per faction)
+- Item slot category (weapon/jewellery/armour) for lich omen validation
 - Could add to ModPool struct or as separate arrays in batch.rs
 
 ## Files to modify
@@ -80,3 +118,4 @@ To support tasks 2-5, need to pass desecrated pool metadata to Rust:
 - Simulator implementation: `poe2_crafting_mcp/crafting/desecration.py`
 - Desecration probability: `desecration_hit_probability()` uses combinatorial formula
 - Craft CLI already handles full desecration flow with omens
+- Lich omen slot restriction: weapon/jewellery only (poe2wiki, poe2db confirmed)

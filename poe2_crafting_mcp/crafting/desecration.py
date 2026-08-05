@@ -375,12 +375,17 @@ class DesecrationEngine:
         if hasattr(item, 'abyss_mark_min_level') and item.abyss_mark_min_level > min_mod_level:
             min_mod_level = item.abyss_mark_min_level
 
-        # Check for lich omen → faction filter (only applies to desecrated-exclusive mods)
+        # Check for lich omen → faction filter (weapon/jewellery only)
         faction = ""
+        item_slot = get_bone_slot_for_item_class(item_class)
         if omens:
             for omen_key in omens:
                 omen_def = OMENS.get(omen_key, {})
                 if omen_def.get("lich_pool"):
+                    allowed_slots = omen_def.get("slots", [])
+                    if allowed_slots and item_slot not in allowed_slots:
+                        # Lich omen incompatible with this item slot — ignored
+                        continue
                     faction = omen_def["lich_pool"]
 
         # Family blocking: exclude families already on item
@@ -587,10 +592,14 @@ class DesecrationEngine:
         min_mod_level = bone_def.get("min_mod_level", 0)
 
         faction = ""
+        item_slot = get_bone_slot_for_item_class(item_class)
         if omens:
             for omen_key in omens:
                 omen_def = OMENS.get(omen_key, {})
                 if omen_def.get("lich_pool"):
+                    allowed_slots = omen_def.get("slots", [])
+                    if allowed_slots and item_slot not in allowed_slots:
+                        continue
                     faction = omen_def["lich_pool"]
 
         pool = get_desecration_pool(
