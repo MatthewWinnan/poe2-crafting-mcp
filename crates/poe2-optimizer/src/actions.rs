@@ -256,8 +256,22 @@ pub fn apply_currency(
             }
             item.rarity = 2;
             item.set_essence_mod(true);
-            if let Some(fam) = find_first_missing_target(item, pool) {
-                add_essence_mod(item, fam, pool, TierRank::Best);
+            let rank = TierRank::Best;
+            // Try to place first missing target IF it's in the essence pool
+            let placed = if let Some(fam) = find_first_missing_target(item, pool) {
+                add_essence_mod(item, fam, pool, rank)
+            } else {
+                false
+            };
+            // If target not in essence pool, place a random essence mod
+            if !placed {
+                add_random_essence_mod(item, pool, &rank, rng);
+            }
+            // Fill remaining slots with random normal mods (4-6 total for Rare)
+            let n_fill = rng.gen_range(3u8..=5u8); // 1 essence + 3-5 random = 4-6 total
+            for _ in 0..n_fill {
+                if item.mod_count() >= 6 { break; }
+                add_random_mod(item, pool, 0, NO_OMEN, rng);
             }
         }
 
@@ -268,8 +282,19 @@ pub fn apply_currency(
             }
             item.rarity = 2;
             item.set_essence_mod(true);
-            if let Some(fam) = find_first_missing_target(item, pool) {
-                add_essence_mod(item, fam, pool, TierRank::Worst);
+            let rank = TierRank::Worst;
+            let placed = if let Some(fam) = find_first_missing_target(item, pool) {
+                add_essence_mod(item, fam, pool, rank)
+            } else {
+                false
+            };
+            if !placed {
+                add_random_essence_mod(item, pool, &rank, rng);
+            }
+            let n_fill = rng.gen_range(3u8..=5u8);
+            for _ in 0..n_fill {
+                if item.mod_count() >= 6 { break; }
+                add_random_mod(item, pool, 0, NO_OMEN, rng);
             }
         }
 
@@ -280,8 +305,19 @@ pub fn apply_currency(
             }
             item.rarity = 2;
             item.set_essence_mod(true);
-            if let Some(fam) = find_first_missing_target(item, pool) {
-                add_essence_mod(item, fam, pool, TierRank::Mid);
+            let rank = TierRank::Mid;
+            let placed = if let Some(fam) = find_first_missing_target(item, pool) {
+                add_essence_mod(item, fam, pool, rank)
+            } else {
+                false
+            };
+            if !placed {
+                add_random_essence_mod(item, pool, &rank, rng);
+            }
+            let n_fill = rng.gen_range(3u8..=5u8);
+            for _ in 0..n_fill {
+                if item.mod_count() >= 6 { break; }
+                add_random_mod(item, pool, 0, NO_OMEN, rng);
             }
         }
 
@@ -598,6 +634,7 @@ fn find_first_missing_target(item: &ItemState, pool: &ModPool) -> Option<u16> {
 }
 
 /// Which tier rank to place for essence variants.
+#[derive(Clone, Copy)]
 enum TierRank {
     Best,   // Greater Essence: lowest tier number = highest power
     Mid,    // Normal Essence: median tier
@@ -605,37 +642,28 @@ enum TierRank {
 }
 
 /// Place a mod from the specified family using the ESSENCE pool's tier data.
-/// Falls back to normal pool if the family isn't in the essence pool.
-fn add_essence_mod(item: &mut ItemState, family: u16, pool: &ModPool, rank: TierRank) {
-    // Check if family exists in essence pool or normal pool
+/// Only places the mod if the family exists in the essence pool.
+/// Returns true if the mod was placed, false if the family isn't in the essence pool.
+fn add_essence_mod(item: &mut ItemState, family: u16, pool: &ModPool, rank: TierRank) -> bool {
+    // Family MUST exist in the essence pool — no fallback to normal pool
     let in_ess_prefix = pool.essence_prefix_families.contains(&family);
     let in_ess_suffix = pool.essence_suffix_families.contains(&family);
-    let in_norm_prefix = pool.prefix_families.contains(&family);
-    let in_norm_suffix = pool.suffix_families.contains(&family);
 
-    if !in_ess_prefix && !in_ess_suffix && !in_norm_prefix && !in_norm_suffix {
-        return; // Family not in any pool (e.g. desecrated-only mod)
+    if !in_ess_prefix && !in_ess_suffix {
+        return false; // Family not in essence pool
     }
 
     // Determine prefix vs suffix
-    let place_as_prefix = if in_ess_prefix || in_norm_prefix {
-        pool.target_prefix_families.contains(&family)
+    let place_as_prefix = if in_ess_prefix {
+        pool.target_prefix_families.contains(&family) || !in_ess_suffix
     } else {
-        false // only in suffix pools
+        false // only in suffix essence pool
     };
 
     let tier = if place_as_prefix {
-        if in_ess_prefix {
-            tier_by_rank(family, &pool.essence_prefix_families, &pool.essence_prefix_tiers, &rank)
-        } else {
-            tier_by_rank(family, &pool.prefix_families, &pool.prefix_tiers, &rank)
-        }
+        tier_by_rank(family, &pool.essence_prefix_families, &pool.essence_prefix_tiers, &rank)
     } else {
-        if in_ess_suffix {
-            tier_by_rank(family, &pool.essence_suffix_families, &pool.essence_suffix_tiers, &rank)
-        } else {
-            tier_by_rank(family, &pool.suffix_families, &pool.suffix_tiers, &rank)
-        }
+        tier_by_rank(family, &pool.essence_suffix_families, &pool.essence_suffix_tiers, &rank)
     };
 
     if place_as_prefix && item.prefix_count < pool.max_prefixes {
@@ -643,9 +671,50 @@ fn add_essence_mod(item: &mut ItemState, family: u16, pool: &ModPool, rank: Tier
         item.prefix_families[idx] = family;
         item.prefix_tiers[idx] = tier;
         item.prefix_count += 1;
+        true
     } else if !place_as_prefix && item.suffix_count < pool.max_suffixes {
         let idx = item.suffix_count as usize;
         item.suffix_families[idx] = family;
+        item.suffix_tiers[idx] = tier;
+        item.suffix_count += 1;
+        true
+    } else {
+        false
+    }
+}
+
+/// Place a random mod from the essence pool (when target isn't in essence pool).
+/// Used as the guaranteed essence mod — picks a random essence family.
+fn add_random_essence_mod(item: &mut ItemState, pool: &ModPool, rank: &TierRank, rng: &mut impl Rng) {
+    // Collect unique essence families
+    let mut ess_fams: Vec<(u16, bool)> = Vec::new(); // (family, is_prefix)
+    for &f in &pool.essence_prefix_families {
+        if f != 0 && !item.has_family(f) && !ess_fams.iter().any(|(ef, _)| *ef == f) {
+            ess_fams.push((f, true));
+        }
+    }
+    for &f in &pool.essence_suffix_families {
+        if f != 0 && !item.has_family(f) && !ess_fams.iter().any(|(ef, _)| *ef == f) {
+            ess_fams.push((f, false));
+        }
+    }
+    if ess_fams.is_empty() {
+        return;
+    }
+    let (fam, is_prefix) = ess_fams[rng.gen_range(0..ess_fams.len())];
+    let tier = if is_prefix {
+        tier_by_rank(fam, &pool.essence_prefix_families, &pool.essence_prefix_tiers, rank)
+    } else {
+        tier_by_rank(fam, &pool.essence_suffix_families, &pool.essence_suffix_tiers, rank)
+    };
+    if is_prefix && item.prefix_count < pool.max_prefixes {
+        let idx = item.prefix_count as usize;
+        item.prefix_families[idx] = fam;
+        item.prefix_tiers[idx] = tier;
+        item.prefix_count += 1;
+    } else if !is_prefix && item.suffix_count < pool.max_suffixes {
+        let idx = item.suffix_count as usize;
+        item.suffix_families[idx] = fam;
         item.suffix_tiers[idx] = tier;
         item.suffix_count += 1;
     }
