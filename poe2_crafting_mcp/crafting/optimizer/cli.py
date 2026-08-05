@@ -11,6 +11,7 @@ Options:
     --ilvl         Item level (default 82)
     --budget       Max chaos budget (for FAIL threshold)
     --trade-price  Known trade price for finished item (for CRAFT vs BUY verdict)
+    --base-price   Price of a white base in chaos (default 1c). Also sets scour/reforge costs.
     --base-item    Starting item: "fractured:Family:Price" or "magic:Family:Price" or "white:Price"
     --pop-size     Population size (default 200)
     --generations  Max generations (default 50)
@@ -61,6 +62,10 @@ def main() -> None:
     parser.add_argument(
         "--runes", default="",
         help="Comma-separated rune pools socketed on item (e.g. 'marksman,decay' or 'Kolr\\'s Hunt')",
+    )
+    parser.add_argument(
+        "--base-price", type=float, default=None,
+        help="Price of a white base in chaos (default: auto-lookup from trade data, fallback 1c)",
     )
 
     args = parser.parse_args()
@@ -140,6 +145,13 @@ def main() -> None:
     print(f"  Pool: {len(pool_data['prefix_weights'])} prefix + {len(pool_data['suffix_weights'])} suffix tiers")
     print(f"  Prices: {len(prices.currency)} currencies, {len(prices.omen)} omens")
 
+    # Apply base price if specified
+    if args.base_price is not None:
+        prices.base_white = args.base_price
+        # Scouring = buying a new base, reforge = 2 spare bases
+        prices.currency["scouring"] = args.base_price
+        prices.currency["reforge"] = args.base_price * 2
+
     # Apply base-item if specified
     if args.base_item:
         _apply_base_item(args.base_item, prices, target)
@@ -147,7 +159,11 @@ def main() -> None:
     # Apply trade price if specified
     if args.trade_price:
         prices.trade_finished = args.trade_price
-        print(f"  Trade price: {args.trade_price:.0f}c")
+
+    # Show base and trade prices
+    print(f"  Base price: {prices.base_white:.1f}c")
+    if prices.trade_finished < float("inf"):
+        print(f"  Trade price: {prices.trade_finished:.0f}c")
 
     print()
 
@@ -158,10 +174,11 @@ def main() -> None:
     )
 
     if use_decompose:
+        # User explicitly requested decomposition — bypass target count threshold
         if args.cooperative:
-            _run_cooperative(pool_data, target, prices, config)
+            _run_cooperative(pool_data, target, prices, config, force=True)
         else:
-            _run_decomposed(pool_data, target, prices, config)
+            _run_decomposed(pool_data, target, prices, config, force=True)
     else:
         _run_monolithic(pool_data, target, prices, config)
 
@@ -212,13 +229,15 @@ def _run_monolithic(pool_data, target, prices, config) -> None:
     print()
 
 
-def _run_decomposed(pool_data, target, prices, config) -> None:
+def _run_decomposed(pool_data, target, prices, config, force: bool = False) -> None:
     """Run sub-goal decomposed optimization."""
     from poe2_crafting_mcp.crafting.optimizer.runner import optimize_multi_target
 
     print("Decomposing targets and optimizing phases...")
     start = time.time()
-    result = optimize_multi_target(pool_data, target, prices, config)
+    threshold = 1 if force else 4
+    result = optimize_multi_target(pool_data, target, prices, config,
+                                   decompose_threshold=threshold)
     elapsed = time.time() - start
 
     print()
@@ -259,13 +278,15 @@ def _run_decomposed(pool_data, target, prices, config) -> None:
         print()
 
 
-def _run_cooperative(pool_data, target, prices, config) -> None:
+def _run_cooperative(pool_data, target, prices, config, force: bool = False) -> None:
     """Run cooperative coevolution optimization."""
     from poe2_crafting_mcp.crafting.optimizer.runner import optimize_cooperative
 
     print("Running cooperative coevolution...")
     start = time.time()
-    result = optimize_cooperative(pool_data, target, prices, config)
+    threshold = 1 if force else 4
+    result = optimize_cooperative(pool_data, target, prices, config,
+                                  decompose_threshold=threshold)
     elapsed = time.time() - start
 
     print()

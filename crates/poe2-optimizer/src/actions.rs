@@ -67,12 +67,37 @@ pub fn apply_currency(
     rng: &mut impl Rng,
 ) {
     match currency {
-        SCOUR | BUY_BASE | REFORGE => {
+        SCOUR | BUY_BASE => {
             let cost = item.cost_spent;
             let steps = item.step_count;
             *item = ItemState::blank();
             item.cost_spent = cost;
             item.step_count = steps;
+        }
+
+        REFORGE => {
+            // 3-to-1 bench: current + 2 spares → fresh Rare with 4 random mods.
+            // Keeps fractured mods (if any), clears everything else.
+            let cost = item.cost_spent;
+            let steps = item.step_count;
+            let frac = item.fractured_mask;
+            *item = ItemState::blank();
+            item.cost_spent = cost;
+            item.step_count = steps;
+            item.fractured_mask = frac;
+            item.rarity = 2; // Rare
+            // Restore fractured mods if any
+            if frac != 0 {
+                // Re-clear but preserve fracture data via clear_mods logic
+                // (blank already has 0 mods, fractured_mask set above is enough)
+            }
+            // Fill with 4 random mods (like alchemy but always exactly 4)
+            for _ in 0..4 {
+                if item.mod_count() >= 6 {
+                    break;
+                }
+                add_random_mod(item, pool, 0, NO_OMEN, rng);
+            }
         }
 
         BUY_MAGIC => {

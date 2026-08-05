@@ -292,7 +292,6 @@ def preflight(
         "augment": 0.01,
         "alchemy": 0.02,
         "regal": 0.02,
-        "scouring": 0.5,
         "greater_transmute": 0.5,
         "greater_augment": 0.5,
         "greater_regal": 0.5,
@@ -307,35 +306,23 @@ def preflight(
         "normal_essence": 0.5,
         "greater_essence": 1.0,
         "perfect_essence": 10.0,
-        # Reforge (3-to-1 recycling ~ 0.5c in materials)
-        "reforge": 0.5,
     }
     for name, default_price in _DEFAULTS.items():
         if name not in currency_prices:
             currency_prices[name] = default_price
 
-    # ── Phase 5: Base item prices (from cache, no trade API calls) ──
-    # Try to find the base item price from ninja
-    base_white = 1.0  # default: white bases are nearly free
+    # ── Phase 5: Base item prices ──
+    # Default: white bases cost ~1c. High ilvl or niche bases may cost more.
+    # CLI can override with --base-price. No trade API data for bases yet.
+    base_white = 1.0
     base_magic_with: dict[str, float] = {}
     base_fractured_with: dict[str, float] = {}
     trade_finished = float("inf")
 
-    # Look for base type prices in the "bases" category
-    # The item_class is like "Gloves_int" — we need the base name
-    base_rows = pdb.get_bulk_prices("bases", league)
-    for row in base_rows:
-        if row.get("chaos_value") and row["chaos_value"] > 0:
-            # Simple heuristic: if the base name contains our item class keywords
-            name_lower = row["name"].lower()
-            # TODO: proper base name resolution from item_class
-            if row["chaos_value"] < base_white * 10:
-                base_white = max(base_white, 1.0)
-
-    # Estimate trade price for finished item (rough: check uniques category for similar)
-    # This is a placeholder — real implementation would use trade API search
-    # For now, leave at infinity (verdict will always be CRAFT until we fetch trade data)
-    # The CLI/MCP layer can provide trade_finished from a live search
+    # Scouring = buying a new white base (no Orb of Scouring in PoE2)
+    currency_prices["scouring"] = base_white
+    # Reforge = 2 spare bases consumed
+    currency_prices["reforge"] = base_white * 2
 
     prices = PriceCache(
         currency=currency_prices,

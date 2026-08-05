@@ -68,8 +68,9 @@ pool size when calculating probabilities.
 | Corruption | ✅ | ❌ | Remove "nothing" Vaal outcome |
 | Sanctification | ✅ | ❌ | Remove negative Vaal outcomes |
 | Light | ✅ | ✅ | Annul targets desecrated mod only |
-| Catalysing Exaltation | ✅ | ❌ | Bias exalt toward catalyst tag |
-| Homogenising Exaltation | ✅ | ❌ | Exalt matching type cluster |
+| Catalysing Exaltation | ✅ (flag only) | ❌ | Weight multiplier toward catalyst tag |
+| Homogenising Exaltation | ✅ (REMOVE) | ❌ | **REMOVED in 0.4.0** — delete from sim |
+| Homogenising Coronation | ✅ (REMOVE) | ❌ | **REMOVED in 0.4.0** — delete from sim |
 
 ### Item State: Craft Sim vs Optimizer
 
@@ -117,17 +118,23 @@ Omens consumed at DESECRATE (bone step), stored in item state bits 4-5, read
 at REVEAL. GP discovers omen-enhanced strategies (e.g. `desecrate + dextral_necromancy`).
 Simulator blocks multiple abyss mods per item.
 
-### P6: Lich Omens (Blackblooded/Liege/Sovereign)
+### P6: Catalysing Exaltation + Tag System
+Catalysing Exaltation (still obtainable): weight multiplier (5x at 20% quality)
+toward catalyst-tagged mods. Requires tag bitmasks in Rust ModPool, catalyst state
+in ItemState. Jewellery only. Homogenising omens were REMOVED in patch 0.4.0 — need
+cleanup from simulator + scraper blacklist. See `docs/design/module-type-clusters.md`.
+
+### P7: Lich Omens (Blackblooded/Liege/Sovereign)
 Faction pool narrowing for weapons/jewellery only. Need faction tags in
 desecrated pool data passed to Rust. Low priority — niche use case.
 
-### P7: Alloy & Perfect Essence (Swap Currencies)
+### P8: Alloy & Perfect Essence (Swap Currencies)
 Swap on Rare: remove 1 mod, add 1 guaranteed. Alloys (13) and Perfect Essences (19)
 share the `essence_swap` mechanic but have different mod pools. Currently lumped
 together under `perfect_essence`. Need separate pools, optimizer actions, price
 resolution, and GP seeds. Crystallisation omens (sinistral/dextral) apply to both.
 See `docs/design/module-alloy-support.md`.
 
-### P8: Catalysing Exaltation
+### P9: Catalysing Exaltation
 Bias exalt toward a specific mod tag family. Used on rings/amulets to improve
 odds of hitting resistance or attribute mods. Significant probability improvement.
