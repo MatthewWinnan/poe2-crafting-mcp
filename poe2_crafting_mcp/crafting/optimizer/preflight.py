@@ -357,6 +357,114 @@ def preflight(
     return pool_data, prices, target
 
 
+# ── Display Info Lookup ──────────────────────────────────────────────────────
+
+def lookup_display_info(
+    item_class: str,
+    target_mods: list[tuple[str, str, int]],
+    db_path: str | None = None,
+) -> dict:
+    """Look up human-readable names for CLI display.
+
+    Returns dict with:
+        item_class_name: e.g. "Energy Shield Gloves" (from item_bases)
+        example_base: e.g. "Stitched Gloves" (a representative base)
+        mod_descriptions: {family: stat_text} e.g. {"ArcaneSurgeOnCrit": "(10-15)% chance to ..."}
+    """
+    import os
+    import sqlite3
+
+    db_path = db_path or os.environ.get("POE2_CRAFT_DB", "data/poe2_craft.db")
+    if not os.path.exists(db_path):
+        return {"item_class_name": item_class, "example_base": "", "mod_descriptions": {}}
+
+    result: dict = {"item_class_name": item_class, "example_base": "", "mod_descriptions": {}}
+
+    try:
+        conn = sqlite3.connect(db_path)
+
+        # Resolve item_class → slot + sub_type from item_bases
+        # item_class like "Gloves_int" → tags contain "int_armour", slot = "Gloves"
+        # item_class like "Amulets" → slot = "Amulet"
+        attr_map = {"int": "int_armour", "str": "str_armour", "dex": "dex_armour",
+                     "str_int": "str_int_armour", "str_dex": "str_dex_armour",
+                     "dex_int": "dex_int_armour", "str_dex_int": "str_dex_int_armour"}
+
+        # Split into base slot + optional attribute suffix
+        # "Body_Armours_str_int" → base="Body_Armours", attr="str_int"
+        # "Gloves_int" → base="Gloves", attr="int"
+        # "Amulets" → base="Amulets", attr=""
+        # "One_Hand_Swords" → base="One_Hand_Swords", attr=""
+        attr_tag = ""
+        base_slot = item_class
+        for suffix, tag in sorted(attr_map.items(), key=lambda x: -len(x[0])):
+            if item_class.endswith(f"_{suffix}"):
+                base_slot = item_class[:-(len(suffix) + 1)]
+                attr_tag = tag
+                break
+
+        # Map item_class base to DB slot name
+        _SLOT_MAP = {
+            "Gloves": "Gloves", "Boots": "Boots", "Helmets": "Helmet",
+            "Body_Armours": "Body Armour", "Shields": "Shield", "Bucklers": "Shield",
+            "Amulets": "Amulet", "Rings": "Ring", "Belts": "Belt",
+            "Bows": "Bow", "Crossbows": "Crossbow", "Wands": "Wand",
+            "Sceptres": "Sceptre", "Staves": "Staff", "Foci": "Focus",
+            "Claws": "Claw", "Daggers": "Dagger", "Spears": "Spear",
+            "Flails": "Flail", "Quarterstaves": "Staff", "Quivers": "Quiver",
+            "One_Hand_Swords": "One Hand Sword", "One_Hand_Axes": "One Hand Axe",
+            "One_Hand_Maces": "One Hand Mace", "Two_Hand_Swords": "Two Hand Sword",
+            "Two_Hand_Axes": "Two Hand Axe", "Two_Hand_Maces": "Two Hand Mace",
+            "Traps": "Trap", "Talismans": "Talisman",
+            "Ruby": "Jewel", "Sapphire": "Jewel", "Diamond": "Jewel",
+            "Emerald": "Jewel", "Time-Lost_Ruby": "Jewel",
+            "Time-Lost_Sapphire": "Jewel", "Time-Lost_Diamond": "Jewel",
+            "Time-Lost_Emerald": "Jewel",
+        }
+        db_slot = _SLOT_MAP.get(base_slot, base_slot)
+
+        if db_slot == "Jewel":
+            # Jewel item_classes ARE the jewel type (Ruby, Sapphire, Diamond, etc.)
+            result["item_class_name"] = base_slot.replace("_", " ") + " Jewel"
+            row = None
+        elif attr_tag:
+            # Use quoted JSON match to avoid "dex_armour" matching "str_dex_armour"
+            row = conn.execute(
+                "SELECT name, slot, sub_type FROM item_bases "
+                'WHERE slot = ? AND tags LIKE ? AND tags NOT LIKE \'%runeforged%\' '
+                "ORDER BY req_level DESC LIMIT 1",
+                (db_slot, f'%"{attr_tag}"%'),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT name, slot, sub_type FROM item_bases "
+                "WHERE slot = ? AND tags NOT LIKE '%runeforged%' "
+                "ORDER BY req_level DESC LIMIT 1",
+                (db_slot,),
+            ).fetchone()
+
+        if row:
+            result["example_base"] = row[0]
+            sub = row[2] or ""
+            result["item_class_name"] = f"{sub} {row[1]}" if sub else row[1]
+
+        # Look up stat_text for each target mod
+        for family, affix_type, _tier in target_mods:
+            row = conn.execute(
+                "SELECT stat_text FROM mod_weights "
+                "WHERE mod_family = ? AND item_class = ? AND affix_type = ? LIMIT 1",
+                (family, item_class, affix_type),
+            ).fetchone()
+            if row and row[0]:
+                result["mod_descriptions"][family] = row[0]
+
+        conn.close()
+    except Exception:
+        pass
+
+    return result
+
+
 # ── Essence Price Resolution ─────────────────────────────────────────────────
 
 # Map item_class slug → item slot category for essence DB lookups

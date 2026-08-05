@@ -78,7 +78,7 @@ def main() -> None:
         args.trials = 200
 
     # Import optimizer (deferred to avoid slow imports on --help)
-    from poe2_crafting_mcp.crafting.optimizer.preflight import preflight
+    from poe2_crafting_mcp.crafting.optimizer.preflight import preflight, lookup_display_info
     from poe2_crafting_mcp.crafting.optimizer.runner import (
         optimize, optimize_multi_target, optimize_cooperative, OptimizerConfig,
     )
@@ -105,10 +105,20 @@ def main() -> None:
     elif use_decompose is None:
         use_decompose = len(target_mods) >= 4
 
+    # Look up human-readable names
+    display = lookup_display_info(args.item_class, target_mods)
+    item_label = display["item_class_name"]
+    if display["example_base"]:
+        item_label += f" (e.g. {display['example_base']})"
+
     print(f"PoE2 Crafting Optimizer")
     print(f"{'─' * 50}")
-    print(f"  Item:    {args.item_class} (ilvl {args.ilvl})")
-    print(f"  Targets: {', '.join(f'T{t} {f} ({a})' for f, a, t in target_mods)}")
+    print(f"  Item:    {item_label}  ilvl {args.ilvl}")
+    print(f"  Targets:")
+    for family, affix, tier in target_mods:
+        desc = display["mod_descriptions"].get(family, "")
+        desc_str = f"  — {desc}" if desc else ""
+        print(f"    T{tier} {family} ({affix}){desc_str}")
     print(f"  Engine:  {'Rust (fast)' if is_rust_available() else 'Python stub (slow)'}")
     print(f"  Config:  pop={args.pop_size} gen={args.generations} trials={args.trials}")
     if use_decompose:
