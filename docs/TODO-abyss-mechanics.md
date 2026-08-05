@@ -60,7 +60,9 @@ Consumed on annulment:
 | Abyssal Echoes (3+3 reroll) | YES | YES |
 | Pool size affects hit probability | YES | YES |
 | Omen of Light annuls abyss mod | YES | YES |
-| Pick-from-N without replacement | YES | NO (flat 20%) |
+| Pick-from-N without replacement | YES | YES (P=3/pool_size) |
+| Omen stored at bone, read at reveal | YES | YES (item flags bits 4-5) |
+| Block multiple abyss mods per item | YES | N/A (Rust doesn't track) |
 
 ## Tasks (priority order)
 
@@ -78,14 +80,16 @@ Desecrated pool sizes passed from preflight → bridge → batch → Rust ModPoo
 For Gloves_int suffixes: 14 families → P = 3/14 = 21.4%.
 
 ### 3. ~~Omen of Abyssal Echoes support~~ DONE
-Echoes on REVEAL uses 3+3 model: P(hit) = 1 - ((pool-3)/pool)^2.
-Rust checks omen == ABYSSAL_ECHOES and squares the miss probability.
-For Gloves_int: 38.3% (vs 21.4% without).
+Echoes uses 3+3 model: P(hit) = 1 - ((pool-3)/pool)^2.
+Omen consumed at DESECRATE (bone step), stored in item state bits 4-5 (value=3),
+read at REVEAL. For Gloves_int: 38.3% (vs 21.4% without).
 
 ### 4. ~~Necromancy omen support~~ DONE
-Rust checks omen == SINISTRAL_NECROMANCY (force prefix) or
-DEXTRAL_NECROMANCY (force suffix) on REVEAL action.
-Seeds added for both variants + fill-prefix-then-desecrate strategy.
+Omen consumed at DESECRATE (bone step), stored in item state bits 4-5
+(sinistral=1, dextral=2), read at REVEAL to force prefix/suffix.
+Seeds put omen on DESECRATE action. GP discovers `desecrate + dextral_necromancy`
+strategies for suffix targets. Operator `_DESECRATE_OMENS` pool ensures only
+valid omens (Echoes, Sinistral, Dextral Necromancy) are paired with DESECRATE.
 
 ### 5. Lich omen support (faction pool narrowing) — WEAPON/JEWELLERY ONLY
 - Omen of Blackblooded → only Kurgal faction mods in reveal
@@ -97,19 +101,11 @@ Seeds added for both variants + fill-prefix-then-desecrate strategy.
 - Need faction tags in the desecrated pool data passed to Rust
 - Optimizer should never suggest lich omens for armour item targets
 
-### 6. Desecrated pool data in Rust
-To support tasks 2-5, need to pass desecrated pool metadata to Rust:
-- Pool size per affix type (prefix count, suffix count)
-- Faction breakdown (how many mods per faction)
-- Item slot category (weapon/jewellery/armour) for lich omen validation
-- Could add to ModPool struct or as separate arrays in batch.rs
-
-## Files to modify
-- `crates/poe2-optimizer/src/actions.rs` — REVEAL action logic
-- `crates/poe2-optimizer/src/pool.rs` — desecrated pool metadata in ModPool
-- `crates/poe2-optimizer/src/batch.rs` — new optional params for desecrated data
-- `poe2_crafting_mcp/crafting/optimizer/bridge.py` — serialize desecrated pool info
-- `poe2_crafting_mcp/crafting/optimizer/preflight.py` — query desecrated pool stats
+### 6. ~~Desecrated pool data in Rust~~ DONE (for tasks 2-4)
+Pool size per affix type passed from preflight → bridge → batch → Rust ModPool:
+- `desecrated_prefix_pool_size` / `desecrated_suffix_pool_size` in ModPool
+- Preflight counts distinct desecrated families per affix type
+- Still needed for task 5: faction breakdown per pool for lich omens
 
 ## Reference
 - Simulator implementation: `poe2_crafting_mcp/crafting/desecration.py`

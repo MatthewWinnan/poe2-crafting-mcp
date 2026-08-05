@@ -25,48 +25,34 @@
 | armourer's scrap / whetstone | ✅ | ❌ | Terminal step — not needed |
 | architect (double corrupt) | ✅ | ❌ | Terminal step — not needed |
 
-### Mod Pools: DB Has 17, Optimizer Uses 2
+### Mod Pools: DB Has 17, Optimizer Uses 3+
 
 | Pool | DB Entries | In Optimizer | What It Is |
 |------|-----------|--------------|------------|
 | **normal** | 8,580 | ✅ | Standard crafting pool |
-| **desecrated** | 694 | ✅ (simplified) | Abyss/Well of Souls mods |
+| **desecrated** | 694 | ✅ | Abyss/Well of Souls mods (pool sizes, affix type, omens) |
 | **essence** | 1,935 | ✅ | Essence-specific guaranteed mods |
 | **perfect_essence** | 516 | ❌ | Perfect essence swap mods |
 | **corrupted** | 576 | ❌ | Vaal Orb corruption pool |
 | **corruption_upgrade** | 935 | ❌ | Architect's Orb pool |
 | **bonded** | 3,907 | ❌ | Rune-bonded mods (Aldur's Legacy) |
 | **socketable** | 4,971 | ❌ | Rune/Soul Core socket effects |
-| **chronomancy** | 102 | ❌ | Chronomancy rune pool (Boots) |
-| **destruction** | 162 | ❌ | Destruction rune pool (Weapons) |
-| **decay** | 138 | ❌ | Decay rune pool (Gloves) — Kolr's Hunt |
-| **marksman** | 168 | ❌ | Marksman rune pool (Gloves) — Kolr's Hunt |
-| **berserking** | 180 | ❌ | Berserking rune pool (Helmets) |
+| **chronomancy** | 102 | ✅ | Chronomancy rune pool (Boots) — merged via --runes |
+| **destruction** | 162 | ✅ | Destruction rune pool (Weapons) — merged via --runes |
+| **decay** | 138 | ✅ | Decay rune pool (Gloves) — merged via --runes |
+| **marksman** | 168 | ✅ | Marksman rune pool (Gloves) — merged via --runes |
+| **berserking** | 180 | ✅ | Berserking rune pool (Helmets) — merged via --runes |
 | **breach_caster** | 89 | ❌ | Breach Ring caster mods |
 | **breach_minion** | 74 | ❌ | Breach Ring minion mods |
 | **breach_otherworldly** | 36 | ❌ | Breach amulet/belt/ring otherworldly |
 | **soul** | 147 | ❌ | Soul Core effects |
 
-### The Rune Pool Gap (Critical for 0.5 League)
+### Rune Pools ✅
 
-In Runes of Aldur (0.5), players can apply **Rune Alloys** that add mods from
-faction-specific pools. These are SEPARATE mod pools that provide unique stats
-not available in the normal pool:
-
-- **Decay** (Gloves): Ignite/Bleed/Poison magnitude — builds needing ailment scaling
-- **Marksman** (Gloves): Projectile Damage — bow/crossbow/wand builds
-- **Destruction** (Weapons): Explicit modifier magnitudes — endgame scaling
-- **Chronomancy** (Boots): Skill Effect Duration — DoT/channel builds
-- **Berserking** (Helmets): Maximum Rage, Warcry Damage — melee builds
-- **Bonded** (Body Armour): Rune-specific bonded mods (Aldur's Legacy extraction)
-
-These occupy the SAME "crafted modifier" slot as essences/alloys. A player
-chooses between:
-- Essence (guaranteed stat from essence pool)
-- Alloy (guaranteed stat from rune faction pool)
-
-The optimizer currently always uses `ESSENCE_UPGRADE` which targets from the
-normal pool families. It should also be able to target from these faction pools.
+Rune pools (decay, marksman, destruction, chronomancy, berserking, soul) are
+merged into the normal crafting pool in preflight when `--runes` is specified.
+This correctly expands the mod pool so the optimizer accounts for the larger
+pool size when calculating probabilities.
 
 ### Omens: Craft Sim vs Optimizer
 
@@ -77,8 +63,8 @@ normal pool families. It should also be able to target from these faction pools.
 | Sinistral/Dextral Annulment | ✅ | ✅ | Remove prefix/suffix |
 | Sinistral/Dextral Coronation | ✅ | ✅ | Regal targets side |
 | Whittling | ✅ | ✅ (approximated) | Remove lowest-req mod |
-| Abyssal Echoes | ✅ | ✅ (enum only) | Re-roll reveal options |
-| Sinistral/Dextral Necromancy | ✅ | ❌ | Desecration targets side |
+| Abyssal Echoes | ✅ | ✅ | Re-roll reveal (3+3 model), stored at desecrate |
+| Sinistral/Dextral Necromancy | ✅ | ✅ | Force prefix/suffix on reveal, stored at desecrate |
 | Corruption | ✅ | ❌ | Remove "nothing" Vaal outcome |
 | Sanctification | ✅ | ❌ | Remove negative Vaal outcomes |
 | Light | ✅ | ✅ | Annul targets desecrated mod only |
@@ -96,7 +82,7 @@ normal pool families. It should also be able to target from these faction pools.
 | quality | ✅ | ❌ (not needed) | Terminal |
 | sockets | ✅ | ❌ (not needed) | Terminal |
 | essence_mod_family | ✅ | ✅ (flag only) | One per item |
-| desecrated state | ✅ | ✅ (flag) | |
+| desecrated state | ✅ | ✅ (flag + omen bits 4-5) | Stores omen from bone step |
 | divined state | N/A | ✅ (flag) | Pre-fracture step |
 | mod values (numeric) | ✅ | ❌ | Only families/tiers tracked |
 | implicits | ✅ | ❌ | Corruption only |
@@ -106,25 +92,35 @@ normal pool families. It should also be able to target from these faction pools.
 
 ## Priority Gaps to Close
 
-### P0: Sub-Goal Decomposition (Path A from shortcomings doc)
-The biggest impact for hard crafts. Independent of simulation fidelity.
+### P0: Sub-Goal Decomposition ✅
+Sequential decomposition (N-target → N single-target phases) and cooperative
+coevolution. WSJF ordering, initial state encoding, free-hit detection.
 
 ### P1: Rune/Alloy Pools ✅
-Rune pools merged into normal pool in preflight (flat arrays). Rune recommendation
-tool suggests which runes to socket. CLI `--runes` flag supported.
+Rune pools merged into normal pool in preflight (flat arrays). CLI `--runes` flag.
 
 ### P2: Essence Pool (not normal pool) ✅
-Essences now use separate tier data from the `pool='essence'` DB query. Rust
-`ModPool` has `essence_prefix/suffix_families/tiers` fields. `add_essence_mod()`
-picks tiers from essence pool (fewer/different tiers than normal pool).
+Essences use separate tier data from `pool='essence'`. Three tiers (Lesser/Normal/Greater)
+with distinct prices and Rust TierRank enum.
 
 ### P3: Greater Exaltation Omen ✅
 Adds 2 mods in one exalt via `qty = if omen == GREATER_EXALTATION { 2 } else { 1 }`.
 
 ### P4: Omen of Light ✅
 Annul removes ONLY the desecrated (abyss) mod and clears `has_been_desecrated_ever`
-flag to allow re-desecration. Uses `remove_last_nonfractured_suffix()`.
+flag to allow re-desecration.
 
-### P5: Catalysing Exaltation
+### P5: Desecration Fidelity ✅
+REVEAL: affix type determination (open slots + necromancy omen), dynamic
+P(hit) = 3/pool_size from desecrated pool metadata, Abyssal Echoes 3+3 reroll.
+Omens consumed at DESECRATE (bone step), stored in item state bits 4-5, read
+at REVEAL. GP discovers omen-enhanced strategies (e.g. `desecrate + dextral_necromancy`).
+Simulator blocks multiple abyss mods per item.
+
+### P6: Lich Omens (Blackblooded/Liege/Sovereign)
+Faction pool narrowing for weapons/jewellery only. Need faction tags in
+desecrated pool data passed to Rust. Low priority — niche use case.
+
+### P7: Catalysing Exaltation
 Bias exalt toward a specific mod tag family. Used on rings/amulets to improve
 odds of hitting resistance or attribute mods. Significant probability improvement.
