@@ -774,13 +774,16 @@ def cmd_sim(argv: list[str]) -> int:
                 print(f"  {_RED}Error: {e}{_RESET}")
 
         elif cmd == "pool":
-            # Show available pool summary
+            # Show available pool summary (normal + desecrated + essence)
             affix = parts[1] if len(parts) > 1 else ""
             min_lv_str = _parse_flag(parts, "--min")
             min_lv = int(min_lv_str) if min_lv_str else 0
+            gentype = 1 if affix == "prefix" else 2 if affix == "suffix" else 0
+
+            # Normal pool
             pool = sim.get_available_pool(
                 min_mod_level=min_lv,
-                gentype_only=1 if affix == "prefix" else 2 if affix == "suffix" else 0,
+                gentype_only=gentype,
             )
             by_family: dict[str, list] = {}
             for m in pool:
@@ -788,11 +791,57 @@ def cmd_sim(argv: list[str]) -> int:
             label = f"{affix + ' ' if affix else ''}pool"
             if min_lv:
                 label += f" (min_lv={min_lv})"
-            print(f"  {_BOLD}Available {label} ({len(pool)} tiers, {len(by_family)} families):{_RESET}")
+            print(f"  {_BOLD}Normal {label} ({len(pool)} tiers, {len(by_family)} families):{_RESET}")
             for fam, mods in sorted(by_family.items(), key=lambda x: -sum(m['weight'] for m in x[1])):
                 total_w = sum(m['weight'] for m in mods)
                 best_stat = mods[0]['stat_text'] if mods else ""
                 print(f"    {fam:30} weight={total_w:5} ({len(mods)} tiers) {_DIM}{best_stat}{_RESET}")
+
+            # Desecrated pool
+            import sqlite3 as _sqlite3_pool
+            _conn_pool = _sqlite3_pool.connect('data/poe2_craft.db')
+            _conn_pool.row_factory = _sqlite3_pool.Row
+            _dq = "SELECT mod_family, affix_type, stat_text, tags FROM mod_weights WHERE pool = 'desecrated' AND item_class = ? AND req_level <= ?"
+            _dparams: list = [item_class, ilvl]
+            if affix:
+                _dq += " AND affix_type = ?"
+                _dparams.append(affix)
+            _drows = _conn_pool.execute(_dq, _dparams).fetchall()
+            if _drows:
+                import json as _json_pool
+                _dfamilies: dict[str, dict] = {}
+                for _dr in _drows:
+                    fam = _dr["mod_family"]
+                    if fam not in _dfamilies:
+                        tags = _json_pool.loads(_dr["tags"]) if _dr["tags"] else []
+                        faction = ""
+                        for _t in tags:
+                            if _t.endswith("_mod") and _t.replace("_mod", "") in ("amanamu", "kurgal", "ulaman"):
+                                faction = _t.replace("_mod", "")
+                        _dfamilies[fam] = {"affix": _dr["affix_type"], "stat": _dr["stat_text"], "faction": faction}
+                print(f"\n  {_BOLD}Desecrated {label} ({len(_dfamilies)} families):{_RESET}")
+                for fam, info in sorted(_dfamilies.items()):
+                    ftag = f" [{info['faction']}]" if info['faction'] else ""
+                    print(f"    {fam:30} {info['affix']:6} {_DIM}{info['stat']}{ftag}{_RESET}")
+
+            # Essence pool
+            _eq = "SELECT mod_family, affix_type, stat_text FROM mod_weights WHERE pool = 'essence' AND item_class = ? AND req_level <= ?"
+            _eparams: list = [item_class, ilvl]
+            if affix:
+                _eq += " AND affix_type = ?"
+                _eparams.append(affix)
+            _erows = _conn_pool.execute(_eq, _eparams).fetchall()
+            if _erows:
+                _efamilies: dict[str, dict] = {}
+                for _er in _erows:
+                    fam = _er["mod_family"]
+                    if fam not in _efamilies:
+                        _efamilies[fam] = {"affix": _er["affix_type"], "stat": _er["stat_text"]}
+                print(f"\n  {_BOLD}Essence {label} ({len(_efamilies)} families):{_RESET}")
+                for fam, info in sorted(_efamilies.items()):
+                    print(f"    {fam:30} {info['affix']:6} {_DIM}{info['stat']}{_RESET}")
+
+            _conn_pool.close()
 
         elif cmd in ("dpool", "desecrate-pool"):
             # Show desecration reveal pool (normal + desecrated-exclusive)
