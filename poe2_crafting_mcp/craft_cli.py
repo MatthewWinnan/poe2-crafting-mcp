@@ -693,6 +693,9 @@ def cmd_sim(argv: list[str]) -> int:
                     "liege": "Omen of the Liege",
                     "sovereign": "Omen of the Sovereign",
                     "abyssal_echoes": "Omen of Abyssal Echoes",
+                    "sinistral_necromancy": "Omen of Sinistral Necromancy",
+                    "dextral_necromancy": "Omen of Dextral Necromancy",
+                    "putrefaction": "Omen of Putrefaction",
                     "light": "Omen of Light",
                     # Bones
                     "preserved_jawbone": "Preserved Jawbone",

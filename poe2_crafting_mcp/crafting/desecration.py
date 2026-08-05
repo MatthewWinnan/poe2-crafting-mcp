@@ -315,6 +315,15 @@ class DesecrationEngine:
         if item.desecrated_unrevealed:
             raise ValueError("Item already has an unrevealed desecrated modifier. Use 'reveal' first.")
 
+        # Can't desecrate if item already has a desecrated (abyss) mod
+        # Must annul the existing abyss mod first (use Omen of Light to target it)
+        existing_abyss = [m for m in item.mods if m.desecrated]
+        if existing_abyss:
+            raise ValueError(
+                f"Item already has a desecrated mod ({existing_abyss[0].family}). "
+                f"Annul it first (use Omen of Light to target the abyss mod)."
+            )
+
         # Merge omen effects
         gentype_only = 0
         if omens:
