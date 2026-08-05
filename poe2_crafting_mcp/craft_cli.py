@@ -546,8 +546,7 @@ def cmd_sim(argv: list[str]) -> int:
     print()
     _print_item(item, base_name)
     print()
-    print(f"  {_DIM}Commands: <currency> [--omens x,y] [--essence_family F] | desecrate <bone>"
-          f" | save <file> | load <file> | pool | cost | history | help | quit{_RESET}")
+    print(f"  {_DIM}Commands: <currency> [--omens x,y] | desecrate <bone> | item | pool | cost | help | quit{_RESET}")
     print()
 
     while True:
@@ -565,6 +564,9 @@ def cmd_sim(argv: list[str]) -> int:
 
         if cmd in ("quit", "exit", "q"):
             break
+
+        elif cmd in ("item", "show", "status", "i"):
+            _print_item(item, base_name)
 
         elif cmd == "help":
             _sim_help()
@@ -840,6 +842,25 @@ def cmd_sim(argv: list[str]) -> int:
                 print(f"\n  {_BOLD}Essence {label} ({len(_efamilies)} families):{_RESET}")
                 for fam, info in sorted(_efamilies.items()):
                     print(f"    {fam:30} {info['affix']:6} {_DIM}{info['stat']}{_RESET}")
+
+            # Rune pools (show all applicable, not just active)
+            from poe2_crafting_mcp.crafting.simulator import RUNE_POOL_NAMES as _RPN
+            for _rpool, _rname in _RPN.items():
+                _rq = "SELECT mod_family, affix_type, stat_text FROM mod_weights WHERE pool = ? AND item_class = ? AND req_level <= ?"
+                _rparams: list = [_rpool, item_class, ilvl]
+                if affix:
+                    _rq += " AND affix_type = ?"
+                    _rparams.append(affix)
+                _rrows = _conn_pool.execute(_rq, _rparams).fetchall()
+                if _rrows:
+                    _rfamilies: dict[str, dict] = {}
+                    for _rr in _rrows:
+                        fam = _rr["mod_family"]
+                        if fam not in _rfamilies:
+                            _rfamilies[fam] = {"affix": _rr["affix_type"], "stat": _rr["stat_text"]}
+                    print(f"\n  {_BOLD}Rune: {_rname} ({_rpool}) — {len(_rfamilies)} families:{_RESET}")
+                    for fam, info in sorted(_rfamilies.items()):
+                        print(f"    {fam:30} {info['affix']:6} {_DIM}{info['stat']}{_RESET}")
 
             _conn_pool.close()
 
@@ -1664,12 +1685,14 @@ def _sim_help() -> None:
     essences [tier]                  Show available essences (e.g. 'essences Greater')
     omens <currency>                 Show omens that apply to a currency
     bones                            Show valid bones for this item
-    pool [prefix|suffix]             Show available mod pool with weights
+    pool [prefix|suffix]             Show all mod pools (normal, desecrated, essence, runes)
 
-  {_BOLD}Item Management:{_RESET}
+  {_BOLD}Item & State:{_RESET}
+    item                             Show current item (also: show, status, i)
     save <file.json>                 Save current item state + history
     load <file.json>                 Load item state from file
     history                          Show crafting history
+    cost                             Show currencies consumed and total cost
 
   {_BOLD}Other:{_RESET}
     help                             Show this help
