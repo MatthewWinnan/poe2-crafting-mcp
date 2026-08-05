@@ -115,10 +115,12 @@ def main() -> None:
     print(f"{'─' * 50}")
     print(f"  Item:    {item_label}  ilvl {args.ilvl}")
     print(f"  Targets:")
+    desecrated_fams = display.get("desecrated_families", set())
     for family, affix, tier in target_mods:
         desc = display["mod_descriptions"].get(family, "")
         desc_str = f"  — {desc}" if desc else ""
-        print(f"    T{tier} {family} ({affix}){desc_str}")
+        tier_label = "Abyss" if family in desecrated_fams else f"T{tier}"
+        print(f"    {tier_label} {family} ({affix}){desc_str}")
     print(f"  Engine:  {'Rust (fast)' if is_rust_available() else 'Python stub (slow)'}")
     print(f"  Config:  pop={args.pop_size} gen={args.generations} trials={args.trials}")
     if use_decompose:

@@ -448,15 +448,31 @@ def lookup_display_info(
             sub = row[2] or ""
             result["item_class_name"] = f"{sub} {row[1]}" if sub else row[1]
 
-        # Look up stat_text for each target mod
-        for family, affix_type, _tier in target_mods:
-            row = conn.execute(
+        # Look up stat_text for each target mod at the requested tier
+        # Also detect desecrated-only mods (no tiers)
+        result["desecrated_families"] = set()
+        for family, affix_type, tier in target_mods:
+            # Check normal pool first, then desecrated
+            normal_rows = conn.execute(
                 "SELECT stat_text FROM mod_weights "
-                "WHERE mod_family = ? AND item_class = ? AND affix_type = ? LIMIT 1",
+                "WHERE mod_family = ? AND item_class = ? AND affix_type = ? "
+                "AND pool = 'normal' ORDER BY req_level DESC",
                 (family, item_class, affix_type),
-            ).fetchone()
-            if row and row[0]:
-                result["mod_descriptions"][family] = row[0]
+            ).fetchall()
+            if normal_rows:
+                idx = min(tier - 1, len(normal_rows) - 1)
+                result["mod_descriptions"][family] = normal_rows[idx][0]
+            else:
+                # Check desecrated pool
+                des_row = conn.execute(
+                    "SELECT stat_text FROM mod_weights "
+                    "WHERE mod_family = ? AND item_class = ? AND affix_type = ? "
+                    "AND pool = 'desecrated' LIMIT 1",
+                    (family, item_class, affix_type),
+                ).fetchone()
+                if des_row:
+                    result["desecrated_families"].add(family)
+                    result["mod_descriptions"][family] = des_row[0]
 
         conn.close()
     except Exception:

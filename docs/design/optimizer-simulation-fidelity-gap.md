@@ -121,6 +121,13 @@ Simulator blocks multiple abyss mods per item.
 Faction pool narrowing for weapons/jewellery only. Need faction tags in
 desecrated pool data passed to Rust. Low priority — niche use case.
 
-### P7: Catalysing Exaltation
+### P7: Alloy & Perfect Essence (Swap Currencies)
+Swap on Rare: remove 1 mod, add 1 guaranteed. Alloys (13) and Perfect Essences (19)
+share the `essence_swap` mechanic but have different mod pools. Currently lumped
+together under `perfect_essence`. Need separate pools, optimizer actions, price
+resolution, and GP seeds. Crystallisation omens (sinistral/dextral) apply to both.
+See `docs/design/module-alloy-support.md`.
+
+### P8: Catalysing Exaltation
 Bias exalt toward a specific mod tag family. Used on rings/amulets to improve
 odds of hitting resistance or attribute mods. Significant probability improvement.
