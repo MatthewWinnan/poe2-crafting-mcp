@@ -57,6 +57,8 @@ pub const ABYSSAL_ECHOES: u16 = 9;
 pub const SINISTRAL_NECROMANCY: u16 = 10;
 pub const DEXTRAL_NECROMANCY: u16 = 11;
 pub const LIGHT: u16 = 12;
+pub const SINISTRAL_ERASURE: u16 = 13;
+pub const DEXTRAL_ERASURE: u16 = 14;
 
 /// Apply a crafting currency to the item state.
 pub fn apply_currency(
@@ -208,10 +210,16 @@ pub fn apply_currency(
             }
             let min_lv = min_level_for_currency(currency);
             // Whittling omen: remove lowest-req mod (deterministic)
+            // Erasure omens: force prefix/suffix removal (map to annulment equivalents)
             if omen == WHITTLING {
                 remove_lowest_req_mod(item);
             } else {
-                remove_random_mod(item, NO_OMEN, rng);
+                let removal_omen = match omen {
+                    SINISTRAL_ERASURE => SINISTRAL_ANNULMENT,
+                    DEXTRAL_ERASURE => DEXTRAL_ANNULMENT,
+                    _ => NO_OMEN,
+                };
+                remove_random_mod(item, removal_omen, rng);
             }
             add_random_mod(item, pool, min_lv, NO_OMEN, rng);
         }

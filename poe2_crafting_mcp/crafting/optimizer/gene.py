@@ -130,6 +130,8 @@ class Omen(IntEnum):
     SINISTRAL_NECROMANCY = 10  # desecration reveal targets prefixes only
     DEXTRAL_NECROMANCY = 11    # desecration reveal targets suffixes only
     LIGHT = 12                 # annulment removes only the desecrated mod
+    SINISTRAL_ERASURE = 13     # chaos removes prefix only
+    DEXTRAL_ERASURE = 14       # chaos removes suffix only
 
 
 # ── Condition ─────────────────────────────────────────────────────────────────

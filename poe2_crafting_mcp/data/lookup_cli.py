@@ -2221,8 +2221,6 @@ def _cmd_omens(argv: list[str]) -> int:
             effects.append("removes SUFFIX only")
         if defn.get("qty_override"):
             effects.append(f"adds {defn['qty_override']} mods")
-        if defn.get("homogenise"):
-            effects.append("shared tags only")
         if defn.get("del_target"):
             effects.append(f"removes {defn['del_target']}")
         if defn.get("catalyse"):

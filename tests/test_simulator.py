@@ -715,7 +715,6 @@ class TestCurrencyDefinitions:
     def test_all_new_omens_present(self):
         assert "greater_exaltation" in OMENS
         assert "whittling" in OMENS
-        assert "homogenising_exaltation" in OMENS
         assert "sinistral_crystallisation" in OMENS
         assert "dextral_crystallisation" in OMENS
 

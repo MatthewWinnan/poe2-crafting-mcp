@@ -677,7 +677,6 @@ def cmd_sim(argv: list[str]) -> int:
                     "sinistral_exaltation": "Omen of Sinistral Exaltation",
                     "dextral_exaltation": "Omen of Dextral Exaltation",
                     "greater_exaltation": "Omen of Greater Exaltation",
-                    "homogenising_exaltation": "Omen of Homogenising Exaltation",
                     "catalysing_exaltation": "Omen of Catalysing Exaltation",
                     "sinistral_annulment": "Omen of Sinistral Annulment",
                     "dextral_annulment": "Omen of Dextral Annulment",
@@ -993,8 +992,6 @@ def cmd_sim(argv: list[str]) -> int:
                         effect_parts.append("targets abyss mod only")
                     if omen_def.get("qty_override"):
                         effect_parts.append(f"adds {omen_def['qty_override']} mods")
-                    if omen_def.get("homogenise"):
-                        effect_parts.append("shared tags only")
                     if omen_def.get("del_gentype_only") == 1:
                         effect_parts.append("removes prefix only")
                     elif omen_def.get("del_gentype_only") == 2:

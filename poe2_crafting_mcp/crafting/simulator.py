@@ -386,7 +386,6 @@ OMENS: dict[str, dict[str, Any]] = {
     "sinistral_exaltation":    {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "gentype_only": 1},
     "dextral_exaltation":      {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "gentype_only": 2},
     "greater_exaltation":      {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "qty_override": 2},
-    "homogenising_exaltation": {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "homogenise": True},
     "catalysing_exaltation":   {"applies_to": ["exalted", "greater_exalted", "perfect_exalted"], "catalyse": True},
     # ── Annulment omens ───────────────────────────────────────────────────────
     "sinistral_annulment":     {"applies_to": ["annulment"], "del_gentype_only": 1},
@@ -398,7 +397,6 @@ OMENS: dict[str, dict[str, Any]] = {
     # ── Coronation omens (Regal) ──────────────────────────────────────────────
     "sinistral_coronation":    {"applies_to": ["regal", "greater_regal", "perfect_regal"], "gentype_only": 1},
     "dextral_coronation":      {"applies_to": ["regal", "greater_regal", "perfect_regal"], "gentype_only": 2},
-    "homogenising_coronation": {"applies_to": ["regal", "greater_regal", "perfect_regal"], "homogenise": True},
     # ── Crystallisation omens (Essence) ───────────────────────────────────────
     "sinistral_crystallisation": {"applies_to": ["perfect_essence"], "del_gentype_only": 1},
     "dextral_crystallisation":   {"applies_to": ["perfect_essence"], "del_gentype_only": 2},
@@ -409,7 +407,6 @@ OMENS: dict[str, dict[str, Any]] = {
     "corruption":              {"applies_to": ["vaal"], "force_outcome": True},
     "blessed":                 {"applies_to": ["divine"], "implicit_only": True},
     "sanctification":          {"applies_to": ["divine"], "sanctify": True},
-    "recombination":           {"applies_to": ["recombinator"], "lucky": True},
     # ── Abyss omens (desecration system) ──────────────────────────────────────
     # Consumed at bone application (desecrate step):
     "sinistral_necromancy":    {"applies_to": ["desecrate"], "gentype_only": 1},
@@ -1114,28 +1111,15 @@ class CraftingSimulator:
         return results
 
     def roll_mod(
-        self, min_mod_level: int = 0, gentype_only: int = 0, homogenise: bool = False
+        self, min_mod_level: int = 0, gentype_only: int = 0,
     ) -> ModInstance | None:
         """Roll a random mod from the available pool (for simulation).
 
         Args:
             min_mod_level: minimum req_level filter (Greater/Perfect currencies)
             gentype_only: 1=prefix only, 2=suffix only, 0=both
-            homogenise: if True, only mods sharing tags with existing item mods
         """
         pool = self.get_available_pool(min_mod_level=min_mod_level, gentype_only=gentype_only)
-
-        # Homogenise filter: only mods sharing at least one tag with existing mods
-        if homogenise and pool:
-            existing_tags: set[str] = set()
-            for mod in self.item.mods:
-                # Find the mod's tags from _all_mods or _essence_mods
-                for pool_mod in self._all_mods:
-                    if pool_mod['family'] == mod.family and pool_mod['tier'] == mod.tier:
-                        existing_tags.update(pool_mod.get('tags', []))
-                        break
-            if existing_tags:
-                pool = [m for m in pool if set(m.get('tags', [])) & existing_tags]
 
         if not pool:
             return None
@@ -1212,7 +1196,6 @@ class CraftingSimulator:
         gentype_only = 0
         del_gentype_only = 0
         del_target = ""
-        homogenise = False
         qty = cur.get("qty", 1)
 
         for omen_key in active_omens:
@@ -1227,8 +1210,6 @@ class CraftingSimulator:
                 del_gentype_only = omen_def["del_gentype_only"]
             if omen_def.get("del_target"):
                 del_target = omen_def["del_target"]
-            if omen_def.get("homogenise"):
-                homogenise = True
             if "qty_override" in omen_def:
                 qty = omen_def["qty_override"]
 
@@ -1245,7 +1226,7 @@ class CraftingSimulator:
             for _ in range(qty):
                 if self.item.open_affixes == 0:
                     break
-                mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only, homogenise=homogenise)
+                mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
                 if mod:
                     self.item.mods.append(mod)
 
@@ -1258,7 +1239,7 @@ class CraftingSimulator:
                 if to_remove.family == self.item.essence_mod_family:
                     self.item.essence_mod_family = None
             # Add step
-            mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only, homogenise=homogenise)
+            mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
             if mod:
                 self.item.mods.append(mod)
 
@@ -1503,14 +1484,14 @@ class CraftingSimulator:
         self, essence_family: str, min_lv: int = 0, gentype_only: int = 0,
         essence_stat_text: str = "",
     ) -> None:
-        """Essence upgrade: Magic → Rare with guaranteed mod + random fill to 4.
+        """Essence upgrade: Magic → Rare with guaranteed mod (no random fill).
 
         All essence tiers (Lesser/Normal/Greater) work the same:
         - Requires Magic item
         - Upgrades to Rare
-        - Keeps existing Magic mods
+        - Keeps existing Magic mods (1-2)
         - Adds 1 guaranteed essence mod
-        - Fills remaining slots randomly to 4 total mods
+        - Result: 2-3 mods total (no random fill)
 
         Family blocking: cannot use if essence_family is already on item
         (game prevents using an essence whose guaranteed mod shares a family

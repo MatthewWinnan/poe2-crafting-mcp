@@ -68,6 +68,17 @@ _OMEN_NAME_MAP: dict[str, str] = {
     "Omen of Light": "light",
 }
 
+# Jewels have 2 prefixes + 2 suffixes (not the standard 3+3)
+_JEWEL_CLASSES = frozenset({
+    "Diamond", "Emerald", "Ruby", "Sapphire",
+    "Time-Lost_Diamond", "Time-Lost_Emerald", "Time-Lost_Ruby", "Time-Lost_Sapphire",
+})
+
+
+def _max_affixes(item_class: str) -> int:
+    """Return max prefixes (or suffixes) for an item class."""
+    return 2 if item_class in _JEWEL_CLASSES else 3
+
 
 def preflight(
     item_class: str,
@@ -239,8 +250,8 @@ def preflight(
         suffix_req_levels=suffix_req_levels,
         target=target,
         ilvl=ilvl,
-        max_prefixes=3,
-        max_suffixes=3,
+        max_prefixes=_max_affixes(item_class),
+        max_suffixes=_max_affixes(item_class),
         essence_prefix_families=ess_prefix_families or None,
         essence_prefix_tiers=ess_prefix_tiers or None,
         essence_suffix_families=ess_suffix_families or None,
