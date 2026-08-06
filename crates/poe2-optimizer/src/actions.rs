@@ -139,7 +139,7 @@ pub fn apply_currency(
             }
             item.rarity = 1;
             let min_lv = min_level_for_currency(currency);
-            let n_mods = rng.gen_range(1u8..=2u8);
+            let n_mods = 1u8;
             for _ in 0..n_mods {
                 add_random_mod(item, pool, min_lv, omen, rng);
             }
@@ -217,13 +217,13 @@ pub fn apply_currency(
         }
 
         ALCHEMY => {
-            // Only works on Normal items → Rare
-            if item.rarity != 0 {
+            // Works on Normal or Magic items → Rare with exactly 4 mods
+            if item.rarity == 2 {
                 return;
             }
             item.rarity = 2;
             clear_mods(item);
-            let n_mods = rng.gen_range(4u8..=6u8);
+            let n_mods = 4u8;
             for _ in 0..n_mods {
                 if item.mod_count() >= 6 {
                     break;
@@ -524,10 +524,10 @@ pub fn apply_currency(
 
 fn min_level_for_currency(currency: u16) -> u8 {
     match currency {
-        GREATER_TRANSMUTE | GREATER_AUGMENT | GREATER_REGAL
-        | GREATER_EXALTED | GREATER_CHAOS => 35,
-        PERFECT_TRANSMUTE | PERFECT_AUGMENT | PERFECT_REGAL
-        | PERFECT_EXALTED | PERFECT_CHAOS => 50,
+        GREATER_TRANSMUTE | GREATER_AUGMENT => 44,
+        GREATER_REGAL | GREATER_EXALTED | GREATER_CHAOS => 35,
+        PERFECT_TRANSMUTE | PERFECT_AUGMENT => 70,
+        PERFECT_REGAL | PERFECT_EXALTED | PERFECT_CHAOS => 50,
         _ => 0,
     }
 }
