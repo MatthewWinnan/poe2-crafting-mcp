@@ -398,6 +398,42 @@ def seed_desecrate_necromancy() -> RuleList:
     return rl
 
 
+def seed_alloy_swap_fill() -> RuleList:
+    """Seed 15: Alloy Swap + Exalt Fill.
+
+    Use alloy to swap in a guaranteed mod from the alloy pool, then
+    fill remaining slots with targeted exalts. Alloys work on any Rare
+    item (no essence mod required) and use a separate mod pool.
+    """
+    rl = RuleList()
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.ALCHEMY), "alchemy to rare")
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.cost_spent_gte(500), Action(Currency.SCOUR), "restart")
+    rl.add_rule(
+        Condition.missing_target_prefix(),
+        Action(Currency.ALLOY),
+        "alloy for target prefix",
+    )
+    rl.add_rule(
+        Condition.missing_target_suffix(),
+        Action(Currency.ALLOY),
+        "alloy for target suffix",
+    )
+    rl.add_rule(
+        Condition.open_prefix_gte(1),
+        Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
+        "exalt prefix",
+    )
+    rl.add_rule(
+        Condition.open_suffix_gte(1),
+        Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
+        "exalt suffix",
+    )
+    rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "fallback restart")
+    return rl
+
+
 def seed_fracture_then_fill() -> RuleList:
     """Seed 12: Fracture First → Essence Second → Fill (high-investment).
 
@@ -447,27 +483,39 @@ ALL_SEEDS = [
     seed_buy_fractured_base,
     seed_aggressive_restart,
     seed_deterministic_multimod,
+    seed_alloy_swap_fill,
     seed_fracture_then_fill,
 ]
 
 
-def create_seeded_population(pop_size: int, seed_fraction: float = 0.4) -> list[RuleList]:
+_BUY_SEEDS = {
+    seed_buy_fractured_base,
+    seed_deterministic_multimod,
+    seed_fracture_then_fill,
+}
+
+
+def create_seeded_population(
+    pop_size: int, seed_fraction: float = 0.4, no_buy: bool = False,
+) -> list[RuleList]:
     """Create initial population with seed_fraction% from heuristics.
 
     Args:
         pop_size: total population size (e.g. 200)
         seed_fraction: fraction of population to fill with seeds (default 40%)
+        no_buy: if True, exclude seeds that use buy actions
 
     Returns:
         List of RuleLists. First N are seeds (cycled if needed), rest are empty
         (to be filled with random individuals by the caller).
     """
+    seeds = [s for s in ALL_SEEDS if s not in _BUY_SEEDS] if no_buy else ALL_SEEDS
     n_seeds = int(pop_size * seed_fraction)
     population: list[RuleList] = []
 
     # Cycle through seeds to fill the seeded portion
     for i in range(n_seeds):
-        seed_fn = ALL_SEEDS[i % len(ALL_SEEDS)]
+        seed_fn = seeds[i % len(seeds)]
         population.append(seed_fn())
 
     return population
@@ -512,6 +560,20 @@ def _seed_phase_exalt_natural() -> RuleList:
     rl.add_rule(Condition.open_prefix_gte(1), Action(Currency.EXALTED), "natural exalt")
     rl.add_rule(Condition.open_suffix_gte(1), Action(Currency.EXALTED), "natural exalt")
     rl.add_rule(Condition.removable_gt_targets(), Action(Currency.ANNULMENT), "annul junk")
+    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
+    return rl
+
+
+def _seed_phase_transmute_search() -> RuleList:
+    """Phase seed: transmute + scour loop to search for target mod.
+
+    Efficient for Phase 0 in no-buy mode: places 1 mod per attempt,
+    keeping the item lean for later phases. Stays Magic (1 mod) so
+    subsequent phases can regal to Rare with minimal slot waste.
+    """
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE), "transmute")
     rl.add_rule(Condition.always_true(), Action(Currency.SCOUR), "restart")
     return rl
 
@@ -600,16 +662,27 @@ def _seed_phase_desecrate_reveal() -> RuleList:
     return rl
 
 
+def _seed_phase_alloy() -> RuleList:
+    """Phase seed: alloy swap for guaranteed mod from alloy pool."""
+    rl = RuleList()
+    rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE), "success")
+    rl.add_rule(Condition.always_true(), Action(Currency.ALLOY), "alloy swap")
+    return rl
+
+
 PHASE_SEEDS_PREFIX = [
+    _seed_phase_transmute_search,
     _seed_phase_exalt_prefix,
     _seed_phase_greater_exalt_prefix,
     _seed_phase_exalt_natural,
     _seed_phase_lesser_essence,
     _seed_phase_normal_essence,
     _seed_phase_greater_essence,
+    _seed_phase_alloy,
 ]
 
 PHASE_SEEDS_SUFFIX = [
+    _seed_phase_transmute_search,
     _seed_phase_exalt_suffix,
     _seed_phase_greater_exalt_suffix,
     _seed_phase_exalt_natural,
@@ -617,6 +690,7 @@ PHASE_SEEDS_SUFFIX = [
     _seed_phase_lesser_essence,
     _seed_phase_normal_essence,
     _seed_phase_greater_essence,
+    _seed_phase_alloy,
 ]
 
 
@@ -696,12 +770,41 @@ PHASE_SEEDS_DESECRATED = [
 ]
 
 
+def _is_essence_seed(fn) -> bool:
+    """Check if a seed function produces an essence-based strategy."""
+    return fn in (
+        _seed_phase_lesser_essence,
+        _seed_phase_normal_essence,
+        _seed_phase_greater_essence,
+    )
+
+
+def _is_alloy_seed(fn) -> bool:
+    """Check if a seed function produces an alloy-based strategy."""
+    return fn is _seed_phase_alloy
+
+
+# Seeds that only work when the item is already Rare (exalt/annul-based).
+# These are invalid for Phase 0 (starting Normal).
+_RARE_ONLY_SEEDS = {
+    _seed_phase_exalt_prefix,
+    _seed_phase_exalt_suffix,
+    _seed_phase_greater_exalt_prefix,
+    _seed_phase_greater_exalt_suffix,
+    _seed_phase_exalt_natural,
+    _seed_phase_alloy,  # alloy requires Rare
+}
+
+
 def create_seeded_population_for_phase(
     pop_size: int,
     seed_fraction: float,
     phase_target_affix: str,
     setup_rules: list | None = None,
     pool_source: str = "normal",
+    target_in_essence_pool: bool = True,
+    target_in_alloy_pool: bool = True,
+    starting_rarity: int = 2,
 ) -> list[RuleList]:
     """Generate seed strategies appropriate for a decomposed phase.
 
@@ -715,15 +818,27 @@ def create_seeded_population_for_phase(
         phase_target_affix: "prefix" or "suffix" (determines seed set)
         setup_rules: rules to prepend (recreate prior-phase state)
         pool_source: "normal" or "desecrated" (determines seed set)
+        target_in_essence_pool: whether the phase target is in the essence pool
+        target_in_alloy_pool: whether the phase target is in the alloy pool
+        starting_rarity: 0=Normal, 1=Magic, 2=Rare — filters incompatible seeds
     """
     from .gene import Rule
 
     if pool_source == "desecrated":
         seeds = PHASE_SEEDS_DESECRATED
     elif phase_target_affix == "prefix":
-        seeds = PHASE_SEEDS_PREFIX
+        seeds = list(PHASE_SEEDS_PREFIX)
     else:
-        seeds = PHASE_SEEDS_SUFFIX
+        seeds = list(PHASE_SEEDS_SUFFIX)
+
+    # Filter out seeds for pools the target isn't in
+    if not target_in_essence_pool:
+        seeds = [s for s in seeds if not _is_essence_seed(s)]
+    if not target_in_alloy_pool:
+        seeds = [s for s in seeds if not _is_alloy_seed(s)]
+    # Filter out Rare-only seeds when starting from Normal/Magic
+    if starting_rarity < 2:
+        seeds = [s for s in seeds if s not in _RARE_ONLY_SEEDS]
     n_seeds = int(pop_size * seed_fraction)
     population: list[RuleList] = []
 

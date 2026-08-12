@@ -22,6 +22,7 @@ import numpy as np
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 MAX_RULES = 20
+MAX_CHAIN_RULES = 40  # for concatenated full-chain evaluation
 MAX_STEPS = 500
 
 
@@ -113,6 +114,8 @@ class Currency(IntEnum):
     # Essence tier variants (same mechanics as ESSENCE_GREATER but different tier/price)
     ESSENCE_LESSER = 38    # Lesser Essence: Magic → Rare + guaranteed mod (worst tier)
     ESSENCE_NORMAL = 39    # Normal Essence: Magic → Rare + guaranteed mod (mid tier)
+    # Alloy (separate mod pool from essences — swap mechanic on Rare)
+    ALLOY = 40             # Alloy: remove 1 mod, add 1 guaranteed from alloy pool
 
 
 class Omen(IntEnum):
@@ -700,6 +703,7 @@ class PriceCache:
     base_magic_with: dict[str, float] = field(default_factory=dict)
     base_fractured_with: dict[str, float] = field(default_factory=dict)
     trade_finished: float = float("inf")
+    trade_urls: dict[str, str] = field(default_factory=dict)
 
     def encode_for_rust(self) -> np.ndarray:
         """Encode prices as flat f32 array indexed by Currency/Omen IDs.
@@ -725,6 +729,7 @@ class PriceCache:
         _name_to_cid["lesser_essence"] = int(Currency.ESSENCE_LESSER)
         _name_to_cid["normal_essence"] = int(Currency.ESSENCE_NORMAL)
         _name_to_cid["perfect_essence"] = int(Currency.ESSENCE_PERFECT)
+        _name_to_cid["alloy"] = int(Currency.ALLOY)
 
         for name, price in self.currency.items():
             key = name.lower().replace(" ", "_")
@@ -747,12 +752,16 @@ class PriceCache:
         # Restart costs at their currency IDs
         prices[int(Currency.SCOUR)] = self.currency.get("scouring", 0.5)
         prices[int(Currency.BUY_BASE)] = self.base_white
-        # BUY_MAGIC / BUY_FRACTURED: use average of known prices
+        # BUY_MAGIC / BUY_FRACTURED: use average of known trade prices.
+        # For decomposed phases, base_magic_with typically has 1 entry (exact price).
+        # For monolithic multi-target, the average is a reasonable proxy.
         if self.base_magic_with:
             avg_magic = sum(self.base_magic_with.values()) / len(self.base_magic_with)
             prices[int(Currency.BUY_MAGIC)] = avg_magic
         else:
-            prices[int(Currency.BUY_MAGIC)] = self.base_white * 10
+            # Conservative fallback: magic items with specific mods cost meaningfully
+            # more than a white base. 35c is a reasonable median across mod rarities.
+            prices[int(Currency.BUY_MAGIC)] = 35.0
         if self.base_fractured_with:
             avg_frac = sum(self.base_fractured_with.values()) / len(self.base_fractured_with)
             prices[int(Currency.BUY_FRACTURED)] = avg_frac
@@ -793,3 +802,46 @@ def serialize_population(
         rule_counts[i] = n
 
     return rules_array, rule_counts, pop_size
+
+
+# ── Grouping Genome (Tier 3 Hierarchical GP) ────────────────────────────────
+
+
+@dataclass
+class Grouping:
+    """A partition of N targets into K groups (phases) with an execution order.
+
+    Genome for the outer GP in Tier 3 hierarchical optimization.
+    Each group becomes one inner GP phase that pursues its targets simultaneously.
+    """
+
+    groups: list[list[int]]  # e.g. [[0,1], [2], [3,4]] for 5 targets in 3 phases
+    ordering: list[int]  # execution order of groups: [1, 0, 2]
+    fitness: float = float("inf")  # total expected cost (lower = better)
+
+    @property
+    def n_phases(self) -> int:
+        return len(self.groups)
+
+    @property
+    def n_targets(self) -> int:
+        return sum(len(g) for g in self.groups)
+
+    def ordered_groups(self) -> list[list[int]]:
+        """Return groups in execution order."""
+        return [self.groups[i] for i in self.ordering]
+
+    def copy(self) -> Grouping:
+        return Grouping(
+            groups=[list(g) for g in self.groups],
+            ordering=list(self.ordering),
+            fitness=self.fitness,
+        )
+
+    def __hash__(self) -> int:
+        return hash(tuple(tuple(sorted(g)) for g in self.ordered_groups()))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Grouping):
+            return False
+        return self.ordered_groups() == other.ordered_groups()

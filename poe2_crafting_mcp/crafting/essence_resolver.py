@@ -258,4 +258,5 @@ class EssenceResolver:
             "Normal": "normal_essence",
             "Greater": "greater_essence",
             "Perfect": "perfect_essence",
+            "Alloy": "alloy",
         }.get(tier, "")

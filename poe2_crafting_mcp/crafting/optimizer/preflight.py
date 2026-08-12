@@ -51,6 +51,38 @@ _CURRENCY_NAME_MAP: dict[str, str] = {
     "Perfect Chaos Orb": "perfect_chaos",
 }
 
+# Trade API price_currency slugs → DB name in prices table.
+# Used to convert listing prices (e.g. "3 transmute") into chaos equivalent.
+_TRADE_CURRENCY_TO_DB: dict[str, str] = {
+    "transmute": "Orb Of Transmutation",
+    "aug": "Orb Of Augmentation",
+    "chaos": "Chaos Orb",
+    "divine": "Divine Orb",
+    "exalted": "Exalted Orb",
+    "regal": "Regal Orb",
+    "alch": "Orb Of Alchemy",
+    "annul": "Orb Of Annulment",
+    "vaal": "Vaal Orb",
+    "chance": "Orb Of Chance",
+    "frac": "Fracturing Orb",
+    "mirror": "Mirror Of Kalandra",
+    "artificer": "Artificers Orb",
+    "armourer": "Armourers Scrap",
+    "blacksmith": "Blacksmiths Whetstone",
+    "gemcutter": "Gemcutters Prism",
+    "glassblower": "Glassblowers Bauble",
+    "perfect-transmute": "Perfect Orb of Transmutation",
+    "greater-transmute": "Greater Orb of Transmutation",
+    "greater-aug": "Greater Orb of Augmentation",
+    "greater-regal": "Greater Regal Orb",
+    "greater-chaos": "Greater Chaos Orb",
+    "greater-exalted": "Greater Exalted Orb",
+    "perfect-aug": "Perfect Orb of Augmentation",
+    "perfect-regal": "Perfect Regal Orb",
+    "perfect-chaos": "Perfect Chaos Orb",
+    "perfect-exalted": "perfect Exalted Orb",
+}
+
 _OMEN_NAME_MAP: dict[str, str] = {
     "Omen of Sinistral Exaltation": "sinistral_exaltation",
     "Omen of Dextral Exaltation": "dextral_exaltation",
@@ -86,6 +118,7 @@ def preflight(
     target_mods: list[tuple[str, str, int]],
     db_path: str | None = None,
     rune_pools: list[str] | None = None,
+    base_name: str | None = None,
 ) -> tuple[dict, PriceCache, CraftTarget]:
     """Fetch all data needed for optimization from the local DB.
 
@@ -99,6 +132,9 @@ def preflight(
         db_path: optional path to SQLite DB (uses default if None)
         rune_pools: optional list of rune pool names to merge into the mod pool
             (e.g. ["marksman", "decay"]). These expand the available mod pool.
+        base_name: optional specific base item name (e.g. "Stitched Gloves").
+            When provided, trade lookups search for this exact base instead of
+            the generic item category, giving more accurate scour/buy prices.
 
     Returns:
         pool_data: encoded mod pool dict for bridge.encode_pool()
@@ -195,7 +231,25 @@ def preflight(
             ess_suffix_families.append(fam_id)
             ess_suffix_tiers.append(tier_idx + 1)
 
-    # ── Phase 1d: Fetch Desecrated Pool (for target detection) ──
+    # ── Phase 1d: Fetch Alloy Pool (separate from essence/perfect_essence) ──
+    alloy_prefix_families: list[int] = []
+    alloy_prefix_tiers: list[int] = []
+    alloy_suffix_families: list[int] = []
+    alloy_suffix_tiers: list[int] = []
+
+    alloy_result = pdb.get_craftable_mods(item_class, ilvl, pool="alloy")
+    for group in alloy_result.get("prefixes", []):
+        fam_id = get_family_id(group["family"])
+        for tier_idx, tier in enumerate(group["tiers"]):
+            alloy_prefix_families.append(fam_id)
+            alloy_prefix_tiers.append(tier_idx + 1)
+    for group in alloy_result.get("suffixes", []):
+        fam_id = get_family_id(group["family"])
+        for tier_idx, tier in enumerate(group["tiers"]):
+            alloy_suffix_families.append(fam_id)
+            alloy_suffix_tiers.append(tier_idx + 1)
+
+    # ── Phase 1e: Fetch Desecrated Pool (for target detection) ──
     # We need to know which targets come from the desecrated pool so the
     # decomposer uses desecrate+reveal instead of exalt/essence.
     desecrated_result = pdb.get_craftable_mods(item_class, ilvl, pool="desecrated")
@@ -256,6 +310,10 @@ def preflight(
         essence_prefix_tiers=ess_prefix_tiers or None,
         essence_suffix_families=ess_suffix_families or None,
         essence_suffix_tiers=ess_suffix_tiers or None,
+        alloy_prefix_families=alloy_prefix_families or None,
+        alloy_prefix_tiers=alloy_prefix_tiers or None,
+        alloy_suffix_families=alloy_suffix_families or None,
+        alloy_suffix_tiers=alloy_suffix_tiers or None,
         desecrated_prefix_pool_size=len(desecrated_prefix_families),
         desecrated_suffix_pool_size=len(desecrated_suffix_families),
     )
@@ -297,6 +355,25 @@ def preflight(
     for key, price in essence_prices.items():
         currency_prices[key] = price
 
+    # ── Phase 4c: Abyss bone prices (desecrate cost) ──
+    # Desecrate uses a bone at the Well of Souls. Fetch the cheapest common
+    # bone price from the "abyss" category. Reveal is free (just picking).
+    abyss_rows = pdb.get_bulk_prices("abyss", league)
+    bone_prices = []
+    for row in abyss_rows:
+        name = row.get("name", "")
+        val = row.get("chaos_value")
+        # Only count craftable bones (Jawbone/Rib/Collarbone), not gazes/crania
+        if val and val > 0 and any(b in name for b in ("Jawbone", "Rib", "Collarbone")):
+            bone_prices.append(val)
+    if bone_prices:
+        bone_prices.sort()
+        # Use the median of the 3 cheapest bones as representative cost
+        cheapest = bone_prices[:3]
+        desecrate_price = cheapest[len(cheapest) // 2]
+    else:
+        desecrate_price = 0.5  # fallback
+
     # Default prices for common currencies not tracked by poe.ninja (too cheap)
     _DEFAULTS: dict[str, float] = {
         "transmute": 0.01,
@@ -317,18 +394,44 @@ def preflight(
         "normal_essence": 0.5,
         "greater_essence": 1.0,
         "perfect_essence": 10.0,
+        "alloy": 5.0,
+        # Abyss: desecrate uses a bone, reveal is free (picking from options)
+        "desecrate": desecrate_price,
+        "reveal": 0.0,
     }
     for name, default_price in _DEFAULTS.items():
         if name not in currency_prices:
             currency_prices[name] = default_price
 
-    # ── Phase 5: Base item prices ──
-    # Default: white bases cost ~1c. High ilvl or niche bases may cost more.
-    # CLI can override with --base-price. No trade API data for bases yet.
+    # ── Phase 5: Trade API price lookups (best-effort) ──
+    # Three lookups:
+    #   1. base_white: white base item of the right type
+    #   2. base_magic_with: magic items with each target mod (for buy_magic pricing)
+    #   3. trade_finished: rare items with ALL target mods (for CRAFT vs BUY verdict)
     base_white = 1.0
     base_magic_with: dict[str, float] = {}
     base_fractured_with: dict[str, float] = {}
     trade_finished = float("inf")
+
+    trade_prices = _lookup_trade_prices(
+        pdb, league, item_class, ilvl, target_mods, targets,
+        base_name=base_name,
+    )
+    if trade_prices.get("base_white"):
+        base_white = max(trade_prices["base_white"], 0.5)
+    if trade_prices.get("base_magic_with"):
+        # Floor magic prices: buying a specific-mod magic item is never free.
+        # Minimum = base_white (you still need the base) + a small crafting fee.
+        magic_floor = base_white + 0.5
+        base_magic_with = {
+            k: max(v, magic_floor) for k, v in trade_prices["base_magic_with"].items()
+        }
+    if trade_prices.get("trade_finished"):
+        # A finished rare with multiple target mods is never cheaper than
+        # its base. Use a reasonable floor based on target count.
+        n_targets = len(targets)
+        finished_floor = base_white * max(n_targets, 2)
+        trade_finished = max(trade_prices["trade_finished"], finished_floor)
 
     # Scouring = buying a new white base (no Orb of Scouring in PoE2)
     currency_prices["scouring"] = base_white
@@ -342,6 +445,7 @@ def preflight(
         base_magic_with=base_magic_with,
         base_fractured_with=base_fractured_with,
         trade_finished=trade_finished,
+        trade_urls=trade_prices.get("trade_urls", {}),
     )
 
     rune_info = f" | Runes: {', '.join(rune_pools)} (+{rune_mod_count} mods)" if rune_pools else ""
@@ -475,6 +579,328 @@ def lookup_display_info(
         conn.close()
     except Exception:
         pass
+
+    return result
+
+
+# ── Trade API Price Lookups ──────────────────────────────────────────────────
+
+import re
+
+# Map item_class slug → trade2 API category value
+_CLASS_TO_TRADE_CATEGORY: dict[str, str] = {
+    "Gloves": "armour.gloves", "Boots": "armour.boots",
+    "Helmets": "armour.helmet", "Body_Armours": "armour.chest",
+    "Shields": "armour.shield", "Bucklers": "armour.buckler",
+    "Amulets": "accessory.amulet", "Rings": "accessory.ring",
+    "Belts": "accessory.belt", "Bows": "weapon.bow",
+    "Crossbows": "weapon.crossbow", "Wands": "weapon.wand",
+    "Sceptres": "weapon.sceptre", "Staves": "weapon.staff",
+    "Foci": "armour.focus", "Claws": "weapon.claw",
+    "Daggers": "weapon.dagger", "Spears": "weapon.spear",
+    "Flails": "weapon.flail", "Quarterstaves": "weapon.warstaff",
+    "Quivers": "armour.quiver", "Talismans": "weapon.talisman",
+    "Traps": "weapon.crossbow",
+    "One_Hand_Swords": "weapon.onesword", "One_Hand_Axes": "weapon.oneaxe",
+    "One_Hand_Maces": "weapon.onemace", "Two_Hand_Swords": "weapon.twosword",
+    "Two_Hand_Axes": "weapon.twoaxe", "Two_Hand_Maces": "weapon.twomace",
+}
+
+
+def _item_class_to_trade_category(item_class: str) -> str | None:
+    """Map optimizer item_class slug to trade2 API category value."""
+    # Strip attribute suffix: "Gloves_int" → "Gloves", "Body_Armours_str_int" → "Body_Armours"
+    attr_suffixes = ["str_dex_int", "str_int", "str_dex", "dex_int", "str", "dex", "int"]
+    base = item_class
+    for suffix in attr_suffixes:
+        if item_class.endswith(f"_{suffix}"):
+            base = item_class[:-(len(suffix) + 1)]
+            break
+    return _CLASS_TO_TRADE_CATEGORY.get(base)
+
+
+def _stat_text_to_trade_pattern(stat_text: str) -> str:
+    """Normalize DB stat_text to trade API pattern.
+
+    "Adds (37-55) to (63-94) Physical Damage" → "Adds # to # Physical Damage"
+    "+(15-20)% to Fire Resistance" → "#% to Fire Resistance"
+    "+5 to Level of all Melee Skills" → "# to Level of all Melee Skills"
+    """
+    # Replace (min-max) ranges with #
+    pattern = re.sub(r'\(\d+(?:\.\d+)?-\d+(?:\.\d+)?\)', '#', stat_text)
+    # Replace standalone numbers with # (but not inside words)
+    pattern = re.sub(r'(?<![a-zA-Z])\d+(?:\.\d+)?(?![a-zA-Z])', '#', pattern)
+    # Strip leading + (trade API uses bare #)
+    pattern = re.sub(r'^\+#', '#', pattern)
+    pattern = re.sub(r' \+#', ' #', pattern)
+    return pattern
+
+
+def _resolve_trade_stat_filter(
+    pdb,
+    item_class: str,
+    family: str,
+    affix_type: str,
+    max_tier: int = 0,
+    pool_source: str = "normal",
+) -> dict | None:
+    """Resolve a mod family to a trade API stat filter dict.
+
+    Returns {"id": "explicit.stat_XXX", "min": N} or None.
+    The "min" key is set to the lowest roll of the requested tier so the
+    trade search only matches items with that tier or better.
+
+    Uses the correct stat_type prefix:
+    - normal pool → "explicit.stat_XXX"
+    - desecrated pool → "desecrated.stat_XXX"
+    """
+    import sqlite3
+    import os
+
+    db_path = os.environ.get("POE2_CRAFT_DB", "data/poe2_craft.db")
+    try:
+        conn = sqlite3.connect(db_path)
+        # Get all tiers for this family, ordered T1 (best) first
+        rows = conn.execute(
+            "SELECT stat_text, pool FROM mod_weights "
+            "WHERE mod_family = ? AND item_class = ? AND affix_type = ? "
+            "AND pool IN ('normal', 'desecrated') "
+            "ORDER BY req_level DESC",
+            (family, item_class, affix_type),
+        ).fetchall()
+        if not rows:
+            conn.close()
+            return None
+
+        # Use first row for pattern + pool detection
+        pattern = _stat_text_to_trade_pattern(rows[0][0])
+        actual_pool = rows[0][1]
+
+        # Trade API uses different stat_type prefixes per pool source
+        stat_type = "desecrated" if actual_pool == "desecrated" else "explicit"
+        trade_row = conn.execute(
+            "SELECT stat_id FROM trade_stats "
+            "WHERE stat_text = ? AND stat_type = ? LIMIT 1",
+            (pattern, stat_type),
+        ).fetchone()
+        conn.close()
+        if not trade_row:
+            return None
+
+        result: dict = {"id": trade_row[0]}
+
+        # Extract min value from the requested tier's stat_text
+        if max_tier > 0 and max_tier <= len(rows):
+            tier_text = rows[max_tier - 1][0]  # T1=index 0, T2=index 1, ...
+            min_val = _extract_stat_min(tier_text)
+            if min_val is not None:
+                result["min"] = min_val
+
+        return result
+    except Exception:
+        pass
+    return None
+
+
+def _extract_stat_min(stat_text: str) -> float | None:
+    """Extract the minimum numeric value from a stat_text.
+
+    "(36-41) to maximum Energy Shield" → 36
+    "+(85-99) to maximum Life" → 85
+    "Adds (37-55) to (63-94) Physical Damage" → 37
+    "(10-15)% chance to ..." → 10
+    "+2 to Level of all Melee Skills" → 2
+    """
+    # Range pattern: (X-Y)
+    m = re.search(r'\((-?[\d.]+)-[\d.]+\)', stat_text)
+    if m:
+        return float(m.group(1))
+    # Flat value: "+N ..." or "N% ..." at start of text
+    m = re.match(r'^\+?(-?[\d.]+)', stat_text)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def _trade_price_to_chaos(
+    price_info: dict,
+    chaos_rates: dict[str, float],
+) -> float | None:
+    """Convert a trade API price {amount, currency} to chaos equivalent.
+
+    chaos_rates maps trade API currency slugs (e.g. "transmute") to chaos value
+    per unit. Returns None if the currency is unknown.
+    """
+    amount = price_info.get("amount", 0)
+    currency = price_info.get("currency", "")
+    if not amount or not currency:
+        return None
+    if currency == "chaos":
+        return float(amount)
+    rate = chaos_rates.get(currency)
+    if rate is None:
+        log.debug(f"Trade: unknown currency '{currency}', cannot convert to chaos")
+        return None
+    return float(amount) * rate
+
+
+def _build_chaos_rates(pdb, league: str) -> dict[str, float]:
+    """Build a map from trade API currency slugs to chaos value per unit.
+
+    Uses the prices table (poe.ninja data) to look up chaos_value for each
+    currency, keyed by the trade API slug from _TRADE_CURRENCY_TO_DB.
+    """
+    rates: dict[str, float] = {"chaos": 1.0}
+    currency_rows = pdb.get_bulk_prices("currency", league)
+    # Build DB name → chaos_value lookup
+    db_chaos: dict[str, float] = {}
+    for row in currency_rows:
+        if row.get("chaos_value"):
+            db_chaos[row["name"]] = row["chaos_value"]
+    # Map trade slugs to chaos values
+    for slug, db_name in _TRADE_CURRENCY_TO_DB.items():
+        if db_name in db_chaos:
+            rates[slug] = db_chaos[db_name]
+    return rates
+
+
+def _lookup_trade_prices(
+    pdb,
+    league: str,
+    item_class: str,
+    ilvl: int,
+    target_mods: list[tuple[str, str, int]],
+    targets: list[ModTarget],
+    base_name: str | None = None,
+) -> dict:
+    """Look up live trade prices for base items and target mods.
+
+    Args:
+        base_name: specific base item name (e.g. "Stitched Gloves").
+            When provided, the white base lookup searches for this exact base
+            instead of the generic category, giving a more accurate price.
+
+    Returns dict with optional keys:
+        base_white: float — median price of white base (in chaos)
+        base_magic_with: dict[str, float] — magic item price per target family (in chaos)
+        trade_finished: float — finished rare item with all targets (in chaos)
+
+    All prices are converted to chaos equivalent using poe.ninja exchange rates.
+    All lookups are best-effort; failures return empty dict.
+    """
+    from poe2_crafting_mcp.data.trade_client import TradeClient, TradeError
+
+    result: dict = {}
+    category = _item_class_to_trade_category(item_class)
+    if (not category and not base_name) or not league:
+        return result
+
+    try:
+        tc = TradeClient()
+    except Exception:
+        return result
+
+    chaos_rates = _build_chaos_rates(pdb, league)
+
+    # ── 1. White base price ──
+    try:
+        if base_name:
+            # Specific base: search by exact name for accurate pricing
+            est = tc.estimate_price(
+                league, base_name=base_name,
+                ilvl_min=ilvl, rarity="normal", sample=5,
+            )
+        else:
+            # Generic category search
+            est = tc.estimate_trade_price(
+                league, stat_filters=[], category=category,
+                rarity="normal", ilvl_min=ilvl, sample=5,
+            )
+        if est.get("found") and est.get("median_price"):
+            base_price = _trade_price_to_chaos(est["median_price"], chaos_rates)
+            if base_price and base_price > 0:
+                result["base_white"] = base_price
+                cur = est["median_price"].get("currency", "?")
+                amt = est["median_price"].get("amount", 0)
+                label = base_name or "white base"
+                log.info(f"Trade: {label} = {amt} {cur} → {base_price:.4f}c")
+        if est.get("trade_url"):
+            result.setdefault("trade_urls", {})["base_white"] = est["trade_url"]
+    except Exception as e:
+        log.debug(f"Trade: white base lookup failed: {e}")
+
+    # ── 2. Magic items with each target mod (for buy_magic pricing) ──
+    # Only look up normal-pool targets (desecrated mods can't be on trade items)
+    magic_prices: dict[str, float] = {}
+    for t in targets:
+        if t.pool_source != "normal":
+            continue
+        stat_filter = _resolve_trade_stat_filter(
+            pdb, item_class, t.family, t.affix_type, max_tier=t.max_tier,
+        )
+        if not stat_filter:
+            log.debug(f"Trade: no stat_id for {t.family}, skipping magic price lookup")
+            continue
+        try:
+            est = tc.estimate_trade_price(
+                league,
+                stat_filters=[stat_filter],
+                category=category,
+                rarity="magic",
+                sample=5,
+            )
+            if est.get("found") and est.get("median_price"):
+                price = _trade_price_to_chaos(est["median_price"], chaos_rates)
+                if price and price > 0:
+                    magic_prices[t.family] = price
+                    cur = est["median_price"].get("currency", "?")
+                    amt = est["median_price"].get("amount", 0)
+                    log.info(f"Trade: magic {t.family} = {amt} {cur} → {price:.4f}c")
+        except Exception as e:
+            log.debug(f"Trade: magic {t.family} lookup failed: {e}")
+
+    if magic_prices:
+        result["base_magic_with"] = magic_prices
+
+    # ── 3. Finished rare item with ALL target mods ──
+    # Include both normal and desecrated targets (desecrated items appear on trade)
+    all_stat_filters = []
+    for t in targets:
+        stat_filter = _resolve_trade_stat_filter(
+            pdb, item_class, t.family, t.affix_type,
+            max_tier=t.max_tier, pool_source=t.pool_source,
+        )
+        if stat_filter:
+            all_stat_filters.append(stat_filter)
+
+    has_desecrated = any(t.pool_source == "desecrated" for t in targets)
+    if all_stat_filters:
+        try:
+            finished_kwargs: dict = {
+                "category": category,
+                "rarity": "nonunique",
+            }
+            if has_desecrated:
+                finished_kwargs["desecrated"] = True
+            est = tc.estimate_trade_price(
+                league,
+                stat_filters=all_stat_filters,
+                stats_type="and",
+                sample=5,
+                **finished_kwargs,
+            )
+            if est.get("found") and est.get("median_price"):
+                price = _trade_price_to_chaos(est["median_price"], chaos_rates)
+                if price and price > 0:
+                    result["trade_finished"] = price
+                    cur = est["median_price"].get("currency", "?")
+                    amt = est["median_price"].get("amount", 0)
+                    log.info(f"Trade: finished item = {amt} {cur} → {price:.2f}c "
+                             f"({est.get('total_listings', 0)} listings)")
+            if est.get("trade_url"):
+                result.setdefault("trade_urls", {})["trade_finished"] = est["trade_url"]
+        except Exception as e:
+            log.debug(f"Trade: finished item lookup failed: {e}")
 
     return result
 

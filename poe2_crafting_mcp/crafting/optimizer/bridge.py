@@ -75,6 +75,10 @@ def encode_pool(
     essence_prefix_tiers: list[int] | None = None,
     essence_suffix_families: list[int] | None = None,
     essence_suffix_tiers: list[int] | None = None,
+    alloy_prefix_families: list[int] | None = None,
+    alloy_prefix_tiers: list[int] | None = None,
+    alloy_suffix_families: list[int] | None = None,
+    alloy_suffix_tiers: list[int] | None = None,
     desecrated_prefix_pool_size: int = 0,
     desecrated_suffix_pool_size: int = 0,
 ) -> dict[str, np.ndarray]:
@@ -118,6 +122,14 @@ def encode_pool(
     if essence_suffix_families:
         result["essence_suffix_families"] = np.array(essence_suffix_families, dtype=np.uint16)
         result["essence_suffix_tiers"] = np.array(essence_suffix_tiers or [], dtype=np.uint8)
+
+    # Alloy pool (separate from essence — different mod pool and pricing)
+    if alloy_prefix_families:
+        result["alloy_prefix_families"] = np.array(alloy_prefix_families, dtype=np.uint16)
+        result["alloy_prefix_tiers"] = np.array(alloy_prefix_tiers or [], dtype=np.uint8)
+    if alloy_suffix_families:
+        result["alloy_suffix_families"] = np.array(alloy_suffix_families, dtype=np.uint16)
+        result["alloy_suffix_tiers"] = np.array(alloy_suffix_tiers or [], dtype=np.uint8)
 
     return result
 
@@ -238,6 +250,10 @@ def evaluate_population_rust(
         pool_data.get("essence_prefix_tiers"),
         pool_data.get("essence_suffix_families"),
         pool_data.get("essence_suffix_tiers"),
+        pool_data.get("alloy_prefix_families"),
+        pool_data.get("alloy_prefix_tiers"),
+        pool_data.get("alloy_suffix_families"),
+        pool_data.get("alloy_suffix_tiers"),
         pool_data.get("desecrated_prefix_pool_size"),
         pool_data.get("desecrated_suffix_pool_size"),
     )

@@ -3,10 +3,11 @@
 Orchestrates the full GP loop:
   init → evaluate → select → breed → archive → repeat → cluster → output
 
-Provides three multi-target strategies:
+Provides four multi-target strategies:
 - optimize(): monolithic single-population GP (best for 1-3 targets)
 - optimize_multi_target(): Tier 1 sequential decomposition (independent phases)
 - optimize_cooperative(): Tier 2 cooperative coevolution (co-adapting phases)
+- optimize_hierarchical(): Tier 3 hierarchical GP (evolved target groupings)
 
 Usage:
     from poe2_crafting_mcp.crafting.optimizer.runner import optimize, OptimizerConfig
@@ -35,6 +36,7 @@ from .gene import (
     CraftTarget,
     DecomposedResult,
     Fitness,
+    Grouping,
     Individual,
     ModTarget,
     PhaseResult,
@@ -65,6 +67,7 @@ class OptimizerConfig:
     archive_injection_fraction: float = 0.1
     convergence_threshold: float = 0.001  # hypervolume change threshold
     convergence_patience: int = 5         # generations without improvement
+    no_buy: bool = False                   # disable buy_magic/buy_base/buy_fractured
 
 
 # ── Result Structures ─────────────────────────────────────────────────────────
@@ -148,6 +151,47 @@ class OptimizationResult:
 
 def _label_strategy(rl: RuleList, fitness: Fitness, prices: PriceCache) -> CraftingStrategy:
     """Convert a RuleList + Fitness into a labeled CraftingStrategy."""
+    from .gene import Currency, Condition, Rarity, Predicate, Rule
+
+    # Final pruning: remove dead rules before display (no minimum)
+    # Setup rules are preserved — they fire only after SCOUR but are essential.
+    if fitness.fire_on_success:
+        pruned = rl.copy()
+        for i in range(pruned.size - 1, -1, -1):
+            if pruned.rules[i].label.startswith("setup:"):
+                continue
+            if fitness.rule_is_dead(i) and pruned.size > 1:
+                pruned.rules.pop(i)
+        rl = pruned
+
+    # Rewrite DEFAULT conditions with implicit rarity requirements.
+    # Actions like regal (Magic-only), exalt (Rare-only), transmute (Normal-only)
+    # are gated by action_is_valid — make this explicit in the output so users
+    # know when each rule actually fires.
+    _ACTION_RARITY = {
+        Currency.TRANSMUTE: Rarity.NORMAL, Currency.GREATER_TRANSMUTE: Rarity.NORMAL,
+        Currency.PERFECT_TRANSMUTE: Rarity.NORMAL,
+        Currency.AUGMENT: Rarity.MAGIC, Currency.GREATER_AUGMENT: Rarity.MAGIC,
+        Currency.PERFECT_AUGMENT: Rarity.MAGIC,
+        Currency.REGAL: Rarity.MAGIC, Currency.GREATER_REGAL: Rarity.MAGIC,
+        Currency.PERFECT_REGAL: Rarity.MAGIC,
+        Currency.EXALTED: Rarity.RARE, Currency.GREATER_EXALTED: Rarity.RARE,
+        Currency.PERFECT_EXALTED: Rarity.RARE,
+        Currency.CHAOS: Rarity.RARE, Currency.GREATER_CHAOS: Rarity.RARE,
+        Currency.PERFECT_CHAOS: Rarity.RARE,
+    }
+    rewritten = rl.copy()
+    for i, rule in enumerate(rewritten.rules):
+        if rule.condition.predicate == Predicate.ALWAYS_TRUE:
+            req_rarity = _ACTION_RARITY.get(rule.action.currency)
+            if req_rarity is not None:
+                rewritten.rules[i] = Rule(
+                    Condition.rarity_is(req_rarity),
+                    rule.action,
+                    rule.label,
+                )
+    rl = rewritten
+
     # Determine starting state from rules
     from .gene import Currency
     starting_state = "blank"
@@ -238,10 +282,14 @@ def optimize(
     if config is None:
         config = OptimizerConfig()
 
+    from .operators import configure_currencies
+    configure_currencies(no_buy=config.no_buy)
+
     start_time = time.time()
 
     # ── Initialize population ──
-    seeded = create_seeded_population(config.pop_size, config.seed_fraction)
+    seeded = create_seeded_population(config.pop_size, config.seed_fraction,
+                                      no_buy=config.no_buy)
     population: list[Individual] = [Individual(rl) for rl in seeded]
 
     # Fill remaining with random individuals
@@ -397,11 +445,15 @@ def _random_rulelist() -> RuleList:
     return rl
 
 
-def _random_rulelist_for_phase(setup_rules: list | None = None) -> RuleList:
+def _random_rulelist_for_phase(
+    setup_rules: list | None = None,
+    starting_rarity: int = 2,
+) -> RuleList:
     """Generate a random rule-list for a decomposed phase.
 
-    Prepends setup rules, then adds random exalt/annul rules.
-    Skips transmute/alchemy since the item is already Rare.
+    Prepends setup rules, then adds random rules appropriate for the
+    starting rarity. Rare items get exalt/annul rules. Normal/Magic items
+    get transmute/regal rules first to reach Rare.
     """
     from .gene import Condition, Action, Currency, Rarity, Omen
 
@@ -415,31 +467,58 @@ def _random_rulelist_for_phase(setup_rules: list | None = None) -> RuleList:
     # Success check
     rl.add_rule(Condition.all_targets_hit(), Action(Currency.DONE))
 
-    n_rules = random.randint(3, 6)
-    exalt_actions = [
-        Action(Currency.EXALTED),
-        Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
-        Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
-        Action(Currency.GREATER_EXALTED),
-        Action(Currency.GREATER_EXALTED, Omen.SINISTRAL_EXALTATION),
-        Action(Currency.GREATER_EXALTED, Omen.DEXTRAL_EXALTATION),
-        Action(Currency.ANNULMENT),
-    ]
-    conditions = [
-        Condition.open_prefix_gte(1),
-        Condition.open_suffix_gte(1),
-        Condition.missing_target_prefix(),
-        Condition.missing_target_suffix(),
-        Condition.removable_gt_targets(),
-        Condition.has_non_target_removable(),
-    ]
+    if starting_rarity == 0:
+        # Starting from Normal: transmute + scour search loop
+        rl.add_rule(Condition.rarity_is(Rarity.NORMAL), Action(Currency.TRANSMUTE))
+        rl.add_rule(Condition.always_true(), Action(Currency.SCOUR))
+    elif starting_rarity == 1:
+        # Starting from Magic: regal to Rare, then exalt
+        rl.add_rule(Condition.rarity_is(Rarity.MAGIC), Action(
+            random.choice([Currency.REGAL, Currency.GREATER_REGAL, Currency.PERFECT_REGAL])
+        ))
+        n_rules = random.randint(1, 3)
+        for _ in range(n_rules):
+            cond = random.choice([
+                Condition.open_prefix_gte(1),
+                Condition.open_suffix_gte(1),
+                Condition.missing_target_prefix(),
+                Condition.missing_target_suffix(),
+            ])
+            act = random.choice([
+                Action(Currency.EXALTED),
+                Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
+                Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
+                Action(Currency.ANNULMENT),
+            ])
+            rl.add_rule(cond, act)
+        rl.add_rule(Condition.always_true(), Action(Currency.SCOUR))
+    else:
+        # Starting from Rare: exalt/annul rules
+        n_rules = random.randint(3, 6)
+        exalt_actions = [
+            Action(Currency.EXALTED),
+            Action(Currency.EXALTED, Omen.SINISTRAL_EXALTATION),
+            Action(Currency.EXALTED, Omen.DEXTRAL_EXALTATION),
+            Action(Currency.GREATER_EXALTED),
+            Action(Currency.GREATER_EXALTED, Omen.SINISTRAL_EXALTATION),
+            Action(Currency.GREATER_EXALTED, Omen.DEXTRAL_EXALTATION),
+            Action(Currency.ANNULMENT),
+        ]
+        conditions = [
+            Condition.open_prefix_gte(1),
+            Condition.open_suffix_gte(1),
+            Condition.missing_target_prefix(),
+            Condition.missing_target_suffix(),
+            Condition.removable_gt_targets(),
+            Condition.has_non_target_removable(),
+        ]
 
-    for _ in range(n_rules):
-        cond = random.choice(conditions)
-        act = random.choice(exalt_actions)
-        rl.add_rule(cond, act)
+        for _ in range(n_rules):
+            cond = random.choice(conditions)
+            act = random.choice(exalt_actions)
+            rl.add_rule(cond, act)
 
-    rl.add_rule(Condition.always_true(), Action(Currency.SCOUR))
+        rl.add_rule(Condition.always_true(), Action(Currency.SCOUR))
     return rl
 
 
@@ -486,6 +565,9 @@ def optimize_multi_target(
 
     if config is None:
         config = OptimizerConfig()
+
+    from .operators import configure_currencies
+    configure_currencies(no_buy=config.no_buy)
 
     start_time = time.time()
     n_targets = len(target.targets)
@@ -560,7 +642,8 @@ def optimize_multi_target(
             continue
         log.info(f"Optimizing phase {phase.phase_index}: {phase}")
 
-        # Build setup rules for this phase (encodes prior-phase state)
+        # Setup rules rebuild prior-phase mods after SCOUR (which resets to blank).
+        # Returns [] for phase 0 (no starting_mods).
         setup_rules = build_setup_rules(phase)
 
         # Build the phase-specific CraftTarget
@@ -575,16 +658,24 @@ def optimize_multi_target(
         # Generate phase-appropriate initial population
         primary_affix = phase.targets[0].affix_type
         primary_pool = phase.targets[0].pool_source
+        primary_fam_id = phase.targets[0].family_id
         seeded = create_seeded_population_for_phase(
             config.pop_size, config.seed_fraction,
             primary_affix, setup_rules,
             pool_source=primary_pool,
+            target_in_essence_pool=_target_in_pool(
+                phase_pool, primary_fam_id, primary_affix, "essence"
+            ),
+            target_in_alloy_pool=_target_in_pool(
+                phase_pool, primary_fam_id, primary_affix, "alloy"
+            ),
+            starting_rarity=phase.starting_rarity,
         )
         population: list[Individual] = [Individual(rl) for rl in seeded]
 
         # Fill remaining with random phase-aware individuals
         while len(population) < config.pop_size:
-            rl = _random_rulelist_for_phase(setup_rules)
+            rl = _random_rulelist_for_phase(setup_rules, phase.starting_rarity)
             population.append(Individual(rl))
 
         # Encode initial state for Rust (later phases start from prior mods)
@@ -730,6 +821,15 @@ def _build_phase_pool_target(phase: PhaseTarget, full_target: CraftTarget) -> Cr
         item_class=full_target.item_class,
         ilvl=full_target.ilvl,
     )
+
+
+def _target_in_pool(pool_data: dict, family_id: int, affix_type: str, pool_name: str) -> bool:
+    """Check if a target family exists in a specific pool (essence/alloy)."""
+    key = f"{pool_name}_{affix_type}_families"
+    arr = pool_data.get(key)
+    if arr is None:
+        return False
+    return int(family_id) in arr
 
 
 def _retarget_pool(pool_data: dict, new_target: CraftTarget) -> dict:
@@ -933,6 +1033,9 @@ def optimize_cooperative(
     if config is None:
         config = OptimizerConfig()
 
+    from .operators import configure_currencies
+    configure_currencies(no_buy=config.no_buy)
+
     start_time = time.time()
     n_targets = len(target.targets)
 
@@ -994,20 +1097,31 @@ def optimize_cooperative(
 
     sub_pops: list[_PhasePopulation] = []
     for phase in phases:
-        setup_rules = build_setup_rules(phase)
         phase_craft_target = _build_phase_pool_target(phase, target)
         phase_pool = _retarget_pool(pool_data, phase_craft_target)
 
+        # Setup rules rebuild prior-phase mods after SCOUR (which resets to blank).
+        # Returns [] for phase 0 (no starting_mods).
+        setup_rules = build_setup_rules(phase)
+
         primary_affix = phase.targets[0].affix_type
         primary_pool = phase.targets[0].pool_source
+        primary_fam_id = phase.targets[0].family_id
         seeded = create_seeded_population_for_phase(
             config.pop_size, config.seed_fraction,
             primary_affix, setup_rules,
             pool_source=primary_pool,
+            target_in_essence_pool=_target_in_pool(
+                phase_pool, primary_fam_id, primary_affix, "essence"
+            ),
+            target_in_alloy_pool=_target_in_pool(
+                phase_pool, primary_fam_id, primary_affix, "alloy"
+            ),
+            starting_rarity=phase.starting_rarity,
         )
         population: list[Individual] = [Individual(rl) for rl in seeded]
         while len(population) < config.pop_size:
-            rl = _random_rulelist_for_phase(setup_rules)
+            rl = _random_rulelist_for_phase(setup_rules, phase.starting_rarity)
             population.append(Individual(rl))
 
         sub_pops.append(_PhasePopulation(
@@ -1204,3 +1318,346 @@ def optimize_cooperative(
         item_class=target.item_class,
         ilvl=target.ilvl,
     )
+
+
+# ── Tier 3: Hierarchical GP ─────────────────────────────────────────────────
+
+
+def optimize_hierarchical(
+    pool_data: dict,
+    target: CraftTarget,
+    prices: PriceCache,
+    config: OptimizerConfig | None = None,
+    outer_pop_size: int = 20,
+    outer_generations: int = 10,
+    decompose_threshold: int = 4,
+) -> DecomposedResult:
+    """Tier 3: Hierarchical GP with evolved target groupings.
+
+    Outer GP evolves Grouping genomes (partitions of targets into phases).
+    Inner GP optimizes each phase's strategy with quick settings.
+    Best grouping is then re-optimized with full budget.
+
+    Args:
+        pool_data: encoded mod pool from bridge.encode_pool()
+        target: full multi-target CraftTarget
+        prices: pre-fetched price cache
+        config: GP parameters (applied to final re-optimization)
+        outer_pop_size: population size for the outer grouping GP
+        outer_generations: generations for the outer GP
+        decompose_threshold: min targets before decomposing (default 4)
+
+    Returns:
+        DecomposedResult with per-phase strategies and total cost.
+    """
+    from .decompose import (
+        build_phases_from_grouping,
+        build_setup_rules,
+        classify_phase_risk,
+        generate_seed_groupings,
+        grouping_crossover,
+        grouping_mutation,
+    )
+    from .seeds import create_seeded_population_for_phase
+
+    if config is None:
+        config = OptimizerConfig()
+
+    from .operators import configure_currencies
+    configure_currencies(no_buy=config.no_buy)
+
+    start_time = time.time()
+    n_targets = len(target.targets)
+
+    # For small target counts, fall back to monolithic optimization
+    if n_targets < decompose_threshold:
+        mono_result = optimize(pool_data, target, prices, config)
+        if mono_result.strategies:
+            best = mono_result.strategies[0]
+            phase_result = PhaseResult(
+                phase_index=0,
+                phase_target=PhaseTarget(targets=target.targets),
+                strategy=best,
+                expected_cost=best.expected_cost,
+                success_rate=best.success_rate,
+                restart_risk="safe",
+                cumulative_cost=best.expected_cost,
+            )
+            return DecomposedResult(
+                phases=[phase_result],
+                total_expected_cost=best.expected_cost,
+                total_success_rate=best.success_rate,
+                ordering=list(range(n_targets)),
+                ordering_rationale=f"Monolithic (only {n_targets} targets)",
+                trade_price=prices.trade_finished,
+                verdict=mono_result.best_verdict,
+                wall_time_seconds=time.time() - start_time,
+                item_class=target.item_class,
+                ilvl=target.ilvl,
+            )
+        return DecomposedResult(
+            wall_time_seconds=time.time() - start_time,
+            item_class=target.item_class,
+            ilvl=target.ilvl,
+            verdict="NO VIABLE STRATEGY FOUND",
+        )
+
+    # ── Step 1: Generate seed groupings ──
+    affix_types = [t.affix_type for t in target.targets]
+    pool_sources = [t.pool_source for t in target.targets]
+    outer_pop = generate_seed_groupings(n_targets, affix_types, pool_sources)
+
+    # Fill to outer_pop_size with random mutations of seeds
+    while len(outer_pop) < outer_pop_size:
+        parent = random.choice(outer_pop[:len(outer_pop)])
+        outer_pop.append(grouping_mutation(parent.copy()))
+
+    # ── Step 2: Quick inner GP settings for grouping evaluation ──
+    quick_config = OptimizerConfig(
+        pop_size=50,
+        max_generations=10,
+        mc_trials=200,
+        max_steps=config.max_steps,
+        seed_fraction=0.4,
+        elite_fraction=0.2,
+        convergence_patience=3,
+        no_buy=config.no_buy,
+    )
+
+    price_dict = {**prices.currency, **prices.omen}
+    price_dict["buy_magic"] = prices.base_magic_with.get(
+        target.targets[0].family, prices.base_white * 10
+    )
+
+    # Cache: grouping hash → total_cost
+    eval_cache: dict[int, float] = {}
+
+    # ── Step 3: Outer GP loop ──
+    for outer_gen in range(outer_generations):
+        for grouping in outer_pop:
+            if grouping.fitness < float("inf"):
+                continue  # already evaluated
+
+            cache_key = hash(grouping)
+            if cache_key in eval_cache:
+                grouping.fitness = eval_cache[cache_key]
+                continue
+
+            # Evaluate this grouping by running quick inner GP on each phase
+            phases = build_phases_from_grouping(target, grouping, pool_data, price_dict)
+            total_cost = 0.0
+
+            for phase in phases:
+                phase_cost = _evaluate_phase_quick(
+                    phase, target, pool_data, prices, quick_config
+                )
+                total_cost += phase_cost
+
+            grouping.fitness = total_cost
+            eval_cache[cache_key] = total_cost
+
+        log.info(
+            f"Outer gen {outer_gen}: best={min(g.fitness for g in outer_pop):.0f}c, "
+            f"pop={len(outer_pop)}, cache={len(eval_cache)}"
+        )
+
+        # Selection: tournament
+        outer_pop.sort(key=lambda g: g.fitness)
+        elite_count = max(2, outer_pop_size // 5)
+        elites = [g.copy() for g in outer_pop[:elite_count]]
+
+        # Breed offspring
+        offspring: list[Grouping] = []
+        while len(offspring) < outer_pop_size - elite_count:
+            # Tournament selection (k=3)
+            candidates = random.sample(outer_pop, min(3, len(outer_pop)))
+            parent_a = min(candidates, key=lambda g: g.fitness)
+            candidates = random.sample(outer_pop, min(3, len(outer_pop)))
+            parent_b = min(candidates, key=lambda g: g.fitness)
+
+            if random.random() < 0.5:
+                child = grouping_crossover(parent_a, parent_b)
+            else:
+                child = grouping_mutation(parent_a.copy())
+            offspring.append(child)
+
+        outer_pop = elites + offspring
+
+    # ── Step 4: Take best grouping, re-optimize with full budget ──
+    best_grouping = min(outer_pop, key=lambda g: g.fitness)
+    log.info(
+        f"Best grouping: {best_grouping.ordered_groups()} "
+        f"(quick estimate: {best_grouping.fitness:.0f}c)"
+    )
+
+    # Full-budget inner GP on the best grouping
+    phases = build_phases_from_grouping(target, best_grouping, pool_data, price_dict)
+
+    phase_results: list[PhaseResult] = []
+    cumulative_cost = 0.0
+    cumulative_success = 1.0
+
+    for phase in phases:
+        setup_rules = build_setup_rules(phase)
+        phase_craft_target = _build_phase_pool_target(phase, target)
+        phase_pool = _retarget_pool(pool_data, phase_craft_target)
+
+        primary_affix = phase.targets[0].affix_type
+        primary_pool = phase.targets[0].pool_source
+        primary_fam_id = phase.targets[0].family_id
+        seeded = create_seeded_population_for_phase(
+            config.pop_size, config.seed_fraction,
+            primary_affix, setup_rules,
+            pool_source=primary_pool,
+            target_in_essence_pool=_target_in_pool(
+                phase_pool, primary_fam_id, primary_affix, "essence"
+            ),
+            target_in_alloy_pool=_target_in_pool(
+                phase_pool, primary_fam_id, primary_affix, "alloy"
+            ),
+            starting_rarity=phase.starting_rarity,
+        )
+        population: list[Individual] = [Individual(rl) for rl in seeded]
+        while len(population) < config.pop_size:
+            rl = _random_rulelist_for_phase(setup_rules, phase.starting_rarity)
+            population.append(Individual(rl))
+
+        phase_initial_state = encode_initial_state(phase)
+
+        phase_config = OptimizerConfig(
+            pop_size=config.pop_size,
+            max_generations=config.max_generations,
+            mc_trials=config.mc_trials,
+            max_steps=config.max_steps,
+            seed_fraction=0.0,
+            elite_fraction=config.elite_fraction,
+            archive_injection_interval=config.archive_injection_interval,
+            archive_injection_fraction=config.archive_injection_fraction,
+            convergence_threshold=config.convergence_threshold,
+            convergence_patience=config.convergence_patience,
+        )
+
+        phase_result_raw = _run_gp_loop(
+            population, phase_pool, prices, phase_config,
+            initial_state=phase_initial_state,
+        )
+
+        if phase_result_raw.strategies:
+            best = phase_result_raw.strategies[0]
+        else:
+            best = CraftingStrategy(
+                rulelist=RuleList(),
+                fitness=Fitness(),
+                family_name="NO STRATEGY",
+                verdict="FAILED",
+                expected_cost=float("inf"),
+                success_rate=0.0,
+            )
+
+        risk = classify_phase_risk(
+            phase.targets[0],
+            len(phase.starting_mods),
+            phase.starting_rarity,
+        )
+
+        cumulative_cost += best.expected_cost
+        cumulative_success *= best.success_rate
+
+        phase_results.append(PhaseResult(
+            phase_index=phase.phase_index,
+            phase_target=phase,
+            strategy=best,
+            expected_cost=best.expected_cost,
+            success_rate=best.success_rate,
+            restart_risk=risk,
+            cumulative_cost=cumulative_cost,
+        ))
+
+        log.info(
+            f"Phase {phase.phase_index} done: {best.expected_cost:.0f}c, "
+            f"{best.success_rate:.0%}, risk={risk}"
+        )
+
+    # ── Step 5: Aggregate results ──
+    total_cost = sum(pr.expected_cost for pr in phase_results)
+    total_success = 1.0
+    for pr in phase_results:
+        total_success *= pr.success_rate
+
+    if total_cost < prices.trade_finished:
+        verdict = f"CRAFT (saves ~{prices.trade_finished - total_cost:.0f}c vs trade)"
+    elif prices.trade_finished < float("inf"):
+        verdict = f"BUY (crafting costs {total_cost - prices.trade_finished:.0f}c more)"
+    else:
+        verdict = f"CRAFT ({total_cost:.0f}c, no trade price available)"
+
+    wall_time = time.time() - start_time
+
+    # Build ordering from the best grouping (flatten)
+    flat_ordering = []
+    for group in best_grouping.ordered_groups():
+        flat_ordering.extend(group)
+
+    grouping_desc = " → ".join(
+        "[" + ", ".join(target.targets[i].family for i in g) + "]"
+        for g in best_grouping.ordered_groups()
+    )
+
+    return DecomposedResult(
+        phases=phase_results,
+        total_expected_cost=total_cost,
+        total_success_rate=total_success,
+        ordering=flat_ordering,
+        ordering_rationale=f"Hierarchical GP: {grouping_desc}",
+        trade_price=prices.trade_finished,
+        verdict=verdict,
+        wall_time_seconds=wall_time,
+        item_class=target.item_class,
+        ilvl=target.ilvl,
+    )
+
+
+def _evaluate_phase_quick(
+    phase: PhaseTarget,
+    full_target: CraftTarget,
+    pool_data: dict,
+    prices: PriceCache,
+    quick_config: OptimizerConfig,
+) -> float:
+    """Quick inner GP evaluation of a single phase. Returns expected cost."""
+    from .decompose import build_setup_rules
+    from .seeds import create_seeded_population_for_phase
+
+    setup_rules = build_setup_rules(phase)
+    phase_craft_target = _build_phase_pool_target(phase, full_target)
+    phase_pool = _retarget_pool(pool_data, phase_craft_target)
+
+    primary_affix = phase.targets[0].affix_type
+    primary_pool = phase.targets[0].pool_source
+    primary_fam_id = phase.targets[0].family_id
+    seeded = create_seeded_population_for_phase(
+        quick_config.pop_size, quick_config.seed_fraction,
+        primary_affix, setup_rules,
+        pool_source=primary_pool,
+        target_in_essence_pool=_target_in_pool(
+            phase_pool, primary_fam_id, primary_affix, "essence"
+        ),
+        target_in_alloy_pool=_target_in_pool(
+            phase_pool, primary_fam_id, primary_affix, "alloy"
+        ),
+        starting_rarity=phase.starting_rarity,
+    )
+    population: list[Individual] = [Individual(rl) for rl in seeded]
+    while len(population) < quick_config.pop_size:
+        rl = _random_rulelist_for_phase(setup_rules, phase.starting_rarity)
+        population.append(Individual(rl))
+
+    phase_initial_state = encode_initial_state(phase)
+    result = _run_gp_loop(
+        population, phase_pool, prices, quick_config,
+        initial_state=phase_initial_state,
+    )
+
+    if result.strategies:
+        return result.strategies[0].expected_cost
+    return float("inf")

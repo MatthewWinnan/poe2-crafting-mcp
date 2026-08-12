@@ -50,11 +50,35 @@ MUTATION_WEIGHTS = {
     "delete_rule": 0.10,
 }
 
-# Currencies that can appear in random rules (exclude terminal/meta actions)
+# Currencies excluded from random mutations
+_EXCLUDED_CURRENCIES = {
+    Currency.DONE, Currency.FAIL, Currency.REFORGE,
+    # Essences are only useful when target is in essence pool.
+    # Seeds include them conditionally; random mutations should not.
+    Currency.ESSENCE_LESSER, Currency.ESSENCE_NORMAL,
+    Currency.ESSENCE_GREATER, Currency.ESSENCE_PERFECT,
+    # Desecrate/Reveal only useful when target is in desecrated pool.
+    # Seeds include them conditionally via PHASE_SEEDS_DESECRATED.
+    Currency.DESECRATE, Currency.REVEAL,
+}
+
+_BUY_CURRENCIES = {Currency.BUY_BASE, Currency.BUY_MAGIC, Currency.BUY_FRACTURED}
+
+# Default currency pool (with buy actions)
 _CRAFTABLE_CURRENCIES = [
-    c for c in Currency
-    if c not in (Currency.DONE, Currency.FAIL)
+    c for c in Currency if c not in _EXCLUDED_CURRENCIES
 ]
+
+# Currency pool without buy actions (--no-buy mode).
+# Also excludes ALCHEMY — in decomposed phases, transmute+regal is the correct
+# path to Rare. Alchemy fills 4 slots at once, wasting slots later phases need.
+_CRAFTABLE_CURRENCIES_NO_BUY = [
+    c for c in Currency
+    if c not in (_EXCLUDED_CURRENCIES | _BUY_CURRENCIES | {Currency.ALCHEMY})
+]
+
+# Active currency pool — set by configure_currencies() before each run
+_active_currencies: list[Currency] = _CRAFTABLE_CURRENCIES
 
 # Currencies that can benefit from omens (based on OMENS applies_to in simulator.py).
 # Only these should be paired with omens during random action generation.
@@ -65,6 +89,7 @@ _OMEN_COMPATIBLE_CURRENCIES = {
     Currency.REGAL, Currency.GREATER_REGAL, Currency.PERFECT_REGAL,
     Currency.ALCHEMY,
     Currency.ESSENCE_PERFECT,
+    Currency.ALLOY,
     Currency.DIVINE,
     Currency.VAAL,
     Currency.DESECRATE,
@@ -73,15 +98,51 @@ _OMEN_COMPATIBLE_CURRENCIES = {
 # Predicates that can appear in random rules
 _ALL_PREDICATES = list(Predicate)
 
-# Omens that can be paired with currencies
-_ALL_OMENS = list(Omen)
+# Which currencies each omen can be paired with (from simulator.py OMENS applies_to).
+# This prevents the GP from evolving nonsense like sinistral_erasure + perfect_regal.
+_OMEN_CURRENCIES: dict[Omen, set[Currency]] = {
+    Omen.NONE: set(),  # special: no restriction
+    # Exaltation omens → exalt family
+    Omen.SINISTRAL_EXALTATION: {Currency.EXALTED, Currency.GREATER_EXALTED, Currency.PERFECT_EXALTED},
+    Omen.DEXTRAL_EXALTATION:   {Currency.EXALTED, Currency.GREATER_EXALTED, Currency.PERFECT_EXALTED},
+    Omen.GREATER_EXALTATION:   {Currency.EXALTED, Currency.GREATER_EXALTED, Currency.PERFECT_EXALTED},
+    # Annulment omens → annulment
+    Omen.SINISTRAL_ANNULMENT:  {Currency.ANNULMENT},
+    Omen.DEXTRAL_ANNULMENT:    {Currency.ANNULMENT},
+    # Erasure omens → chaos family
+    Omen.SINISTRAL_ERASURE:    {Currency.CHAOS, Currency.GREATER_CHAOS, Currency.PERFECT_CHAOS},
+    Omen.DEXTRAL_ERASURE:      {Currency.CHAOS, Currency.GREATER_CHAOS, Currency.PERFECT_CHAOS},
+    Omen.WHITTLING:            {Currency.CHAOS, Currency.GREATER_CHAOS, Currency.PERFECT_CHAOS},
+    # Coronation omens → regal family
+    Omen.SINISTRAL_CORONATION: {Currency.REGAL, Currency.GREATER_REGAL, Currency.PERFECT_REGAL},
+    Omen.DEXTRAL_CORONATION:   {Currency.REGAL, Currency.GREATER_REGAL, Currency.PERFECT_REGAL},
+    # Abyss omens → desecrate / reveal
+    Omen.ABYSSAL_ECHOES:       {Currency.REVEAL},
+    Omen.SINISTRAL_NECROMANCY: {Currency.DESECRATE},
+    Omen.DEXTRAL_NECROMANCY:   {Currency.DESECRATE},
+    # Annulment + light
+    Omen.LIGHT:                {Currency.ANNULMENT},
+}
+
+# Reverse lookup: currency → list of compatible omens (for random generation)
+_CURRENCY_OMENS: dict[Currency, list[Omen]] = {}
+for _omen, _currencies in _OMEN_CURRENCIES.items():
+    if _omen == Omen.NONE:
+        continue
+    for _cur in _currencies:
+        _CURRENCY_OMENS.setdefault(_cur, []).append(_omen)
 
 # Omens consumed at bone application (DESECRATE) — affect later REVEAL
-_DESECRATE_OMENS = [
-    Omen.ABYSSAL_ECHOES,
-    Omen.SINISTRAL_NECROMANCY,
-    Omen.DEXTRAL_NECROMANCY,
-]
+_DESECRATE_OMENS = _CURRENCY_OMENS.get(Currency.DESECRATE, []) + _CURRENCY_OMENS.get(Currency.REVEAL, [])
+
+def configure_currencies(no_buy: bool = False) -> None:
+    """Set the active currency pool for random mutations.
+
+    Call before each optimization run to enable/disable buy actions.
+    """
+    global _active_currencies
+    _active_currencies = _CRAFTABLE_CURRENCIES_NO_BUY if no_buy else _CRAFTABLE_CURRENCIES
+
 
 # Cost threshold range for cost_spent_gte conditions
 _COST_THRESHOLDS = [50, 100, 150, 200, 300, 400, 500, 600, 800, 1000, 1500, 2000]
@@ -99,6 +160,8 @@ def _select_mutation_target(rulelist: RuleList, fitness: Fitness | None) -> int:
     """Pick a rule index to mutate, weighted by harmfulness.
 
     Credit-guided: harmful rules get mutated first, key rules are protected.
+    Setup rules (label "setup:*") are protected (weight 0) — they are
+    essential for SCOUR recovery in decomposed phases.
     Falls back to uniform random if no fitness data available.
     """
     n = rulelist.size
@@ -106,11 +169,17 @@ def _select_mutation_target(rulelist: RuleList, fitness: Fitness | None) -> int:
         return 0
 
     if fitness is None or not fitness.fire_on_success:
+        # Even without fitness data, protect setup rules
+        non_setup = [i for i in range(n) if not rulelist.rules[i].label.startswith("setup:")]
+        if non_setup:
+            return random.choice(non_setup)
         return random.randint(0, n - 1)
 
     weights: list[float] = []
     for i in range(n):
-        if fitness.rule_is_dead(i):
+        if rulelist.rules[i].label.startswith("setup:"):
+            weights.append(0.0)  # never target setup rules
+        elif fitness.rule_is_dead(i):
             weights.append(3.0)
         elif fitness.rule_is_harmful(i):
             weights.append(5.0)
@@ -118,6 +187,10 @@ def _select_mutation_target(rulelist: RuleList, fitness: Fitness | None) -> int:
             weights.append(0.1)
         else:
             weights.append(1.0)
+
+    # If all weights are zero (only setup rules), fall back to uniform
+    if sum(weights) == 0:
+        return random.randint(0, n - 1)
 
     return random.choices(range(n), weights=weights, k=1)[0]
 
@@ -191,11 +264,12 @@ def random_action() -> Action:
     perfect_essence). Currencies like reforge, transmute, essences, scour,
     fracturing etc. cannot use omens.
     """
-    currency = random.choice(_CRAFTABLE_CURRENCIES)
+    currency = random.choice(_active_currencies)
 
-    # 20% chance of adding an omen, but only if the currency supports it
-    if random.random() < 0.2 and currency in _OMEN_COMPATIBLE_CURRENCIES:
-        omen = random.choice(_DESECRATE_OMENS if currency == Currency.DESECRATE else _ALL_OMENS)
+    # 20% chance of adding an omen, but only a compatible one
+    compatible = _CURRENCY_OMENS.get(currency)
+    if random.random() < 0.2 and compatible:
+        omen = random.choice(compatible)
     else:
         omen = Omen.NONE
 
@@ -255,28 +329,28 @@ def mutate_action(rulelist: RuleList, fitness: Fitness | None = None) -> RuleLis
 
     # 50% chance: change currency, 50% chance: toggle/change omen
     if random.random() < 0.5:
-        new_currency = random.choice(_CRAFTABLE_CURRENCIES)
-        # Strip omen if new currency can't use it
+        new_currency = random.choice(_active_currencies)
+        # Keep omen only if it's compatible with the new currency
         new_omen = old_rule.action.omen
-        if new_currency not in _OMEN_COMPATIBLE_CURRENCIES:
-            new_omen = Omen.NONE
-        elif new_currency == Currency.DESECRATE and new_omen not in _DESECRATE_OMENS:
-            new_omen = Omen.NONE
+        if new_omen != Omen.NONE:
+            valid = _OMEN_CURRENCIES.get(new_omen, set())
+            if new_currency not in valid:
+                new_omen = Omen.NONE
         new_action = Action(new_currency, new_omen)
     else:
         currency = old_rule.action.currency
-        omen_pool = _DESECRATE_OMENS if currency == Currency.DESECRATE else _ALL_OMENS
-        # Only toggle/add omens on compatible currencies
-        if currency not in _OMEN_COMPATIBLE_CURRENCIES:
+        compatible = _CURRENCY_OMENS.get(currency)
+        if not compatible:
+            # Currency has no compatible omens
             new_action = Action(currency, Omen.NONE)
         elif old_rule.action.has_omen:
-            # Remove omen or swap to different one
+            # Remove omen or swap to different compatible one
             if random.random() < 0.3:
                 new_action = Action(currency, Omen.NONE)
             else:
-                new_action = Action(currency, random.choice(omen_pool))
+                new_action = Action(currency, random.choice(compatible))
         else:
-            new_action = Action(currency, random.choice(omen_pool))
+            new_action = Action(currency, random.choice(compatible))
 
     rl.rules[idx] = Rule(old_rule.condition, new_action, old_rule.label)
     return rl
@@ -353,12 +427,17 @@ def mutate_insert_rule(rulelist: RuleList, fitness: Fitness | None = None) -> Ru
 
 
 def mutate_delete_rule(rulelist: RuleList, fitness: Fitness | None = None) -> RuleList:
-    """Remove a rule (credit-guided: prefer dead/harmful rules)."""
+    """Remove a rule (credit-guided: prefer dead/harmful rules).
+
+    Setup rules are protected from deletion.
+    """
     rl = rulelist.copy()
     if rl.size <= 3:
         return rl
 
     idx = _select_mutation_target(rl, fitness)
+    if rl.rules[idx].label.startswith("setup:"):
+        return rl  # don't delete setup rules
     rl.remove_rule(idx)
     return rl
 
@@ -427,6 +506,9 @@ def prune_dead_rules(rulelist: RuleList, fitness: Fitness) -> RuleList:
     """Remove rules that never fired in any MC trial (dead code).
 
     Called once per generation after evaluation. Minimum 3 rules preserved.
+    Setup rules (label starts with "setup:") are immune — they fire only
+    after SCOUR resets to blank, which may be rare but is essential for
+    recovery in decomposed phases.
     """
     if not fitness.fire_on_success or rulelist.size <= 3:
         return rulelist
@@ -436,6 +518,8 @@ def prune_dead_rules(rulelist: RuleList, fitness: Fitness) -> RuleList:
     for i in range(rl.size - 1, -1, -1):
         if rl.size <= 3:
             break
+        if rl.rules[i].label.startswith("setup:"):
+            continue  # never prune setup rules
         if fitness.rule_is_dead(i):
             rl.rules.pop(i)
 

@@ -24,6 +24,7 @@ from .gene import (
     Condition,
     CraftTarget,
     Currency,
+    Grouping,
     ModTarget,
     Omen,
     PhaseTarget,
@@ -310,10 +311,14 @@ def _estimate_ordering_cost(
 
     Models restart cascades: if a destructive phase fails and destroys
     prior mods, we pay the cost of all prior phases again.
+
+    Penalizes desecrated targets in non-final positions because later
+    phases would need to recreate them probabilistically on restart.
     """
     total = 0.0
     prior_cost = 0.0
     mod_count = 0
+    n_phases = len(ordering)
 
     for phase_idx, target_idx in enumerate(ordering):
         est = estimates[target_idx]
@@ -338,6 +343,16 @@ def _estimate_ordering_cost(
             # Simplified: assume ~30% chance annul hits a prior mod
             destroy_prob = 0.3 * (1.0 - re_est.success_rate)
             phase_cost += destroy_prob * prior_cost
+
+        # Penalize desecrated targets NOT in the final position.
+        # Desecrate+reveal is probabilistic (~20% hit rate), so later phases
+        # would pay ~5x the desecrate cost per restart cycle to recreate it.
+        # In practice, players always do abyss last to avoid this penalty.
+        if t.pool_source == "desecrated" and phase_idx < n_phases - 1:
+            remaining_phases = n_phases - phase_idx - 1
+            # Each later phase restart needs ~5 reveals (1/0.20) to recreate
+            recreation_penalty = re_est.expected_cost * 4.0 * remaining_phases
+            phase_cost += recreation_penalty
 
         total += phase_cost
         prior_cost += phase_cost
@@ -379,12 +394,14 @@ def build_phases(
         )
         phases.append(phase)
 
-        # Update starting state for next phase
+        # Update starting state for next phase.
+        # Phase 0 produces a Magic item (transmute/buy_magic → 1 mod, minimal slots used).
+        # Phase 1+ should regal to Rare internally, keeping prior mods lean.
         starting_mods.append((t.family_id, t.affix_type, t.max_tier, t.pool_source))
         if starting_rarity == 0:
             starting_rarity = 1  # transmute/buy_magic → Magic
-        if starting_rarity == 1 and phase_idx >= 1:
-            starting_rarity = 2  # regal/essence → Rare
+        elif starting_rarity == 1:
+            starting_rarity = 2  # regal/essence in Phase 1 → Rare
 
         # Track essence/desecration usage
         est = quick_estimate_phase(
@@ -605,3 +622,258 @@ def build_phase_craft_target(
         item_class=all_target.item_class,
         ilvl=all_target.ilvl,
     )
+
+
+# ── Grouping Operators (Tier 3 Hierarchical GP) ─────────────────────────────
+
+import random as _random
+
+
+def build_phases_from_grouping(
+    target: CraftTarget,
+    grouping: Grouping,
+    pool_data: dict,
+    prices: dict[str, float],
+) -> list[PhaseTarget]:
+    """Convert a Grouping genome into PhaseTarget list.
+
+    Like build_phases() but supports multi-target groups.
+    Each group in execution order becomes one PhaseTarget with potentially
+    multiple targets.
+    """
+    all_family_ids = [t.family_id for t in target.targets]
+    phases: list[PhaseTarget] = []
+
+    starting_mods: list[tuple[int, str, int, str]] = []
+    starting_rarity = 0
+    starting_flags = 0
+
+    for phase_idx, group in enumerate(grouping.ordered_groups()):
+        group_targets = [target.targets[i] for i in group]
+
+        phase = PhaseTarget(
+            targets=group_targets,
+            starting_mods=list(starting_mods),
+            starting_rarity=starting_rarity,
+            starting_flags=starting_flags,
+            phase_index=phase_idx,
+            protected_families=all_family_ids,
+        )
+        phases.append(phase)
+
+        # Update starting state for next phase
+        for t in group_targets:
+            starting_mods.append((t.family_id, t.affix_type, t.max_tier, t.pool_source))
+            if starting_rarity == 0:
+                starting_rarity = 1
+            elif starting_rarity == 1:
+                starting_rarity = 2
+
+            est = quick_estimate_phase(
+                t, pool_data, prices,
+                starting_mod_count=len(starting_mods) - 1,
+                starting_rarity=phase.starting_rarity,
+            )
+            if est.method == "essence":
+                starting_flags |= 0x04
+            if est.method == "desecrate_reveal":
+                starting_flags |= 0x08
+
+    return phases
+
+
+def grouping_crossover(a: Grouping, b: Grouping) -> Grouping:
+    """Crossover two Grouping genomes.
+
+    Pick a random target and swap its group membership from parent B into
+    a copy of parent A.
+    """
+    child = a.copy()
+    n_targets = a.n_targets
+
+    # Pick a random target
+    target_idx = _random.randrange(n_targets)
+
+    # Find which group it's in for parent B
+    b_group_idx = None
+    for gi, group in enumerate(b.groups):
+        if target_idx in group:
+            b_group_idx = gi
+            break
+    if b_group_idx is None:
+        return child
+
+    # Find other targets in the same group in B
+    b_group_members = set(b.groups[b_group_idx])
+
+    # In child, merge all groups that contain any of these members
+    merged = set()
+    remaining_groups = []
+    for group in child.groups:
+        if b_group_members & set(group):
+            merged.update(group)
+        else:
+            remaining_groups.append(group)
+
+    remaining_groups.append(sorted(merged))
+    child.groups = remaining_groups
+    child.ordering = list(range(len(child.groups)))
+    child.fitness = float("inf")
+    return child
+
+
+def grouping_mutation(g: Grouping) -> Grouping:
+    """Mutate a Grouping genome. Picks one of 4 operators uniformly."""
+    child = g.copy()
+    op = _random.randrange(4)
+
+    if op == 0:
+        _mutation_split(child)
+    elif op == 1:
+        _mutation_merge(child)
+    elif op == 2:
+        _mutation_move(child)
+    else:
+        _mutation_reorder(child)
+
+    # Remove empty groups
+    child.groups = [g for g in child.groups if g]
+    child.ordering = list(range(len(child.groups)))
+    child.fitness = float("inf")
+    return child
+
+
+def _mutation_split(g: Grouping) -> None:
+    """Split a group with 2+ targets into two groups."""
+    multi = [i for i, group in enumerate(g.groups) if len(group) >= 2]
+    if not multi:
+        return
+    gi = _random.choice(multi)
+    group = g.groups[gi]
+    split_point = _random.randint(1, len(group) - 1)
+    _random.shuffle(group)
+    g.groups[gi] = group[:split_point]
+    g.groups.append(group[split_point:])
+
+
+def _mutation_merge(g: Grouping) -> None:
+    """Merge two groups into one."""
+    if len(g.groups) < 2:
+        return
+    i = _random.randrange(len(g.groups))
+    j = _random.randrange(len(g.groups))
+    while j == i:
+        j = _random.randrange(len(g.groups))
+    g.groups[i] = sorted(g.groups[i] + g.groups[j])
+    g.groups[j] = []
+
+
+def _mutation_move(g: Grouping) -> None:
+    """Move a random target to a different group."""
+    if len(g.groups) < 2:
+        return
+    src = _random.randrange(len(g.groups))
+    while not g.groups[src]:
+        src = _random.randrange(len(g.groups))
+    dst = _random.randrange(len(g.groups))
+    while dst == src:
+        dst = _random.randrange(len(g.groups))
+    target_idx = _random.choice(g.groups[src])
+    g.groups[src].remove(target_idx)
+    g.groups[dst].append(target_idx)
+    g.groups[dst].sort()
+
+
+def _mutation_reorder(g: Grouping) -> None:
+    """Swap two groups in the execution order."""
+    if len(g.ordering) < 2:
+        return
+    i = _random.randrange(len(g.ordering))
+    j = _random.randrange(len(g.ordering))
+    while j == i:
+        j = _random.randrange(len(g.ordering))
+    g.ordering[i], g.ordering[j] = g.ordering[j], g.ordering[i]
+
+
+def generate_seed_groupings(
+    n_targets: int,
+    affix_types: list[str],
+    pool_sources: list[str] | None = None,
+) -> list[Grouping]:
+    """Generate diverse seed groupings for the outer GP.
+
+    Args:
+        n_targets: number of targets
+        affix_types: list of "prefix"/"suffix" per target index
+        pool_sources: list of "normal"/"desecrated" per target index
+    """
+    if pool_sources is None:
+        pool_sources = ["normal"] * n_targets
+
+    seeds: list[Grouping] = []
+
+    # 1. All-singles (Tier 1 baseline): each target in its own phase
+    singles = Grouping(
+        groups=[[i] for i in range(n_targets)],
+        ordering=list(range(n_targets)),
+    )
+    seeds.append(singles)
+
+    # 2. All-monolithic: all targets in one phase
+    mono = Grouping(
+        groups=[list(range(n_targets))],
+        ordering=[0],
+    )
+    seeds.append(mono)
+
+    # 3. By affix type: prefixes together, suffixes together
+    prefixes = [i for i in range(n_targets) if affix_types[i] == "prefix"]
+    suffixes = [i for i in range(n_targets) if affix_types[i] == "suffix"]
+    if prefixes and suffixes:
+        by_affix = Grouping(
+            groups=[prefixes, suffixes],
+            ordering=[0, 1],
+        )
+        seeds.append(by_affix)
+        # Also reversed order
+        seeds.append(Grouping(
+            groups=[prefixes, suffixes],
+            ordering=[1, 0],
+        ))
+
+    # 4. Desecrated-last: normal targets grouped, desecrated targets last
+    normal_targets = [i for i in range(n_targets) if pool_sources[i] == "normal"]
+    desecrated_targets = [i for i in range(n_targets) if pool_sources[i] == "desecrated"]
+    if normal_targets and desecrated_targets:
+        desc_last = Grouping(
+            groups=[normal_targets, desecrated_targets],
+            ordering=[0, 1],
+        )
+        seeds.append(desc_last)
+
+    # 5. Pairs: group targets in pairs
+    if n_targets >= 4:
+        pairs: list[list[int]] = []
+        remaining = list(range(n_targets))
+        _random.shuffle(remaining)
+        while len(remaining) >= 2:
+            pairs.append([remaining.pop(), remaining.pop()])
+        if remaining:
+            pairs.append(remaining)
+        seeds.append(Grouping(
+            groups=pairs,
+            ordering=list(range(len(pairs))),
+        ))
+
+    # 6. Random partitions (2-3 extras)
+    for _ in range(min(3, max(1, 10 - len(seeds)))):
+        groups: list[list[int]] = [[] for _ in range(_random.randint(2, max(2, n_targets - 1)))]
+        for i in range(n_targets):
+            groups[_random.randrange(len(groups))].append(i)
+        groups = [g for g in groups if g]  # remove empties
+        seeds.append(Grouping(
+            groups=groups,
+            ordering=list(range(len(groups))),
+        ))
+
+    return seeds

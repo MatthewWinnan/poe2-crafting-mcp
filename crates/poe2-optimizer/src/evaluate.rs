@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
-use crate::actions::{apply_currency, DONE, FAIL};
+use crate::actions::{action_is_valid, apply_currency, DONE, FAIL, SCOUR, BUY_BASE, BUY_MAGIC, BUY_FRACTURED};
 use crate::conditions::evaluate_condition;
 use crate::item_state::ItemState;
 use crate::pool::ModPool;
@@ -89,6 +89,12 @@ pub fn evaluate_rulelist(
                 let rule = &rules[rule_idx];
 
                 if !evaluate_condition(rule.predicate, rule.arg1, rule.arg2, &item, pool) {
+                    continue;
+                }
+
+                // Skip rules whose action can't fire in the current item state.
+                // E.g. exalt on Magic, transmute on Rare — don't charge cost, try next rule.
+                if !action_is_valid(rule.currency, &item) {
                     continue;
                 }
 

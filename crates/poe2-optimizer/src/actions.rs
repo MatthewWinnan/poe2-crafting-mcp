@@ -42,6 +42,7 @@ pub const DESECRATE: u16 = 35;
 pub const REVEAL: u16 = 36;
 pub const ESSENCE_LESSER: u16 = 38;
 pub const ESSENCE_NORMAL: u16 = 39;
+pub const ALLOY: u16 = 40;
 
 // Omen IDs
 pub const NO_OMEN: u16 = 0;
@@ -59,6 +60,70 @@ pub const DEXTRAL_NECROMANCY: u16 = 11;
 pub const LIGHT: u16 = 12;
 pub const SINISTRAL_ERASURE: u16 = 13;
 pub const DEXTRAL_ERASURE: u16 = 14;
+
+/// Check whether an action CAN fire given the current item state.
+/// Returns false for actions that would silently no-op due to rarity or state mismatch.
+/// The evaluate loop should skip (continue to next rule) when this returns false,
+/// rather than charging cost for a no-op.
+///
+/// Meta-actions (DONE, FAIL) and reset actions (SCOUR, BUY_BASE, BUY_MAGIC,
+/// BUY_FRACTURED, REFORGE) are always valid — they work regardless of item state.
+pub fn action_is_valid(currency: u16, item: &ItemState) -> bool {
+    match currency {
+        // Meta-actions: always valid
+        DONE | FAIL => true,
+
+        // Reset/buy actions: always valid (they replace the item)
+        SCOUR | BUY_BASE | BUY_MAGIC | BUY_FRACTURED | REFORGE => true,
+
+        // Transmute: Normal only
+        TRANSMUTE | GREATER_TRANSMUTE | PERFECT_TRANSMUTE => item.rarity == 0,
+
+        // Augment: Magic only
+        AUGMENT | GREATER_AUGMENT | PERFECT_AUGMENT => item.rarity == 1,
+
+        // Regal: Magic only (upgrades to Rare)
+        REGAL | GREATER_REGAL | PERFECT_REGAL => item.rarity == 1,
+
+        // Exalt: Rare only
+        EXALTED | GREATER_EXALTED | PERFECT_EXALTED => item.rarity == 2,
+
+        // Annulment: Magic or Rare (not Normal)
+        ANNULMENT => item.rarity != 0,
+
+        // Chaos: Rare only
+        CHAOS | GREATER_CHAOS | PERFECT_CHAOS => item.rarity == 2,
+
+        // Alchemy: Normal or Magic (not already Rare)
+        ALCHEMY => item.rarity != 2,
+
+        // Fracturing: Rare only
+        FRACTURING => item.rarity == 2,
+
+        // Essences (Lesser/Normal/Greater): Magic only, no existing essence mod
+        ESSENCE_LESSER | ESSENCE_NORMAL | ESSENCE_GREATER => {
+            item.rarity == 1 && !item.has_essence_mod()
+        }
+
+        // Perfect Essence: Rare only, must already have essence mod
+        ESSENCE_PERFECT => item.rarity == 2 && item.has_essence_mod(),
+
+        // Alloy: Rare only
+        ALLOY => item.rarity == 2,
+
+        // Divine/Vaal: always valid (no rarity restriction)
+        DIVINE | VAAL => true,
+
+        // Desecrate: Rare only, not already desecrated
+        DESECRATE => item.rarity == 2 && !item.is_desecrated(),
+
+        // Reveal: must be in desecrated state
+        REVEAL => item.is_desecrated(),
+
+        // Unknown currency: allow (don't block what we don't know)
+        _ => true,
+    }
+}
 
 /// Apply a crafting currency to the item state.
 pub fn apply_currency(
@@ -316,17 +381,49 @@ pub fn apply_currency(
         }
 
         ESSENCE_PERFECT => {
-            // Perfect Essence: Remove one non-fractured mod; add first MISSING target.
-            // Only works on Rare items that already HAVE an essence mod (swaps it).
-            // In-game: "Use on a Rare Item to swap the Crafted Modifier"
+            // Perfect Essence: Swap the essence mod for a different one from the ESSENCE pool.
+            // Only works on Rare items that already HAVE an essence mod.
+            // In-game: removes the essence mod, adds a new random essence mod.
+            // Does NOT place from the normal pool — only from the essence pool.
             if item.rarity != 2 || !item.has_essence_mod() {
                 return;
             }
+            // Remove the essence mod (a random non-fractured mod, matching game behavior)
             remove_random_mod(item, NO_OMEN, rng);
-            if let Some(fam) = find_first_missing_target(item, pool) {
-                add_specific_mod(item, fam, pool, rng);
+            // Try to place missing target from essence pool first
+            let placed = if let Some(fam) = find_first_missing_target(item, pool) {
+                add_essence_mod(item, fam, pool, TierRank::Best)
+            } else {
+                false
+            };
+            // If target not in essence pool, place random essence mod
+            if !placed {
+                add_random_essence_mod(item, pool, &TierRank::Best, rng);
             }
             item.set_essence_mod(true);
+        }
+
+        ALLOY => {
+            // Alloy: Remove one non-fractured mod; add first MISSING target from ALLOY pool.
+            // Works on any Rare item (does NOT require has_essence_mod).
+            // Uses a separate alloy mod pool (distinct from essence/perfect_essence).
+            if item.rarity != 2 {
+                return;
+            }
+            // Check if a missing target actually exists in the alloy pool BEFORE removing.
+            // Without this, alloy removes a mod then fails to add, which is destructive for nothing.
+            let can_place = if let Some(fam) = find_first_missing_target(item, pool) {
+                pool.alloy_prefix_families.contains(&fam) || pool.alloy_suffix_families.contains(&fam)
+            } else {
+                false
+            };
+            if !can_place {
+                return;
+            }
+            remove_random_mod(item, omen, rng);
+            if let Some(fam) = find_first_missing_target(item, pool) {
+                add_alloy_mod(item, fam, pool, rng);
+            }
         }
 
         DIVINE => {
@@ -766,6 +863,43 @@ fn tier_by_rank(family: u16, families: &[u16], tiers: &[u8], rank: &TierRank) ->
         TierRank::Best => family_tiers[0],                              // lowest number = best
         TierRank::Worst => *family_tiers.last().unwrap(),               // highest number = worst
         TierRank::Mid => family_tiers[family_tiers.len() / 2],         // median
+    }
+}
+
+/// Place a mod from the alloy pool for the specified family.
+/// Only places from the alloy pool — returns without placing if family not available.
+fn add_alloy_mod(item: &mut ItemState, family: u16, pool: &ModPool, rng: &mut impl Rng) {
+    let in_alloy_prefix = pool.alloy_prefix_families.contains(&family);
+    let in_alloy_suffix = pool.alloy_suffix_families.contains(&family);
+
+    if !in_alloy_prefix && !in_alloy_suffix {
+        // Family not in alloy pool — no alloy exists for this mod
+        return;
+    }
+
+    let place_as_prefix = if in_alloy_prefix && in_alloy_suffix {
+        pool.target_prefix_families.contains(&family)
+    } else {
+        in_alloy_prefix
+    };
+
+    // Pick best tier from alloy pool (alloys guarantee best tier)
+    let tier = if place_as_prefix {
+        tier_by_rank(family, &pool.alloy_prefix_families, &pool.alloy_prefix_tiers, &TierRank::Best)
+    } else {
+        tier_by_rank(family, &pool.alloy_suffix_families, &pool.alloy_suffix_tiers, &TierRank::Best)
+    };
+
+    if place_as_prefix && item.prefix_count < pool.max_prefixes {
+        let idx = item.prefix_count as usize;
+        item.prefix_families[idx] = family;
+        item.prefix_tiers[idx] = tier;
+        item.prefix_count += 1;
+    } else if !place_as_prefix && item.suffix_count < pool.max_suffixes {
+        let idx = item.suffix_count as usize;
+        item.suffix_families[idx] = family;
+        item.suffix_tiers[idx] = tier;
+        item.suffix_count += 1;
     }
 }
 

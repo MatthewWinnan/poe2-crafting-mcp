@@ -188,6 +188,13 @@ def _format_with_value(stat_text: str, value: float) -> str:
     return result
 
 
+# Jewels have 2 prefixes + 2 suffixes (not the standard 3+3)
+_JEWEL_CLASSES = frozenset({
+    "Diamond", "Emerald", "Ruby", "Sapphire",
+    "Time-Lost_Diamond", "Time-Lost_Emerald", "Time-Lost_Ruby", "Time-Lost_Sapphire",
+})
+
+
 @dataclass
 class ItemState:
     """Current state of an item being crafted."""
@@ -216,9 +223,14 @@ class ItemState:
         return [m for m in self.mods if m.affix_type == "suffix"]
 
     @property
+    def _affix_cap(self) -> int:
+        """Max affixes per type — 2 for jewels, 3 for everything else."""
+        return 2 if self.item_class in _JEWEL_CLASSES else 3
+
+    @property
     def max_prefixes(self) -> int:
         if self.rarity == "Rare":
-            return 3
+            return self._affix_cap
         elif self.rarity == "Magic":
             return 1
         return 0
@@ -226,7 +238,7 @@ class ItemState:
     @property
     def max_suffixes(self) -> int:
         if self.rarity == "Rare":
-            return 3
+            return self._affix_cap
         elif self.rarity == "Magic":
             return 1
         return 0
@@ -309,6 +321,7 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     "normal_essence":    {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Magic"]},
     "greater_essence":   {"op": "essence_upgrade", "min_lv": 0, "to_rarity": "Rare", "from_rarity": ["Magic"]},
     "perfect_essence":   {"op": "essence_swap", "min_lv": 0, "from_rarity": ["Rare"]},
+    "alloy":             {"op": "alloy_swap", "min_lv": 0, "from_rarity": ["Rare"]},
     # Reforging bench — 3-to-1 recycling
     # Requires 2 spare bases (reforge_stock >= 2). Consumes current item + 2 spares.
     # Output: fresh Rare with 4 random mods (same base type, lowest ilvl).
@@ -398,8 +411,8 @@ OMENS: dict[str, dict[str, Any]] = {
     "sinistral_coronation":    {"applies_to": ["regal", "greater_regal", "perfect_regal"], "gentype_only": 1},
     "dextral_coronation":      {"applies_to": ["regal", "greater_regal", "perfect_regal"], "gentype_only": 2},
     # ── Crystallisation omens (Essence) ───────────────────────────────────────
-    "sinistral_crystallisation": {"applies_to": ["perfect_essence"], "del_gentype_only": 1},
-    "dextral_crystallisation":   {"applies_to": ["perfect_essence"], "del_gentype_only": 2},
+    "sinistral_crystallisation": {"applies_to": ["perfect_essence", "alloy"], "del_gentype_only": 1},
+    "dextral_crystallisation":   {"applies_to": ["perfect_essence", "alloy"], "del_gentype_only": 2},
     # ── Alchemy omens ─────────────────────────────────────────────────────────
     "sinistral_alchemy":       {"applies_to": ["alchemy"], "gentype_only": 1},
     "dextral_alchemy":         {"applies_to": ["alchemy"], "gentype_only": 2},
@@ -611,6 +624,7 @@ class CraftingSimulator:
         ilvl: int,
         mod_pool: dict,
         essence_pool: dict | None = None,
+        alloy_pool: dict | None = None,
         rune_pools: list[str] | None = None,
         rune_pool_data: list[dict] | None = None,
     ):
@@ -623,6 +637,8 @@ class CraftingSimulator:
             essence_pool: optional result from get_craftable_mods(pool='essence')
                           If None, _find_essence_mod falls back to normal pool.
                           Should include both 'essence' and 'perfect_essence' mods.
+            alloy_pool: optional result from get_craftable_mods(pool='alloy')
+                        Separate from essence pool — alloys use distinct mod pool.
             rune_pools: list of rune pool names to load from DB (e.g. ["marksman", "decay"]).
                         These expand the rolling pool — rune mods are added to the normal pool.
             rune_pool_data: pre-loaded rune pool data (list of get_craftable_mods() results).
@@ -683,6 +699,30 @@ class CraftingSimulator:
             for group in essence_pool.get('suffixes', []):
                 for tier_idx, tier in enumerate(group['tiers']):
                     self._essence_mods.append({
+                        'family': group['family'],
+                        'affix_type': 'suffix',
+                        'tier': tier_idx + 1,
+                        'req_level': tier['req_level'],
+                        'weight': tier.get('weight', 0),
+                        'stat_text': tier['stat_text'],
+                    })
+
+        # Flatten alloy pool (separate from essence — different mod pool and pricing)
+        self._alloy_mods: list[dict] = []
+        if alloy_pool:
+            for group in alloy_pool.get('prefixes', []):
+                for tier_idx, tier in enumerate(group['tiers']):
+                    self._alloy_mods.append({
+                        'family': group['family'],
+                        'affix_type': 'prefix',
+                        'tier': tier_idx + 1,
+                        'req_level': tier['req_level'],
+                        'weight': tier.get('weight', 0),
+                        'stat_text': tier['stat_text'],
+                    })
+            for group in alloy_pool.get('suffixes', []):
+                for tier_idx, tier in enumerate(group['tiers']):
+                    self._alloy_mods.append({
                         'family': group['family'],
                         'affix_type': 'suffix',
                         'tier': tier_idx + 1,
@@ -765,6 +805,7 @@ class CraftingSimulator:
         normal_pool = pdb.get_craftable_mods(item_class, ilvl=ilvl, pool='normal')
         essence_pool = pdb.get_craftable_mods(item_class, ilvl=ilvl, pool='essence')
         perfect_pool = pdb.get_craftable_mods(item_class, ilvl=ilvl, pool='perfect_essence')
+        alloy_pool = pdb.get_craftable_mods(item_class, ilvl=ilvl, pool='alloy')
 
         # Merge essence + perfect_essence into one pool for the simulator
         merged_essence = {
@@ -782,6 +823,7 @@ class CraftingSimulator:
                     rune_pool_data.append(pool_data)
 
         return cls(item_class, ilvl, normal_pool, essence_pool=merged_essence,
+                   alloy_pool=alloy_pool,
                    rune_pool_data=rune_pool_data, rune_pools=rune_pools)
 
     def get_available_pool(
@@ -1238,7 +1280,8 @@ class CraftingSimulator:
                 self.item.mods.remove(to_remove)
                 if to_remove.family == self.item.essence_mod_family:
                     self.item.essence_mod_family = None
-            # Add step
+            # Add step (runs even if nothing was removed — confirmed in-game
+            # behavior: erasure omens with no valid removal target still add)
             mod = self.roll_mod(min_mod_level=min_lv, gentype_only=gentype_only)
             if mod:
                 self.item.mods.append(mod)
@@ -1308,6 +1351,10 @@ class CraftingSimulator:
         elif op == "essence_swap":
             # Perfect Essence: remove 1, add 1 guaranteed (NOT a reroll)
             self._apply_essence_swap(essence_family, del_gentype_only, essence_stat_text)
+
+        elif op == "alloy_swap":
+            # Alloy: remove 1, add 1 guaranteed from alloy pool (NOT essence pool)
+            self._apply_alloy_swap(essence_family, del_gentype_only, essence_stat_text)
 
         elif op == "fracture":
             non_fractured = [m for m in self.item.mods if not m.fractured]
@@ -1594,6 +1641,70 @@ class CraftingSimulator:
         # Special: Essence of the Abyss sets the mark flag
         if essence_family == "EssenceAbyss":
             self.item.has_abyss_mark = True
+
+    def _apply_alloy_swap(
+        self, alloy_family: str, del_gentype_only: int = 0,
+        alloy_stat_text: str = "",
+    ) -> None:
+        """Alloy: remove 1 mod, add 1 guaranteed from alloy pool.
+
+        Same swap mechanic as perfect essence but:
+        - Does NOT require an existing essence mod
+        - Uses alloy pool (not essence/perfect_essence pool)
+        - Crystallisation omens work the same way (targeted removal)
+        """
+        if not alloy_family:
+            raise ValueError("alloy_family required for alloy")
+
+        # Family blocking: can't use if family is fractured on item
+        existing = next(
+            (m for m in self.item.mods if m.family == alloy_family), None
+        )
+        if existing and existing.fractured:
+            raise ValueError(
+                f"Cannot use alloy: family '{alloy_family}' is fractured on item"
+            )
+
+        # Determine affix type for slot-forcing
+        alloy_affix_type = self._get_family_affix_type(alloy_family)
+
+        effective_del_gentype = del_gentype_only
+        if effective_del_gentype == 0 and alloy_affix_type:
+            if alloy_affix_type == "prefix" and self.item.open_prefixes == 0:
+                effective_del_gentype = 1
+            elif alloy_affix_type == "suffix" and self.item.open_suffixes == 0:
+                effective_del_gentype = 2
+
+        removable = self._get_removable(effective_del_gentype)
+        if removable:
+            to_remove = random.choice(removable)
+            self.item.mods.remove(to_remove)
+
+        # Add guaranteed alloy mod from _alloy_mods pool
+        alloy_mod = self._find_alloy_mod(alloy_family, alloy_stat_text)
+        if alloy_mod:
+            self.item.mods.append(alloy_mod)
+
+    def _find_alloy_mod(self, family: str, stat_text: str = "") -> "ModInstance | None":
+        """Find the correct alloy mod to place on the item."""
+        if stat_text:
+            match = next(
+                (m for m in self._alloy_mods
+                 if m['family'] == family and m['stat_text'] == stat_text),
+                None,
+            )
+            if match:
+                return ModInstance.from_pool_entry(match)
+
+        # Best tier at ilvl from alloy pool only — no fallback to normal pool
+        candidates = [
+            m for m in self._alloy_mods
+            if m['family'] == family and m['req_level'] <= self.ilvl
+        ]
+        if candidates:
+            best = min(candidates, key=lambda m: m['tier'])
+            return ModInstance.from_pool_entry(best)
+        return None
 
     def _find_essence_mod(self, family: str, stat_text: str = "") -> ModInstance | None:
         """Find the correct essence mod to place on the item.

@@ -44,6 +44,10 @@ use crate::pool::ModPool;
 ///   essence_prefix_tiers: Optional (n_ep,) u8 — essence pool prefix tiers
 ///   essence_suffix_families: Optional (n_es,) u16 — essence pool suffix families
 ///   essence_suffix_tiers: Optional (n_es,) u8 — essence pool suffix tiers
+///   alloy_prefix_families: Optional (n_ap,) u16 — alloy pool prefix families
+///   alloy_prefix_tiers: Optional (n_ap,) u8 — alloy pool prefix tiers
+///   alloy_suffix_families: Optional (n_as,) u16 — alloy pool suffix families
+///   alloy_suffix_tiers: Optional (n_as,) u8 — alloy pool suffix tiers
 ///   desecrated_prefix_pool_size: Optional u16 — unique families in desecrated prefix pool
 ///   desecrated_suffix_pool_size: Optional u16 — unique families in desecrated suffix pool
 ///
@@ -52,7 +56,7 @@ use crate::pool::ModPool;
 ///   fire_success_array: (pop_size, max_rules) u32
 ///   fire_failure_array: (pop_size, max_rules) u32
 #[pyfunction]
-#[pyo3(signature = (rules_array, rule_counts, prefix_weights, prefix_cumsum, prefix_families, prefix_tiers, prefix_req_levels, suffix_weights, suffix_cumsum, suffix_families, suffix_tiers, suffix_req_levels, target_prefix_families, target_suffix_families, target_max_tiers, prices, max_currency_id, ilvl, max_prefixes, max_suffixes, n_trials, max_steps, base_seed, initial_state_data=None, essence_prefix_families=None, essence_prefix_tiers=None, essence_suffix_families=None, essence_suffix_tiers=None, desecrated_prefix_pool_size=None, desecrated_suffix_pool_size=None))]
+#[pyo3(signature = (rules_array, rule_counts, prefix_weights, prefix_cumsum, prefix_families, prefix_tiers, prefix_req_levels, suffix_weights, suffix_cumsum, suffix_families, suffix_tiers, suffix_req_levels, target_prefix_families, target_suffix_families, target_max_tiers, prices, max_currency_id, ilvl, max_prefixes, max_suffixes, n_trials, max_steps, base_seed, initial_state_data=None, essence_prefix_families=None, essence_prefix_tiers=None, essence_suffix_families=None, essence_suffix_tiers=None, alloy_prefix_families=None, alloy_prefix_tiers=None, alloy_suffix_families=None, alloy_suffix_tiers=None, desecrated_prefix_pool_size=None, desecrated_suffix_pool_size=None))]
 #[allow(clippy::too_many_arguments)]
 pub fn evaluate_population<'py>(
     py: Python<'py>,
@@ -84,6 +88,10 @@ pub fn evaluate_population<'py>(
     essence_prefix_tiers: Option<PyReadonlyArray1<'py, u8>>,
     essence_suffix_families: Option<PyReadonlyArray1<'py, u16>>,
     essence_suffix_tiers: Option<PyReadonlyArray1<'py, u8>>,
+    alloy_prefix_families: Option<PyReadonlyArray1<'py, u16>>,
+    alloy_prefix_tiers: Option<PyReadonlyArray1<'py, u8>>,
+    alloy_suffix_families: Option<PyReadonlyArray1<'py, u16>>,
+    alloy_suffix_tiers: Option<PyReadonlyArray1<'py, u8>>,
     desecrated_prefix_pool_size: Option<u16>,
     desecrated_suffix_pool_size: Option<u16>,
 ) -> PyResult<(
@@ -124,6 +132,18 @@ pub fn evaluate_population<'py>(
             .map(|a| a.as_array().to_vec())
             .unwrap_or_default(),
         essence_suffix_tiers: essence_suffix_tiers
+            .map(|a| a.as_array().to_vec())
+            .unwrap_or_default(),
+        alloy_prefix_families: alloy_prefix_families
+            .map(|a| a.as_array().to_vec())
+            .unwrap_or_default(),
+        alloy_prefix_tiers: alloy_prefix_tiers
+            .map(|a| a.as_array().to_vec())
+            .unwrap_or_default(),
+        alloy_suffix_families: alloy_suffix_families
+            .map(|a| a.as_array().to_vec())
+            .unwrap_or_default(),
+        alloy_suffix_tiers: alloy_suffix_tiers
             .map(|a| a.as_array().to_vec())
             .unwrap_or_default(),
         all_target_families: {

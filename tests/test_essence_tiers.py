@@ -141,8 +141,8 @@ class TestEssenceTierSeeds:
         assert seed_essence_exalt_fill in ALL_SEEDS
 
     def test_seed_count_increased(self):
-        """ALL_SEEDS now has 16 strategies."""
-        assert len(ALL_SEEDS) == 16
+        """ALL_SEEDS now has 17 strategies (added alloy)."""
+        assert len(ALL_SEEDS) == 17
 
     def test_lesser_seed_uses_correct_currency(self):
         """Lesser essence seed uses ESSENCE_LESSER action."""
@@ -169,9 +169,9 @@ class TestEssenceTierSeeds:
         assert Currency.ESSENCE_NORMAL not in currencies
 
     def test_phase_seeds_include_essence_tiers(self):
-        """Phase seed lists include all three essence tier seeds."""
-        assert len(PHASE_SEEDS_PREFIX) == 6
-        assert len(PHASE_SEEDS_SUFFIX) == 7
+        """Phase seed lists include all three essence tier seeds + alloy + transmute."""
+        assert len(PHASE_SEEDS_PREFIX) == 8
+        assert len(PHASE_SEEDS_SUFFIX) == 9
 
     def test_seeded_population_includes_essence_tiers(self):
         """A large enough population hits all essence tier seeds."""
@@ -188,25 +188,22 @@ class TestEssenceTierSeeds:
 # ── Operator Tests ───────────────────────────────────────────────────────────
 
 class TestEssenceTierOperators:
-    def test_lesser_in_mutation_pool(self):
-        """ESSENCE_LESSER is available for random mutation."""
-        assert Currency.ESSENCE_LESSER in _CRAFTABLE_CURRENCIES
+    def test_essences_excluded_from_mutation_pool(self):
+        """Essences are excluded from random mutations (seeds include them conditionally)."""
+        assert Currency.ESSENCE_LESSER not in _CRAFTABLE_CURRENCIES
+        assert Currency.ESSENCE_NORMAL not in _CRAFTABLE_CURRENCIES
+        assert Currency.ESSENCE_GREATER not in _CRAFTABLE_CURRENCIES
+        assert Currency.ESSENCE_PERFECT not in _CRAFTABLE_CURRENCIES
 
-    def test_normal_in_mutation_pool(self):
-        """ESSENCE_NORMAL is available for random mutation."""
-        assert Currency.ESSENCE_NORMAL in _CRAFTABLE_CURRENCIES
-
-    def test_random_action_can_produce_essence_tiers(self):
-        """random_action() can eventually produce each essence tier."""
-        seen = set()
-        target = {Currency.ESSENCE_LESSER, Currency.ESSENCE_NORMAL, Currency.ESSENCE_GREATER}
+    def test_random_action_never_produces_essence(self):
+        """random_action() should never produce essence currencies."""
+        essence_currencies = {
+            Currency.ESSENCE_LESSER, Currency.ESSENCE_NORMAL,
+            Currency.ESSENCE_GREATER, Currency.ESSENCE_PERFECT,
+        }
         for _ in range(5000):
             a = random_action()
-            if a.currency in target:
-                seen.add(a.currency)
-            if seen == target:
-                break
-        assert seen == target, f"Missing: {target - seen}"
+            assert a.currency not in essence_currencies
 
     def test_mutate_action_preserves_structure(self):
         """Mutating an essence seed preserves rule count."""

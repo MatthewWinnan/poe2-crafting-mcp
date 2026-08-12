@@ -24,6 +24,12 @@ pub struct ModPool {
     pub essence_suffix_families: Vec<u16>,
     pub essence_suffix_tiers: Vec<u8>,
 
+    // Alloy pool (separate from essence/perfect_essence — different mod pool, pricing)
+    pub alloy_prefix_families: Vec<u16>,
+    pub alloy_prefix_tiers: Vec<u8>,
+    pub alloy_suffix_families: Vec<u16>,
+    pub alloy_suffix_tiers: Vec<u8>,
+
     // Target specification
     pub target_prefix_families: Vec<u16>,
     pub target_suffix_families: Vec<u16>,

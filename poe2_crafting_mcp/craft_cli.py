@@ -546,7 +546,7 @@ def cmd_sim(argv: list[str]) -> int:
     print()
     _print_item(item, base_name)
     print()
-    print(f"  {_DIM}Commands: <currency> [--omens x,y] | desecrate <bone> | item | pool | cost | help | quit{_RESET}")
+    print(f"  {_DIM}Commands: <currency> [--omens x,y] | essence | alloy | desecrate | item | pool | cost | help | quit{_RESET}")
     print()
 
     while True:
@@ -850,6 +850,24 @@ def cmd_sim(argv: list[str]) -> int:
                     for fam, info in sorted(_efamilies.items()):
                         print(f"    {fam:30} {info['affix']:6} {_DIM}{info['stat']}{_RESET}")
 
+            # Alloy pool (separate from essence/perfect_essence)
+            if not pool_filter or "alloy" in pool_filter:
+                _aq = "SELECT mod_family, affix_type, stat_text FROM mod_weights WHERE pool = 'alloy' AND item_class = ? AND req_level <= ?"
+                _aparams: list = [item_class, ilvl]
+                if affix:
+                    _aq += " AND affix_type = ?"
+                    _aparams.append(affix)
+                _arows = _conn_pool.execute(_aq, _aparams).fetchall()
+                if _arows:
+                    _afamilies: dict[str, dict] = {}
+                    for _ar in _arows:
+                        fam = _ar["mod_family"]
+                        if fam not in _afamilies:
+                            _afamilies[fam] = {"affix": _ar["affix_type"], "stat": _ar["stat_text"]}
+                    print(f"\n  {_BOLD}Alloy {label} ({len(_afamilies)} families):{_RESET}")
+                    for fam, info in sorted(_afamilies.items()):
+                        print(f"    {fam:30} {info['affix']:6} {_DIM}{info['stat']}{_RESET}")
+
             # Rune pools (show all applicable, not just active)
             from poe2_crafting_mcp.crafting.simulator import RUNE_POOL_NAMES as _RPN
             for _rpool, _rname in _RPN.items():
@@ -1005,13 +1023,15 @@ def cmd_sim(argv: list[str]) -> int:
                     print(f"    {_DIM}No omens apply to '{target_cur}'.{_RESET}")
 
         elif cmd == "essences":
-            # Show available essences for this item slot
+            # Show available essences for this item slot (excludes alloys)
             from poe2_crafting_mcp.crafting.essence_resolver import EssenceResolver
             ess_resolver = EssenceResolver()
             # Determine slot from item_class
             slot = _item_class_to_slot(item_class)
             tier_filter = parts[1] if len(parts) > 1 else ""
             essences_list = ess_resolver.list_for_slot(slot, tier=tier_filter)
+            # Filter out alloys — they have their own command
+            essences_list = [e for e in essences_list if e.tier != "Alloy"]
             if not essences_list:
                 print(f"  {_DIM}No essences found for slot '{slot}'"
                       f"{' tier=' + tier_filter if tier_filter else ''}{_RESET}")
@@ -1024,10 +1044,26 @@ def cmd_sim(argv: list[str]) -> int:
                     if e.tier in ("Lesser", "Normal", "Greater"):
                         if item.rarity not in ("Normal", "Magic"):
                             valid = f" {_DIM}(needs Magic item){_RESET}"
-                    elif e.tier in ("Perfect", "Corrupted", "Alloy"):
+                    elif e.tier in ("Perfect", "Corrupted"):
                         if item.rarity != "Rare":
                             valid = f" {_DIM}(needs Rare item){_RESET}"
                     print(f"    {e.essence_name:40} {e.stat_text}{valid}")
+
+        elif cmd == "alloys":
+            # Show available alloys for this item slot
+            from poe2_crafting_mcp.crafting.essence_resolver import EssenceResolver
+            ess_resolver = EssenceResolver()
+            slot = _item_class_to_slot(item_class)
+            alloys_list = ess_resolver.list_for_slot(slot, tier="Alloy")
+            if not alloys_list:
+                print(f"  {_DIM}No alloys found for slot '{slot}'{_RESET}")
+            else:
+                valid = ""
+                if item.rarity != "Rare":
+                    valid = f" {_DIM}(needs Rare item){_RESET}"
+                print(f"  {_BOLD}Alloys for {slot}:{_RESET}{valid}")
+                for e in alloys_list:
+                    print(f"    {e.essence_name:40} {e.stat_text}")
 
         elif cmd == "bones":
             # Show available bones for this item
@@ -1071,6 +1107,12 @@ def cmd_sim(argv: list[str]) -> int:
                 print(f"  {_DIM}Run 'essences' to see available options.{_RESET}")
                 continue
 
+            # Reject alloys — they have their own command
+            if resolved.tier == "Alloy":
+                print(f"  {_RED}'{ess_name}' is an alloy, not an essence.{_RESET}")
+                print(f"  {_DIM}Use: alloy {ess_name}{_RESET}")
+                continue
+
             # Determine currency key from tier
             tier_to_currency = {
                 "Lesser": "lesser_essence",
@@ -1078,7 +1120,6 @@ def cmd_sim(argv: list[str]) -> int:
                 "Greater": "greater_essence",
                 "Perfect": "perfect_essence",
                 "Corrupted": "perfect_essence",  # corrupted essences use swap mechanic
-                "Alloy": "perfect_essence",       # alloys also use swap mechanic
             }
             currency_key = tier_to_currency.get(resolved.tier)
             if not currency_key:
@@ -1115,6 +1156,74 @@ def cmd_sim(argv: list[str]) -> int:
                 history.append({
                     "action": f"essence:{ess_name}",
                     "currency": currency_key,
+                    "essence_family": mod_family,
+                    "omens": active_omens,
+                })
+                print()
+                _print_item(item, base_name)
+            except ValueError as e:
+                print(f"  {_RED}Error: {e}{_RESET}")
+
+        elif cmd in ("alloy", "use_alloy"):
+            # Apply alloy by name — separate from essences
+            from poe2_crafting_mcp.crafting.essence_resolver import EssenceResolver
+            ess_resolver = EssenceResolver()
+
+            # Parse alloy name (everything after 'alloy' that's not a flag)
+            alloy_name_parts = []
+            i = 1
+            while i < len(parts) and not parts[i].startswith("--"):
+                alloy_name_parts.append(parts[i])
+                i += 1
+            alloy_name = " ".join(alloy_name_parts)
+
+            if not alloy_name:
+                print(f"  {_RED}Usage: alloy \"Runic Alloy\"{_RESET}")
+                print(f"  {_DIM}Run 'alloys' to see available options.{_RESET}")
+                continue
+
+            # Resolve slot
+            slot = _item_class_to_slot(item_class)
+            resolved = ess_resolver.resolve(alloy_name, slot)
+            if not resolved:
+                print(f"  {_RED}Cannot resolve '{alloy_name}' for slot '{slot}'.{_RESET}")
+                print(f"  {_DIM}Run 'alloys' to see available options.{_RESET}")
+                continue
+
+            if resolved.tier != "Alloy":
+                print(f"  {_RED}'{alloy_name}' is an essence, not an alloy.{_RESET}")
+                print(f"  {_DIM}Use: essence {alloy_name}{_RESET}")
+                continue
+
+            # Resolve mod_family from stat_text via mod_weights join
+            mod_family = _resolve_essence_family(pdb, resolved.stat_text, item_class)
+            if not mod_family:
+                print(f"  {_YELLOW}Warning: could not resolve mod_family for stat_text. "
+                      f"Using best-effort.{_RESET}")
+                mod_family = ""
+
+            # Parse omens
+            omens_str = _parse_flag(parts, "--omens") or _parse_flag(parts, "--omen")
+            active_omens = omens_str.split(",") if omens_str else []
+
+            print(f"  {_DIM}Applying {resolved.essence_name} ({resolved.tier}){_RESET}")
+            print(f"  {_DIM}  → family={mod_family}, stat={resolved.stat_text}{_RESET}")
+
+            try:
+                sim.apply_currency(
+                    "alloy",
+                    omens=active_omens if active_omens else None,
+                    essence_family=mod_family,
+                    essence_stat_text=resolved.stat_text,
+                )
+                item = sim.item
+                _track(resolved.essence_name)
+                for o in active_omens:
+                    if o:
+                        _track(o)
+                history.append({
+                    "action": f"alloy:{alloy_name}",
+                    "currency": "alloy",
                     "essence_family": mod_family,
                     "omens": active_omens,
                 })
@@ -1660,7 +1769,7 @@ def _resolve_essence_family(pdb, stat_text: str, item_class: str) -> str:
     """Resolve essence stat_text to mod_family by joining with mod_weights."""
     row = pdb._conn.execute(
         "SELECT mod_family FROM mod_weights "
-        "WHERE stat_text = ? AND pool IN ('essence', 'perfect_essence') "
+        "WHERE stat_text = ? AND pool IN ('essence', 'perfect_essence', 'alloy') "
         "AND item_class = ? LIMIT 1",
         (stat_text, item_class),
     ).fetchone()
@@ -1669,7 +1778,7 @@ def _resolve_essence_family(pdb, stat_text: str, item_class: str) -> str:
     # Fallback: search across all item classes
     row = pdb._conn.execute(
         "SELECT mod_family FROM mod_weights "
-        "WHERE stat_text = ? AND pool IN ('essence', 'perfect_essence') LIMIT 1",
+        "WHERE stat_text = ? AND pool IN ('essence', 'perfect_essence', 'alloy') LIMIT 1",
         (stat_text,),
     ).fetchone()
     return row[0] if row else ""
@@ -1682,6 +1791,8 @@ def _sim_help() -> None:
     <currency> --omens x,y           Apply with stacked omens
     essence <name>                   Apply essence by name (auto-resolves family/tier)
     essence <name> --omens x         With omen (e.g. sinistral_crystallisation)
+    alloy <name>                     Apply alloy by name (separate mod pool from essences)
+    alloy <name> --omens x           With omen (e.g. sinistral_crystallisation)
     desecrate <bone>                 Apply bone (e.g. preserved_rib, ancient_jawbone)
     desecrate <bone> --omens x       With omen (e.g. blackblooded, sinistral_necromancy)
     reveal                           Reveal at Well of Souls (after desecrate)
@@ -1690,9 +1801,10 @@ def _sim_help() -> None:
   {_BOLD}Discovery Commands:{_RESET}
     currencies                       Show valid currencies for current item state
     essences [tier]                  Show available essences (e.g. 'essences Greater')
+    alloys                           Show available alloys for this item slot
     omens <currency>                 Show omens that apply to a currency
     bones                            Show valid bones for this item
-    pool [prefix|suffix]             Show all mod pools (normal, desecrated, essence, runes)
+    pool [prefix|suffix]             Show all mod pools (normal, desecrated, essence, alloy, runes)
 
   {_BOLD}Item & State:{_RESET}
     item                             Show current item (also: show, status, i)
@@ -1708,11 +1820,13 @@ def _sim_help() -> None:
   {_BOLD}Examples:{_RESET}
     > transmute
     > essence Greater Essence of the Body
+    > alloy Runic Alloy
     > exalted --omens dextral_exaltation,greater_exaltation
     > desecrate preserved_rib --omens sinistral_necromancy
     > reveal --omens abyssal_echoes
     > omens desecrate
     > essences Perfect
+    > alloys
     > save my_craft.json
 """)
 
